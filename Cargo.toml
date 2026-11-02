@@ -1,0 +1,26 @@
+[package]
+name = "dynamic-island"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.85"
+resolver = "3"
+description = "Dynamic-island status bar for Wayland (Wayfire / wlroots) - Rust + EGL/GLES2, no UI framework"
+license = "MIT"
+
+# Zámerne minimum závislostí: žiadny GTK/Qt/Quickshell/Slint/egui.
+# Wayland klient + EGL okno + načítanie písma. Všetko ostatné (OpenGL, EGL, poll,
+# inotify, JSON, TOML, animácie, layout) je v tomto repozitári.
+[dependencies]
+wayland-client = "0.31"
+wayland-backend = { version = "0.3", features = ["client_system"] }
+wayland-protocols = { version = "0.32", features = ["client", "staging"] }
+wayland-protocols-wlr = { version = "0.3", features = ["client"] }
+wayland-egl = "0.32"
+fontdb = "0.23"
+fontdue = "0.9"
+
+[profile.release]
+opt-level = 3
+lto = true
+codegen-units = 1
+strip = true

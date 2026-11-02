@@ -1,0 +1,144 @@
+# dynamic-island – predvolená konfigurácia, prevzatá z pôvodného waybaru.
+# Skopíruj do ~/.config/dynamic-island/config.toml. Zmena súboru = automatický reštart.
+# Farby sa berú z matugen súboru (colors_file) a menia sa ŽIVO bez reštartu.
+
+[island]
+colors_file = "~/.config/dynamic-island/colors.css"   # @define-color surface / primary ...
+font_family = ["Adwaita Sans"]
+icon_family = ["Hack Nerd Font Propo"]
+font_size   = 17
+height      = 34        # výška kompaktného ostrovčeka (px)
+margin_top  = 6
+radius      = 17        # zbalený (kapsula)
+radius_expanded = 26    # s kalendárom / tooltipom
+opacity     = 0.75      # krytie pozadia (ako alpha(@surface, 0.75))
+shadow      = true
+surface_width  = 760    # priehľadný povrch; myš prijíma len samotný ostrovček
+surface_height = 380
+tooltip_delay_ms  = 450
+collapse_delay_ms = 100
+poll_ms = 300           # kontrola caps/inhibitor/rec/rozloženia
+
+# poradie modulov (ako group/island vo waybare)
+modules = ["network", "vpn", "clock", "keyboard", "audio", "capslock", "inhibitor", "recorder", "disks"]
+
+# [colors]  # voliteľné prepisy: "@meno" z colors_file alebo "#rrggbb"
+# background = "@surface"
+# foreground = "@primary"
+# alert      = "#dc2f2f"
+
+[clock]
+format = "%A  %d. %B,  %H:%M"
+locale = "sk_SK.UTF-8"
+on_click = "calendar"                        # kalendár sa rozbalí priamo v ostrovčeku
+on_click_right = "~/.config/wayfire/scripts/wallpaper -r"
+
+[network]
+interface = "wlan0"
+on_click = "~/.config/wayfire/scripts/VPN_switcher.sh"
+on_click_right = "connex"
+# icons = [...]  icon_ethernet  icon_disconnected   (predvolene Nerd Font ako vo waybare)
+# Tooltipy (zástupné symboly: {ssid} {ifname} {ip} {gateway} {signal} {dbm} {freq}; \n = nový riadok):
+# tooltip_wifi = "SSID: {ssid}\nIP adresa: {ip}\nSila signálu: {signal}% ({dbm} dBm)"
+tooltip_wifi = ""
+# tooltip_ethernet = "Rozhranie: {ifname}\nIP adresa: {ip}\nBrána: {gateway}"
+# tooltip_disconnected = "Nepripojené"
+
+[vpn]
+interfaces = ["tun*"]
+text = "VPN"
+# tooltip = "{ifname}: {ip}"     # tooltip má každý modul (`tooltip = "..."`); clock: strftime formát, napr. "%d.%m.%Y"
+on_click = "~/.config/wayfire/scripts/VPN_switcher.sh"
+
+[audio]               # odznak sa zobrazí len pri stlmení; zmena hlasitosti ukáže HUD
+on_click = "audio-mute"   # natívne (wpctl); skript Volume.sh netreba
+step = 5                  # krok skratiek v %
+limit = 1.0               # strop hlasitosti (1.0 = 100 %)
+hud = true
+hud_ms = 1000
+
+[keyboard]
+on_click = "layout-toggle"
+on_click_right = "bash -c 'if pgrep -x rofi >/dev/null; then pkill rofi; else cliphist list | rofi -dmenu -p Clipboard -i -theme \"$HOME/.config/dynamic-island/clip.rasi\" | cliphist decode | wl-copy; fi'"
+tooltip = ""
+[keyboard.names]
+Slovak = "SK"
+"English (US)" = "US"
+
+[capslock]
+text = "CAPS"
+
+[inhibitor]            # ikona len zobrazuje existenciu súboru; vytvára/maže ho tvoj skript na Super+Z
+file = "~/.idle_inhibit"
+on_click = ""
+tooltip = ""
+
+[recorder]
+file = "/tmp/RECORDING"
+on_click = "~/.config/wayfire/scripts/recorder.sh"
+
+# Ľubovoľný externý modul (waybar „custom“): trvalý proces (interval = 0) alebo periodický.
+# Výstup: JSON {"text","tooltip","class"} alebo čistý text (json = false).
+# Externé disky a flash kľúče (náhrada udiskie + waybar-eject.py): UDisks2 cez D-Bus.
+# Modul sa zobrazí, len keď je niečo pripojené. Ľavý klik = pri jednom disku ho rovno odpojí, pri viacerých otvorí menu (klik na riadok odpojí a vysunie),
+# pravý klik = odpojiť všetko. Menu sa zavrie, keď odídeš myšou.
+[disks]
+automount = true      # automaticky pripájať nové médiá
+notify = true         # notifikácie o pripojení / odpojení / chybách
+notify_timeout_ms = 2000   # ako dlho zostanú na obrazovke (rovnaký pre všetky); 0 = nevyprší
+icon = ""      # nf-fa-usb
+format = "{icon}"               # jeden disk
+format_many = "{icon} {count}"  # viac diskov (počíta sa disk, nie oddiel); {icon} {count} {label}
+tooltip = "{list}"    # {list} = „názov (veľkosť)  →  bod pripojenia“ po riadkoch
+# on_click = "menu"   # "menu" | "eject-all" | príkaz
+# on_click_right = "eject-all"
+
+[autohide]            # port waybar_autohide.py – vyžaduje Wayfire ipc + ipc-rules
+enabled = true
+bar_height = 40
+edge = 2
+edge_width = 30
+margin = 0
+poll_ms = 30
+ignore = []
+
+[brightness]          # HUD jasu; skratky nastav vo wayfire.ini (pozri README)
+step = 10
+get  = "lumix get"
+set  = "lumix set \"{value}\""   # {value} = "10+", "10-" alebo číslo; v výstupe sa hľadá NN%
+# icons = [...]
+
+# Notifikácie (náhrada maka): ostrovček je server org.freedesktop.Notifications.
+# Pred spustením odinštaluj/zastav mako, inak je meno obsadené.
+# Farby sú rovnaké ako ostrovček; urgentné majú vlastný rámik a text:
+[notifications]
+enabled = true
+history = true          # ukladať históriu (JSON riadky) vedľa konfigurácie
+history_max = 1000      # koľko posledných záznamov ponechať
+# history_file = "~/.config/dynamic-island/notifications.log"
+width = 450
+max_visible = 3
+max_lines = 3
+font_size = 16
+align = "center"          # "center" alebo "left"
+timeout_ms = 10000        # ak aplikácia nepošle vlastný; 0 = nevyprší
+on_click = "default-action"   # akcia "default" aplikácie + zavrieť; "dismiss"; alebo príkaz (napr. tvoj mako_action.sh)
+on_click_right = "update.sh"    # stredné tlačidlo zavrie všetky
+[notifications.urgent]
+timeout_ms = 0            # urgentné nevyprší, kým ich nezavrieš
+border_size = 2
+# farby urgentných v [colors]: urgent_border = "#fa3939", urgent_text = "#b1cbce"
+
+# Pravidlá (náhrada skriptu s `makoctl list`): ak súhrn/aplikácia/telo obsahuje text, klik spustí príkaz
+# a notifikáciu zavrie. Prvé zhodné pravidlo vyhrá. Vynechané polia sa neskúmajú.
+[[notifications.rule]]
+summary = "Debian Aktualizácie"
+on_click = "foot bash -c 'sudo apt update && sudo apt -u -V upgrade; exec bash'"
+# timeout_ms = 0
+
+# Náhrada swayidle (protokol ext-idle-notify-v1). Wayfire plugin idle (Super+Z) ich blokuje rovnako ako swayidle.
+# Môžeš pridať viac pravidiel (napr. zamknutie po 300 s, uspanie po 600 s).
+[[idle]]
+timeout = 600
+on_idle = "systemctl suspend"
+# on_resume = ""
