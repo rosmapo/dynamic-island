@@ -155,6 +155,17 @@ pub fn default_path() -> PathBuf {
     PathBuf::from(base).join("dynamic-island/config.toml")
 }
 
+/// Zoznam písem: pole `["A", "B"]` alebo reťazec `"A, B"`; poradie = poradie náhrad.
+fn font_list(t: &Table, key: &str, default: &[&str]) -> Vec<String> {
+    if let Some(v) = t.strs(key) {
+        return v;
+    }
+    if let Some(s) = t.get(key).and_then(|v| v.as_str()) {
+        return s.split(',').map(|x| x.trim().to_string()).filter(|x| !x.is_empty()).collect();
+    }
+    default.iter().map(|s| s.to_string()).collect()
+}
+
 fn btn(t: &Table, click: &str, right: &str, tip: &str) -> Btn {
     Btn { click: t.str_or("on_click", click), right: t.str_or("on_click_right", right), tooltip: t.str_or("tooltip", tip) }
 }
@@ -171,10 +182,9 @@ impl Config {
 
     pub fn from_table(t: &Table, path: PathBuf) -> Config {
         let isl = t.sub("island");
-        let mut font_family = isl.strs("font_family").unwrap_or_default();
-        font_family.extend(["Adwaita Sans", "Cantarell", "Inter", "Noto Sans", "DejaVu Sans"].map(String::from));
-        let mut icon_family = isl.strs("icon_family").unwrap_or_default();
-        icon_family.extend(["Hack Nerd Font Propo", "Symbols Nerd Font", "Font Awesome 6 Free"].map(String::from));
+        // presne to, čo je v konfigurácii (bez skrytých náhradných písem); chýbajúci kľúč = predvolené
+        let font_family = font_list(&isl, "font_family", &["Adwaita Sans", "DejaVu Sans"]);
+        let icon_family = font_list(&isl, "icon_family", &["Hack Nerd Font Propo"]);
 
         let mut color_spec = HashMap::new();
         for (k, v) in t.sub("colors") {
@@ -492,6 +502,16 @@ mod tests {
         assert_eq!(c.kb_names["Slovak"], "SK");
         assert_eq!(c.clock.click, "calendar");
         assert!(c.auto.enabled);
+    }
+
+    #[test]
+    fn font_lists() {
+        let t = toml::parse("[island]\nfont_family = \"A, B\"\nicon_family = []\n").unwrap();
+        let cfg = Config::from_table(&t, PathBuf::from("x.toml"));
+        assert_eq!(cfg.font_family, vec!["A", "B"]);
+        assert!(cfg.icon_family.is_empty());
+        let d = Config::from_table(&Table::new(), PathBuf::from("x.toml"));
+        assert_eq!(d.icon_family, vec!["Hack Nerd Font Propo"]);
     }
 }
 

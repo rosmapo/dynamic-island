@@ -10,7 +10,9 @@ GTK/Qt/Quickshell. Cieľ: Debian 13 (Wayfire / wlroots – potrebuje `zwlr_layer
     ./scripts/install.sh
 
 Za behu: `iw`, `iproute2`, `wpctl` + `pactl` (PipeWire), `udisks2` (pre modul diskov).
-Písma: `font_family` (text) a `icon_family` (Nerd Font ikony; predvolene Hack Nerd Font Propo).
+Písma: `font_family` (text) a `icon_family` (ikony) – načítajú sa **len písma z konfigurácie**, žiadne skryté náhrady.
+Viac písem (`["A", "B"]` alebo `"A, B"`) = poradie náhrad; chýbajúci znak sa vykreslí ako prázdny štvorec (tofu).
+Písmo, ktoré nie je nainštalované, ostrovček vypíše na stderr (`journalctl --user -u dynamic-island`).
 
 ## Čo sa zmenilo oproti waybaru
 

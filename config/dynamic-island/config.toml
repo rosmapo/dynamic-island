@@ -4,8 +4,9 @@
 
 [island]
 colors_file = "~/.config/dynamic-island/colors.css"   # @define-color surface / primary ...
-font_family = ["Adwaita Sans"]
-icon_family = ["Hack Nerd Font Propo"]
+font_family = ["Inter"]
+icon_family = ["Symbols Nerd Font"]
+#icon_family = ["Hack Nerd Font Propo"]
 font_size   = 17
 height      = 34        # výška kompaktného ostrovčeka (px)
 margin_top  = 6

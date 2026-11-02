@@ -13,15 +13,15 @@ impl Fonts {
         db.load_system_fonts();
         let mut faces: Vec<fontdue::Font> = Vec::new();
         let mut seen: Vec<fontdb::ID> = Vec::new();
-        let mut pick = |fams: &[String], extra_generic: bool| -> Vec<usize> {
+        let mut pick = |fams: &[String]| -> Vec<usize> {
             let mut idx = Vec::new();
-            let mut names: Vec<fontdb::Family> = fams.iter().map(|f| fontdb::Family::Name(f.as_str())).collect();
-            if extra_generic {
-                names.push(fontdb::Family::SansSerif);
-            }
-            for fam in names {
-                let q = fontdb::Query { families: &[fam], ..Default::default() };
-                if let Some(id) = db.query(&q) {
+            for name in fams {
+                let q = fontdb::Query { families: &[fontdb::Family::Name(name.as_str())], ..Default::default() };
+                let found = db.query(&q);
+                if found.is_none() {
+                    eprintln!("dynamic-island: písmo '{name}' nie je nainštalované");
+                }
+                if let Some(id) = found {
                     if seen.contains(&id) {
                         continue;
                     }
@@ -40,10 +40,10 @@ impl Fonts {
             }
             idx
         };
-        let text = pick(text_families, true);
-        let icon = pick(icon_families, false);
+        let text = pick(text_families);
+        let icon = pick(icon_families);
         if text.is_empty() && icon.is_empty() {
-            return Err("nenašiel som žiadne použiteľné písmo (nainštaluj napr. fonts-dejavu-core)".into());
+            return Err("nenašiel som žiadne použiteľné písmo z font_family / icon_family v konfigurácii".into());
         }
         Ok(Fonts { faces, text, icon })
     }
