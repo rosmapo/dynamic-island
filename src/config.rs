@@ -16,6 +16,8 @@ pub struct Btn {
 pub struct CustomCfg {
     pub name: String,
     pub exec: String,
+    /// statický text/ikona bez procesu (alternatíva k `exec`)
+    pub text: String,
     pub interval: f64, // 0 = trvalý proces, riadok = aktualizácia
     pub json: bool,
     pub btn: Btn,
@@ -220,12 +222,14 @@ impl Config {
                 if let Value::Table(c) = v {
                     let name = c.str_or("name", "");
                     let exec = c.str_or("exec", "");
-                    if name.is_empty() || exec.is_empty() {
+                    let text = c.str_or("text", "");
+                    if name.is_empty() || (exec.is_empty() && text.is_empty()) {
                         continue;
                     }
                     custom.push(CustomCfg {
                         name,
                         exec,
+                        text,
                         interval: c.f64_or("interval", 0.0),
                         json: c.bool_or("json", true),
                         btn: btn(c, "", "", ""),

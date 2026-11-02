@@ -240,11 +240,10 @@ impl Ui {
         }
         let now = sys::now_unix();
         let tm = sys::local_tm(now);
-        let n_custom = cfg.custom.len();
         let (sw, sh) = (cfg.surface_w as f32 * scale, cfg.surface_h as f32 * scale);
         let radius = cfg.radius;
         let mut ui = Ui {
-            data: Data { custom: vec![CustomOut::default(); n_custom], ..Default::default() },
+            data: Data { custom: cfg.custom.iter().map(|c| CustomOut { text: c.text.clone(), ..Default::default() }).collect(), ..Default::default() },
             cfg,
             theme,
             scale,

@@ -13,6 +13,9 @@ pub fn spawn_all(cfg: &Config, tx: &Tx<Msg>) {
     spawn_audio(tx.clone());
     spawn_fast(cfg.clone(), tx.clone());
     for (i, c) in cfg.custom.iter().enumerate() {
+        if c.exec.is_empty() {
+            continue; // statické tlačidlo (`text`), netreba proces
+        }
         spawn_custom(i, c.clone(), tx.clone());
     }
     if cfg.auto.enabled {
