@@ -15,7 +15,6 @@ RestartForceExitStatus=SIGTERM SIGINT SIGHUP
 RestartSec=1
 # pri reštarte zabi len ostrovček, nie programy spustené klikom
 KillMode=process
-Environment=PATH=%h/.local/bin:/usr/local/bin:/usr/bin:/bin
 
 [Install]
 WantedBy=default.target

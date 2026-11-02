@@ -35,7 +35,23 @@ Zmena `config.toml` reštartuje proces sama. `dynamic-island --check` overí kon
     [autostart]
     island = dynamic-island
 
-(Odstráň waybar a `waybar-wrapper.sh`.) Pre autohide treba `ipc`, `ipc-rules` s `get_cursor_position`
+(Odstráň waybar a `waybar-wrapper.sh`.)
+
+### Automatický reštart po páde (odporúčané)
+
+`install.sh` nainštaluje používateľskú službu `~/.config/systemd/user/dynamic-island.service`
+(`Restart=on-failure`, po 1 s). Namiesto `island = dynamic-island` daj do autostartu:
+
+    [autostart]
+    island = sh -c 'systemctl --user import-environment; systemctl --user restart dynamic-island'
+
+Prepínač na skratku: `island-toggle` (beží → zastaví, nebeží → spustí), napr. vo `wayfire.ini`
+`binding_island = <super> <shift> KEY_I` / `command_island = island-toggle`.
+
+Príkazy: `systemctl --user status dynamic-island`, `journalctl --user -u dynamic-island -f` (logy),
+`systemctl --user kill -s USR1 dynamic-island` (skryť) / `USR2` (zobraziť).
+Reštartuje sa aj po SIGTERM (napr. „Ukončiť“ v systémovom monitore); po riadnom ukončení (zavretie
+Wayfire) alebo `systemctl --user stop dynamic-island` sa znova nespustí. Pre autohide treba `ipc`, `ipc-rules` s `get_cursor_position`
 (ako doteraz) a nastavený `WAYFIRE_SOCKET`.
 
 ## Obmedzenia
