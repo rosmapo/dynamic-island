@@ -1,0 +1,8 @@
+#!/bin/sh
+# Prepínač dynamic-island pre klávesovú skratku: beží -> zastaví (nereštartuje sa), nebeží -> spustí.
+# Užitočné pri výmene binárky: skratka (vypnúť), nahraď ~/.local/bin/dynamic-island, skratka (zapnúť).
+if systemctl --user is-active --quiet dynamic-island; then
+    systemctl --user stop dynamic-island
+else
+    systemctl --user start dynamic-island
+fi

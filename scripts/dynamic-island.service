@@ -1,0 +1,21 @@
+[Unit]
+Description=dynamic-island (panel, notifikácie, disky, nečinnosť)
+# Spúšťa sa z autostartu Wayfire po tom, čo sa naimportuje prostredie (pozri README).
+ConditionEnvironment=WAYLAND_DISPLAY
+StartLimitIntervalSec=60
+StartLimitBurst=10
+
+[Service]
+Type=simple
+ExecStart=%h/.local/bin/dynamic-island
+# po páde sa spustí znova; po riadnom skončení (zavretie kompozitora) nie.
+# SIGTERM/SIGINT/SIGHUP (napr. „Ukončiť“ v systémovom monitore) systemd inak berie ako čisté skončenie.
+Restart=on-failure
+RestartForceExitStatus=SIGTERM SIGINT SIGHUP
+RestartSec=1
+# pri reštarte zabi len ostrovček, nie programy spustené klikom
+KillMode=process
+Environment=PATH=%h/.local/bin:/usr/local/bin:/usr/bin:/bin
+
+[Install]
+WantedBy=default.target
