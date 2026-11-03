@@ -6,12 +6,11 @@
 colors_file = "~/.config/dynamic-island/colors.css"   # @define-color surface / primary ...
 font_family = ["Inter"]
 icon_family = ["Symbols Nerd Font"]
-#icon_family = ["Hack Nerd Font Propo"]
 font_size   = 17
 height      = 34        # výška kompaktného ostrovčeka (px)
 margin_top  = 6
 radius      = 17        # zbalený (kapsula)
-radius_expanded = 26    # s kalendárom / tooltipom
+radius_expanded = 20    # s kalendárom / tooltipom
 opacity     = 0.75      # krytie pozadia (ako alpha(@surface, 0.75))
 shadow      = true
 surface_width  = 760    # priehľadný povrch; myš prijíma len samotný ostrovček
@@ -48,6 +47,7 @@ tooltip_wifi = ""
 [vpn]
 interfaces = ["tun*"]
 text = "VPN"
+tooltip = ""
 # tooltip = "{ifname}: {ip}"     # tooltip má každý modul (`tooltip = "..."`); clock: strftime formát, napr. "%d.%m.%Y"
 on_click = "~/.config/wayfire/scripts/VPN_switcher.sh"
 
@@ -143,3 +143,17 @@ on_click = "foot bash -c 'sudo apt update && sudo apt -u -V upgrade; exec bash'"
 timeout = 600
 on_idle = "systemctl suspend"
 # on_resume = ""
+
+##### [[custom]]
+##### name = "terminal"
+##### text = "T"
+##### on_click = "foot"
+##### on_click_right = "foot"
+##### tooltip = "Terminál"
+##### 
+##### [[custom]]
+##### name = "ram"
+##### exec = "awk '/MemTotal/{t=$2} /MemAvailable/{a=$2} END{printf \"\uf2db %.1f GB\", (t-a)/1048576}' /proc/meminfo"
+##### interval = 5
+##### json = false
+##### tooltip = "Použitá pamäť"
