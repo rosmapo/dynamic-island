@@ -299,7 +299,6 @@ command = "~/.config/wayfire/scripts/wallpaper"
 
 [[menu]]
 name = "radio"
-autoclose = true
 type = "text"
 title = ""
 columns = 1
