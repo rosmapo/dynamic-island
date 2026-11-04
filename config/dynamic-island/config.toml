@@ -169,7 +169,6 @@ on_idle = "systemctl suspend"
 ##### # type = "icons" | "text". Icons = PNG (icons/ vedľa configu alebo plná cesta). Text môže Nerd Font.
 [[menu]]
 name = "backup"
-autoclose = true
 type = "icons"
 title = ""              # prázdne = bez nadpisu
 columns = 7
@@ -229,7 +228,6 @@ command = "module:calendar"
 
 [[menu]]
 name = "settings"
-autoclose = true
 type = "text"
 title = ""
 columns = 3
@@ -334,7 +332,6 @@ command = "sh -c 'killall mpv; sleep 0.5; killall mpv'"
 
 [[menu]]
 name = "power"
-autoclose = true
 type = "text"
 title = ""
 columns = 5
