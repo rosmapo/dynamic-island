@@ -117,7 +117,8 @@ Ikona inhibítora je už len ukazovateľ (`on_click = ""`).
 ## Vlastné menu
 
 Panel ako kalendár/disky: mriežka ikon alebo textu. **Nie je** samostatný modul v `modules` – spúšťa sa
-`on_click = "meno_menu"` na ľubovoľnom module (custom, clock, …). Zavrie sa klikom na položku alebo odchodom myši.
+`on_click = "meno_menu"` na ľubovoľnom module (custom, clock, …). Predvolene sa zavrie klikom na položku alebo klikom mimo
+menu (odchod myši ho nezavrie); s `autoclose = true` sa zavrie aj odchodom myši (ako kalendár).
 
 ```toml
 [[menu]]
@@ -127,6 +128,7 @@ columns = 3
 icon_size = 28          # len icons
 gap = 8
 padding = 12
+autoclose = false       # true = zavrie sa aj odchodom myši; false (predvolené) = len klik na položku / mimo
 # title = "Aplikácie"   # voliteľné; prázdne = bez nadpisu
 # rows = 2              # voliteľné
 

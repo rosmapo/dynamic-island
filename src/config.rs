@@ -67,6 +67,8 @@ pub struct MenuCfg {
     pub cell_width: f32,
     pub gap: f32,
     pub padding: f32,
+    /// true = menu sa zavrie aj odchodom myši (ako kalendár); false = len klikom na položku alebo mimo
+    pub autoclose: bool,
     pub items: Vec<MenuItemCfg>,
 }
 
@@ -307,6 +309,14 @@ impl Config {
                         cell_width: m.f64_or("cell_width", 120.0).max(20.0) as f32,
                         gap: m.f64_or("gap", 8.0).max(0.0) as f32,
                         padding: m.f64_or("padding", 12.0).max(0.0) as f32,
+                        // `autoclose = true` aj `autoclose = "true"` (predvolene false)
+                        autoclose: match m.get("autoclose") {
+                            Some(Value::Bool(b)) => *b,
+                            Some(Value::Str(s)) => {
+                                matches!(s.trim().to_ascii_lowercase().as_str(), "true" | "yes" | "on" | "1")
+                            }
+                            _ => false,
+                        },
                         items,
                     });
                 }
@@ -582,6 +592,17 @@ mod tests {
         assert_eq!(c.kb_names["Slovak"], "SK");
         assert_eq!(c.clock.click, "calendar");
         assert!(c.auto.enabled);
+    }
+
+    #[test]
+    fn menu_autoclose() {
+        let t = toml::parse(
+            "[[menu]]\nname=\"a\"\n[[menu]]\nname=\"b\"\nautoclose=true\n[[menu]]\nname=\"c\"\nautoclose=\"true\"\n[[menu]]\nname=\"d\"\nautoclose=\"false\"\n",
+        )
+        .unwrap();
+        let c = Config::from_table(&t, PathBuf::new());
+        let v: Vec<bool> = c.menus.iter().map(|m| m.autoclose).collect();
+        assert_eq!(v, vec![false, true, true, false]);
     }
 
     #[test]

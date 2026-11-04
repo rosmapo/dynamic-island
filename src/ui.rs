@@ -831,6 +831,14 @@ impl Ui {
         }
     }
 
+    /// Otvorené menu má `autoclose = true` (zatvára sa aj odchodom myši).
+    fn menu_autoclose(&self) -> bool {
+        match self.panel {
+            Panel::Menu(mi) => self.cfg.menus.get(mi).map(|m| m.autoclose).unwrap_or(false),
+            _ => false,
+        }
+    }
+
     fn menu_index(&self, name: &str) -> Option<usize> {
         self.cfg.menus.iter().position(|m| m.name == name)
     }
@@ -945,8 +953,13 @@ impl Ui {
         self.hover = None;
         self.tip_pending = None;
         match self.panel {
-            // menu ostáva otvorené po odchode myši – zatvára sa klikom na položku alebo mimo
-            Panel::Menu(_) => {}
+            // menu ostáva otvorené po odchode myši (zatvára sa klikom na položku alebo mimo),
+            // pokiaľ nemá `autoclose = true` – vtedy sa zavrie ako kalendár
+            Panel::Menu(mi) => {
+                if self.cfg.menus.get(mi).map(|m| m.autoclose).unwrap_or(false) {
+                    self.collapse_at = Some(now + Duration::from_millis(self.cfg.collapse_ms));
+                }
+            }
             Panel::Calendar | Panel::Disks => {
                 self.collapse_at = Some(now + Duration::from_millis(self.cfg.collapse_ms))
             }
@@ -982,9 +995,13 @@ impl Ui {
                         }
                     }
                 }
-                // položka aj klik mimo → zatvoriť
-                self.set_panel(Panel::None);
-                self.collapse_at = None;
+                // položka aj klik mimo → zatvoriť; pri `autoclose` je klik na okraj/nadpis
+                // v paneli ešte „v menu“, takže ho nezatvára (zavrie ho položka alebo odchod myši)
+                let on_item = matches!(self.hit_at(x, y), Some(Hit::MenuItem(_)));
+                if on_item || !self.menu_autoclose() {
+                    self.set_panel(Panel::None);
+                    self.collapse_at = None;
+                }
             }
             return out;
         }
@@ -1085,8 +1102,9 @@ impl Ui {
             return None;
         }
         let k = 1.0 / self.scale;
-        // otvorené menu: celý povrch prijíma klik (zatvorenie klikom mimo)
-        if matches!(self.panel, Panel::Menu(_)) {
+        // otvorené menu: celý povrch prijíma klik (zatvorenie klikom mimo); menu s `autoclose`
+        // to nepotrebuje – vstup len na paneli, aby odchod myši vyvolal zatvorenie
+        if matches!(self.panel, Panel::Menu(_)) && !self.menu_autoclose() {
             let w = (self.surf_w * k).ceil().max(1.0) as i32;
             let h = (self.surf_h * k).ceil().max(1.0) as i32;
             return Some((0, 0, w, h));

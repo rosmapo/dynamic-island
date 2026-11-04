@@ -1,0 +1,144 @@
+diff --git a/README.md b/README.md
+index edf7148..e6d5d4e 100644
+--- a/README.md
++++ b/README.md
+@@ -117,7 +117,8 @@ Ikona inhibítora je už len ukazovateľ (`on_click = ""`).
+ ## Vlastné menu
+ 
+ Panel ako kalendár/disky: mriežka ikon alebo textu. **Nie je** samostatný modul v `modules` – spúšťa sa
+-`on_click = "meno_menu"` na ľubovoľnom module (custom, clock, …). Zavrie sa klikom na položku alebo odchodom myši.
++`on_click = "meno_menu"` na ľubovoľnom module (custom, clock, …). Predvolene sa zavrie klikom na položku alebo klikom mimo
++menu (odchod myši ho nezavrie); s `autoclose = true` sa zavrie aj odchodom myši (ako kalendár).
+ 
+ ```toml
+ [[menu]]
+@@ -127,6 +128,7 @@ columns = 3
+ icon_size = 28          # len icons
+ gap = 8
+ padding = 12
++autoclose = false       # true = zavrie sa aj odchodom myši; false (predvolené) = len klik na položku / mimo
+ # title = "Aplikácie"   # voliteľné; prázdne = bez nadpisu
+ # rows = 2              # voliteľné
+ 
+diff --git a/config/dynamic-island/config.toml b/config/dynamic-island/config.toml
+index 962bedc..1153aa0 100755
+--- a/config/dynamic-island/config.toml
++++ b/config/dynamic-island/config.toml
+@@ -176,6 +176,7 @@ rows = 1              # voliteľné; inak sa dopočíta z položiek
+ icon_size = 48
+ gap = 2
+ padding = 12
++autoclose = false     # true = menu sa zavrie aj odchodom myši; false = len klik na položku / mimo menu
+ 
+ [[menu.item]]
+ icon = "bleachbit.png"    # PNG v icons/ vedľa config.toml (alebo plná cesta)
+diff --git a/src/config.rs b/src/config.rs
+index c8bf338..71283c4 100644
+--- a/src/config.rs
++++ b/src/config.rs
+@@ -67,6 +67,8 @@ pub struct MenuCfg {
+     pub cell_width: f32,
+     pub gap: f32,
+     pub padding: f32,
++    /// true = menu sa zavrie aj odchodom myši (ako kalendár); false = len klikom na položku alebo mimo
++    pub autoclose: bool,
+     pub items: Vec<MenuItemCfg>,
+ }
+ 
+@@ -307,6 +309,14 @@ impl Config {
+                         cell_width: m.f64_or("cell_width", 120.0).max(20.0) as f32,
+                         gap: m.f64_or("gap", 8.0).max(0.0) as f32,
+                         padding: m.f64_or("padding", 12.0).max(0.0) as f32,
++                        // `autoclose = true` aj `autoclose = "true"` (predvolene false)
++                        autoclose: match m.get("autoclose") {
++                            Some(Value::Bool(b)) => *b,
++                            Some(Value::Str(s)) => {
++                                matches!(s.trim().to_ascii_lowercase().as_str(), "true" | "yes" | "on" | "1")
++                            }
++                            _ => false,
++                        },
+                         items,
+                     });
+                 }
+@@ -584,6 +594,17 @@ mod tests {
+         assert!(c.auto.enabled);
+     }
+ 
++    #[test]
++    fn menu_autoclose() {
++        let t = toml::parse(
++            "[[menu]]\nname=\"a\"\n[[menu]]\nname=\"b\"\nautoclose=true\n[[menu]]\nname=\"c\"\nautoclose=\"true\"\n[[menu]]\nname=\"d\"\nautoclose=\"false\"\n",
++        )
++        .unwrap();
++        let c = Config::from_table(&t, PathBuf::new());
++        let v: Vec<bool> = c.menus.iter().map(|m| m.autoclose).collect();
++        assert_eq!(v, vec![false, true, true, false]);
++    }
++
+     #[test]
+     fn font_lists() {
+         let t = toml::parse("[island]\nfont_family = \"A, B\"\nicon_family = []\n").unwrap();
+diff --git a/src/ui.rs b/src/ui.rs
+index 7bd1b01..d50fa8c 100644
+--- a/src/ui.rs
++++ b/src/ui.rs
+@@ -831,6 +831,14 @@ impl Ui {
+         }
+     }
+ 
++    /// Otvorené menu má `autoclose = true` (zatvára sa aj odchodom myši).
++    fn menu_autoclose(&self) -> bool {
++        match self.panel {
++            Panel::Menu(mi) => self.cfg.menus.get(mi).map(|m| m.autoclose).unwrap_or(false),
++            _ => false,
++        }
++    }
++
+     fn menu_index(&self, name: &str) -> Option<usize> {
+         self.cfg.menus.iter().position(|m| m.name == name)
+     }
+@@ -945,8 +953,13 @@ impl Ui {
+         self.hover = None;
+         self.tip_pending = None;
+         match self.panel {
+-            // menu ostáva otvorené po odchode myši – zatvára sa klikom na položku alebo mimo
+-            Panel::Menu(_) => {}
++            // menu ostáva otvorené po odchode myši (zatvára sa klikom na položku alebo mimo),
++            // pokiaľ nemá `autoclose = true` – vtedy sa zavrie ako kalendár
++            Panel::Menu(mi) => {
++                if self.cfg.menus.get(mi).map(|m| m.autoclose).unwrap_or(false) {
++                    self.collapse_at = Some(now + Duration::from_millis(self.cfg.collapse_ms));
++                }
++            }
+             Panel::Calendar | Panel::Disks => {
+                 self.collapse_at = Some(now + Duration::from_millis(self.cfg.collapse_ms))
+             }
+@@ -982,9 +995,13 @@ impl Ui {
+                         }
+                     }
+                 }
+-                // položka aj klik mimo → zatvoriť
+-                self.set_panel(Panel::None);
+-                self.collapse_at = None;
++                // položka aj klik mimo → zatvoriť; pri `autoclose` je klik na okraj/nadpis
++                // v paneli ešte „v menu“, takže ho nezatvára (zavrie ho položka alebo odchod myši)
++                let on_item = matches!(self.hit_at(x, y), Some(Hit::MenuItem(_)));
++                if on_item || !self.menu_autoclose() {
++                    self.set_panel(Panel::None);
++                    self.collapse_at = None;
++                }
+             }
+             return out;
+         }
+@@ -1085,8 +1102,9 @@ impl Ui {
+             return None;
+         }
+         let k = 1.0 / self.scale;
+-        // otvorené menu: celý povrch prijíma klik (zatvorenie klikom mimo)
+-        if matches!(self.panel, Panel::Menu(_)) {
++        // otvorené menu: celý povrch prijíma klik (zatvorenie klikom mimo); menu s `autoclose`
++        // to nepotrebuje – vstup len na paneli, aby odchod myši vyvolal zatvorenie
++        if matches!(self.panel, Panel::Menu(_)) && !self.menu_autoclose() {
+             let w = (self.surf_w * k).ceil().max(1.0) as i32;
+             let h = (self.surf_h * k).ceil().max(1.0) as i32;
+             return Some((0, 0, w, h));

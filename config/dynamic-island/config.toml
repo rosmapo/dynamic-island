@@ -2,6 +2,9 @@
 # Skopíruj do ~/.config/dynamic-island/config.toml. Zmena súboru = automatický reštart.
 # Farby sa berú z matugen súboru (colors_file) a menia sa ŽIVO bez reštartu.
 
+# poradie modulov (ako group/island vo waybare)
+modules = ["network", "vpn", "clock", "keyboard", "off", "audio", "capslock", "inhibitor", "recorder", "disks"]
+
 [island]
 colors_file = "~/.config/dynamic-island/colors.css"   # @define-color surface / primary ...
 font_family = ["Inter"]
@@ -18,9 +21,6 @@ surface_height = 580
 tooltip_delay_ms  = 450
 collapse_delay_ms = 100
 poll_ms = 300           # kontrola caps/inhibitor/rec/rozloženia
-
-# poradie modulov (ako group/island vo waybare)
-modules = ["network", "vpn", "clock", "keyboard", "audio", "capslock", "inhibitor", "recorder", "off", "disks"]
 
 # [colors]  # voliteľné prepisy: "@meno" z colors_file alebo "#rrggbb"
 # background = "@surface"
@@ -66,6 +66,12 @@ tooltip = ""
 [keyboard.names]
 Slovak = "SK"
 "English (US)" = "US"
+
+[[custom]]
+name = "off"
+text = ""
+on_click = "power"
+on_click_right = "backup"
 
 [capslock]
 text = "CAPS"
@@ -145,12 +151,6 @@ timeout = 600
 on_idle = "systemctl suspend"
 # on_resume = ""
 
-[[custom]]
-name = "off"
-text = ""
-on_click = "power"
-on_click_right = "backup"
-
 ##### [[custom]]
 ##### name = "terminal"
 ##### text = "T"
@@ -169,6 +169,7 @@ on_click_right = "backup"
 ##### # type = "icons" | "text". Icons = PNG (icons/ vedľa configu alebo plná cesta). Text môže Nerd Font.
 [[menu]]
 name = "backup"
+autoclose = true
 type = "icons"
 title = ""              # prázdne = bez nadpisu
 columns = 7
@@ -228,6 +229,7 @@ command = "calendar"
 
 [[menu]]
 name = "settings"
+autoclose = true
 type = "text"
 title = ""
 columns = 3
@@ -331,6 +333,7 @@ command = "sh -c 'killall mpv; sleep 0.5; killall mpv'"
 
 [[menu]]
 name = "power"
+autoclose = true
 type = "text"
 title = ""
 columns = 5
