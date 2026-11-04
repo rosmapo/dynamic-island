@@ -1451,7 +1451,7 @@ impl Ui {
                 }
                 MenuKind::Text => {
                     let (bg_col, fg_col) = if hov && item.is_some() {
-                        (fade(t.accent, pa), fade(t.on_accent, pa))
+                        (fade(t.menu_selected, pa), fade(t.menu_selected_text, pa))
                     } else {
                         (fade(t.fg, 0.0), fade(t.fg, pa))
                     };

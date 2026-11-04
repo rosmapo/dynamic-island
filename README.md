@@ -182,4 +182,12 @@ label = "Napájanie"
 command = "module:power"
 ```
 
-Ikonové menu: **PNG** súbory (`icons/` vedľa `config.toml`, alebo plná cesta). Textové menu: Nerd Font / text. Hover text = inverzné `accent`/`on_accent`; ikony = jemné zvýraznenie.
+Ikonové menu: **PNG** súbory (`icons/` vedľa `config.toml`, alebo plná cesta). Textové menu: Nerd Font / text. Vybraná (hover) položka textového menu: pozadie `menu_selected`, text `menu_selected_text` v `[colors]`
+(`"@meno"` z `colors_file` alebo `"#rrggbb"`; predvolene `accent` / `on_accent`, takže bez nastavenia sa nič nemení);
+ikonové menu = jemné zvýraznenie.
+
+```toml
+[colors]
+menu_selected      = "#3b6ea5"
+menu_selected_text = "#ffffff"
+```

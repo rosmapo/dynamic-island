@@ -475,6 +475,9 @@ pub struct Theme {
     pub fg: Color,
     pub accent: Color,
     pub on_accent: Color,
+    /// pozadie a text vybranej (hover) položky textového menu; predvolene accent / on_accent
+    pub menu_selected: Color,
+    pub menu_selected_text: Color,
     pub alert: Color,
     pub on_alert: Color,
     pub urgent_border: Color,
@@ -543,11 +546,19 @@ impl Theme {
         };
         let surface = [0.094, 0.067, 0.082, 1.0]; // #181115
         let primary = [0.988, 0.690, 0.839, 1.0]; // #fcb0d6
+        // voliteľná farba bez vlastného predvoleného zápisu: neplatná / chýbajúca = `fallback`
+        let opt = |key: &str, fallback: Color| -> Color {
+            cfg.color_spec.get(key).and_then(|spec| resolve(spec, &pal)).unwrap_or(fallback)
+        };
+        let accent = get("accent", "@primary", primary);
+        let on_accent = get("on_accent", "@surface", surface);
         Theme {
             bg: get("background", "@surface", surface),
             fg: get("foreground", "@primary", primary),
-            accent: get("accent", "@primary", primary),
-            on_accent: get("on_accent", "@surface", surface),
+            accent,
+            on_accent,
+            menu_selected: opt("menu_selected", accent),
+            menu_selected_text: opt("menu_selected_text", on_accent),
             alert: get("alert", "#dc2f2f", [0.863, 0.184, 0.184, 1.0]),
             on_alert: get("on_alert", "#ffffff", [1.0; 4]),
             urgent_border: get("urgent_border", "#fa3939", [0.98, 0.22, 0.22, 1.0]),
@@ -569,6 +580,18 @@ mod tests {
         assert_eq!(resolve("@surface", &pal), pal.get("surface").copied());
         assert!(parse_hex("#fff").is_some() && parse_hex("zz").is_none());
     }
+    #[test]
+    fn menu_selected_colors() {
+        // bez nastavenia = accent / on_accent; `[colors]` ich prepíše ("#rrggbb"), neplatná hodnota sa ignoruje
+        let d = Theme::load(&Config::from_table(&Table::new(), PathBuf::from("x.toml")));
+        assert_eq!(d.menu_selected, d.accent);
+        assert_eq!(d.menu_selected_text, d.on_accent);
+        let t = toml::parse("[colors]\nmenu_selected=\"#ff0000\"\nmenu_selected_text=\"nonsense\"\n").unwrap();
+        let c = Theme::load(&Config::from_table(&t, PathBuf::from("x.toml")));
+        assert_eq!(c.menu_selected, [1.0, 0.0, 0.0, 1.0]);
+        assert_eq!(c.menu_selected_text, c.on_accent);
+    }
+
     #[test]
     fn config_defaults_and_custom() {
         let t = toml::parse(
