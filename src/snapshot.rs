@@ -31,7 +31,7 @@ pub fn run(cfg: Config, dir: &str) -> Result<(), String> {
             n += 1;
         }
         let frame = ui.build(text);
-        renderer.draw(w, h, &frame, text);
+        renderer.draw(w, h, &frame, text, &mut ui.icons);
         let px = renderer.read_pixels(w, h);
         std::fs::write(format!("{dir}/{name}_{w}x{h}.rgba"), px).map_err(|e| e.to_string())
     };

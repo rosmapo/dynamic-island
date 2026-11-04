@@ -41,6 +41,35 @@ pub struct IdleCfg {
     pub on_resume: String,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum MenuKind {
+    Icons,
+    Text,
+}
+
+#[derive(Clone, Debug, Default)]
+pub struct MenuItemCfg {
+    pub icon: String,
+    pub label: String,
+    pub command: String,
+}
+
+/// Vlastné menu (panel ako kalendár). Spúšťa sa cez `on_click = "meno_menu"`.
+#[derive(Clone, Debug)]
+pub struct MenuCfg {
+    pub name: String,
+    pub kind: MenuKind,
+    pub title: String,
+    pub columns: usize,
+    pub rows: Option<usize>,
+    pub icon_size: f32,
+    pub text_size: f32,
+    pub cell_width: f32,
+    pub gap: f32,
+    pub padding: f32,
+    pub items: Vec<MenuItemCfg>,
+}
+
 #[derive(Clone, Debug)]
 pub struct AutoCfg {
     pub enabled: bool,
@@ -121,6 +150,7 @@ pub struct Config {
     pub disks_timeout: i32,
 
     pub custom: Vec<CustomCfg>,
+    pub menus: Vec<MenuCfg>,
     pub auto: AutoCfg,
 
     pub notif_enabled: bool,
@@ -233,6 +263,51 @@ impl Config {
                         interval: c.f64_or("interval", 0.0),
                         json: c.bool_or("json", true),
                         btn: btn(c, "", "", ""),
+                    });
+                }
+            }
+        }
+
+        let mut menus = Vec::new();
+        if let Some(arr) = t.get("menu").and_then(|v| v.as_arr()) {
+            for v in arr {
+                if let Value::Table(m) = v {
+                    let name = m.str_or("name", "");
+                    if name.is_empty() {
+                        continue;
+                    }
+                    let kind = match m.str_or("type", "icons").as_str() {
+                        "text" => MenuKind::Text,
+                        _ => MenuKind::Icons,
+                    };
+                    let mut items = Vec::new();
+                    if let Some(ia) = m.get("item").and_then(|v| v.as_arr()) {
+                        for iv in ia {
+                            if let Value::Table(it) = iv {
+                                let icon = it.str_or("icon", "");
+                                let label = it.str_or("label", "");
+                                let command = it.str_or("command", "");
+                                if command.is_empty() && icon.is_empty() && label.is_empty() {
+                                    continue;
+                                }
+                                items.push(MenuItemCfg { icon, label, command });
+                            }
+                        }
+                    }
+                    let columns = m.f64_or("columns", 3.0).max(1.0) as usize;
+                    let rows = m.get("rows").and_then(|v| v.as_f64()).map(|v| v.max(1.0) as usize);
+                    menus.push(MenuCfg {
+                        name,
+                        kind,
+                        title: m.str_or("title", ""),
+                        columns,
+                        rows,
+                        icon_size: m.f64_or("icon_size", 28.0).max(8.0) as f32,
+                        text_size: m.f64_or("text_size", 15.0).max(8.0) as f32,
+                        cell_width: m.f64_or("cell_width", 120.0).max(20.0) as f32,
+                        gap: m.f64_or("gap", 8.0).max(0.0) as f32,
+                        padding: m.f64_or("padding", 12.0).max(0.0) as f32,
+                        items,
                     });
                 }
             }
@@ -378,6 +453,7 @@ impl Config {
                 })
                 .unwrap_or_default(),
             custom,
+            menus,
             auto: AutoCfg {
                 enabled: auto.bool_or("enabled", true),
                 bar_height: auto.f64_or("bar_height", 40.0),

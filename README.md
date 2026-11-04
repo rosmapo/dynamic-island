@@ -113,3 +113,44 @@ Notifikácie sa zobrazujú priamo v ostrovčeku (nahradia jeho obsah ako HUD), �
 `[[idle]]` s `timeout` (s), `on_idle`, `on_resume` používa `ext-idle-notify-v1`, rovnako ako `swayidle`; odstráň
 `swayidle -w timeout 600 'systemctl suspend' &` z autostartu. Inhibit (Super+Z vo Wayfire) ho blokuje rovnako ako swayidle.
 Ikona inhibítora je už len ukazovateľ (`on_click = ""`).
+
+## Vlastné menu
+
+Panel ako kalendár/disky: mriežka ikon alebo textu. **Nie je** samostatný modul v `modules` – spúšťa sa
+`on_click = "meno_menu"` na ľubovoľnom module (custom, clock, …). Zavrie sa klikom na položku alebo odchodom myši.
+
+```toml
+[[menu]]
+name = "apps"
+type = "icons"          # "icons" | "text"
+columns = 3
+icon_size = 28          # len icons
+gap = 8
+padding = 12
+# title = "Aplikácie"   # voliteľné; prázdne = bez nadpisu
+# rows = 2              # voliteľné
+
+[[menu.item]]
+icon = "firefox.png"     # PNG: len názov → ~/.config/dynamic-island/icons/
+# icon = "~/obrazky/app.png"  # alebo plná / expandovaná cesta
+command = "firefox"
+
+[[menu]]
+name = "power"
+type = "text"
+columns = 1
+text_size = 15
+cell_width = 140
+
+[[menu.item]]
+label = "Reštart"
+command = "systemctl reboot"
+
+# spúšťanie napr. cez custom modul:
+[[custom]]
+name = "apps_btn"
+text = "󰍜"
+on_click = "apps"
+```
+
+Ikonové menu: **PNG** súbory (`icons/` vedľa `config.toml`, alebo plná cesta). Textové menu: Nerd Font / text. Hover text = inverzné `accent`/`on_accent`; ikony = jemné zvýraznenie.

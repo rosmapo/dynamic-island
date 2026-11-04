@@ -295,7 +295,7 @@ pub fn run(cfg: Config) -> Result<(), String> {
                 wl.set_input_region(ir);
                 last_input = Some(ir);
             }
-            renderer.draw(cfg.surface_w * scale as u32, cfg.surface_h * scale as u32, &frame, &mut text);
+            renderer.draw(cfg.surface_w * scale as u32, cfg.surface_h * scale as u32, &frame, &mut text, &mut ui.icons);
             wl.request_frame();
             if !egl.swap() {
                 return Err("eglSwapBuffers zlyhalo".into());

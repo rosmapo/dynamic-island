@@ -9,6 +9,7 @@ mod disks;
 mod fonts;
 mod gl;
 mod history;
+mod icons;
 mod json;
 mod notify;
 mod providers;

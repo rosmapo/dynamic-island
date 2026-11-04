@@ -1,7 +1,8 @@
 //! Stav a rozloženie ostrovčeka: položky, HUD, kalendár, tooltipy, animácie.
 //! Všetky rozmery sa tu počítajú vo FYZICKÝCH pixeloch (logické * scale).
 use crate::anim::Spring;
-use crate::config::{Btn, Color, Config, Theme};
+use crate::config::{Btn, Color, Config, MenuKind, Theme};
+use crate::icons::IconCache;
 use crate::data::*;
 use crate::render::{Frame, Item, Rect};
 use crate::sys;
@@ -37,6 +38,7 @@ enum Panel {
     None,
     Calendar,
     Disks,
+    Menu(usize),
     Tip,
 }
 
@@ -46,6 +48,7 @@ enum Hit {
     Notif(usize),
     Disk(usize),
     DiskAll,
+    MenuItem(usize),
     Panel,
 }
 
@@ -106,6 +109,7 @@ pub struct Ui {
     pub theme: Theme,
     pub scale: f32,
     pub data: Data,
+    pub icons: IconCache,
     items: Vec<ItemState>,
     surf_w: f32,
     surf_h: f32,
@@ -244,6 +248,13 @@ impl Ui {
         let radius = cfg.radius;
         let mut ui = Ui {
             data: Data { custom: cfg.custom.iter().map(|c| CustomOut { text: c.text.clone(), ..Default::default() }).collect(), ..Default::default() },
+            icons: {
+                let dir = cfg.path.parent().map(|p| p.to_path_buf()).unwrap_or_else(|| std::path::PathBuf::from("."));
+                let mut ic = IconCache::new(dir);
+                let paths: Vec<String> = cfg.menus.iter().flat_map(|m| m.items.iter().map(|it| it.icon.clone())).filter(|s| !s.is_empty()).collect();
+                ic.preload(paths.iter().map(|s| s.as_str()));
+                ic
+            },
             cfg,
             theme,
             scale,
@@ -492,8 +503,11 @@ impl Ui {
             self.relayout_notifs(text);
         }
 
-        // notifikácia ostrovček vždy vysunie
-        let hidden = (self.manual_hidden || self.auto_hidden) && self.notifs.is_empty();
+        // notifikácia / otvorený veľký panel (menu, kalendár, disky) ostrovček vždy vysunie
+        // inak by autohide pri pohybe kurzorom k dolným položkám menu skryl celý ostrovček
+        let hidden = (self.manual_hidden || self.auto_hidden)
+            && self.notifs.is_empty()
+            && !self.big_open();
         self.hide.set(if hidden { 1.0 } else { 0.0 });
         if hidden && self.panel != Panel::None {
             self.set_panel(Panel::None);
@@ -708,32 +722,55 @@ impl Ui {
     }
 
     fn cal_size(&self) -> (f32, f32) {
-        if self.big == Panel::Disks {
-            let n = self.data.disks.len().max(1) as f32;
-            return (DISK_W * self.scale, (DISK_HEAD + n * DISK_ROW + DISK_BOTTOM) * self.scale);
+        match self.big {
+            Panel::Disks => {
+                let n = self.data.disks.len().max(1) as f32;
+                (DISK_W * self.scale, (DISK_HEAD + n * DISK_ROW + DISK_BOTTOM) * self.scale)
+            }
+            Panel::Menu(mi) => self.menu_size(mi),
+            _ => {
+                let w = 8.0 * CAL_CELL + 2.0 * CAL_PAD;
+                let h = CAL_HEAD + CAL_NAMES + 6.0 * CAL_ROW + CAL_BOTTOM;
+                (w * self.scale, h * self.scale)
+            }
         }
-        let w = 8.0 * CAL_CELL + 2.0 * CAL_PAD;
-        let h = CAL_HEAD + CAL_NAMES + 6.0 * CAL_ROW + CAL_BOTTOM;
+    }
+
+    /// Logické → fyzické rozmery mriežky menu.
+    fn menu_size(&self, mi: usize) -> (f32, f32) {
+        let Some(m) = self.cfg.menus.get(mi) else {
+            return (self.s(120.0), self.s(80.0));
+        };
+        let cols = m.columns.max(1);
+        let n = m.items.len();
+        let rows = m.rows.unwrap_or_else(|| ((n + cols - 1) / cols).max(1));
+        let title_h = if m.title.is_empty() { 0.0 } else { 36.0 };
+        let (cell_w, cell_h) = match m.kind {
+            MenuKind::Icons => (m.icon_size + 16.0, m.icon_size + 16.0),
+            MenuKind::Text => (m.cell_width, m.text_size + 18.0),
+        };
+        let w = m.padding * 2.0 + cols as f32 * cell_w + (cols.saturating_sub(1)) as f32 * m.gap;
+        let h = m.padding * 2.0 + title_h + rows as f32 * cell_h + (rows.saturating_sub(1)) as f32 * m.gap;
         (w * self.scale, h * self.scale)
     }
 
     fn set_panel(&mut self, p: Panel) {
         self.panel = p;
-        if matches!(p, Panel::Calendar | Panel::Disks) {
+        if matches!(p, Panel::Calendar | Panel::Disks | Panel::Menu(_)) {
             self.big = p;
         }
-        self.cal_t.set(if matches!(p, Panel::Calendar | Panel::Disks) { 1.0 } else { 0.0 });
+        self.cal_t.set(if matches!(p, Panel::Calendar | Panel::Disks | Panel::Menu(_)) { 1.0 } else { 0.0 });
         match p {
             Panel::None => {
                 self.panel_h.set(0.0);
                 self.panel_w.set(0.0);
                 self.panel_a.set(0.0);
             }
-            Panel::Calendar | Panel::Disks => {
+            Panel::Calendar | Panel::Disks | Panel::Menu(_) => {
                 if p == Panel::Calendar {
                     self.rebuild_cal();
                 }
-                // kalendár nahrádza ostrovček (ako HUD), nie je panelom pod riadkom
+                // veľký panel nahrádza ostrovček (ako HUD), nie je panelom pod riadkom
                 self.panel_shown = Panel::None;
                 self.panel_h.set(0.0);
                 self.panel_w.set(0.0);
@@ -764,7 +801,7 @@ impl Ui {
     }
 
     fn big_open(&self) -> bool {
-        matches!(self.panel, Panel::Calendar | Panel::Disks)
+        matches!(self.panel, Panel::Calendar | Panel::Disks | Panel::Menu(_))
     }
 
     fn toggle_disks(&mut self) {
@@ -784,6 +821,18 @@ impl Ui {
             self.cal_month = tm.tm_mon;
             self.set_panel(Panel::Calendar);
         }
+    }
+
+    fn toggle_menu(&mut self, idx: usize) {
+        if self.panel == Panel::Menu(idx) {
+            self.set_panel(Panel::None);
+        } else if idx < self.cfg.menus.len() {
+            self.set_panel(Panel::Menu(idx));
+        }
+    }
+
+    fn menu_index(&self, name: &str) -> Option<usize> {
+        self.cfg.menus.iter().position(|m| m.name == name)
     }
 
     fn cal_shift(&mut self, delta: i32) {
@@ -896,7 +945,11 @@ impl Ui {
         self.hover = None;
         self.tip_pending = None;
         match self.panel {
-            Panel::Calendar | Panel::Disks => self.collapse_at = Some(now + Duration::from_millis(self.cfg.collapse_ms)),
+            // menu ostáva otvorené po odchode myši – zatvára sa klikom na položku alebo mimo
+            Panel::Menu(_) => {}
+            Panel::Calendar | Panel::Disks => {
+                self.collapse_at = Some(now + Duration::from_millis(self.cfg.collapse_ms))
+            }
             Panel::Tip => self.collapse_at = Some(now + Duration::from_millis(200)),
             Panel::None => {}
         }
@@ -916,6 +969,26 @@ impl Ui {
     pub fn click(&mut self, button: u32, now: Instant) -> Vec<Action> {
         let mut out = Vec::new();
         let Some((x, y)) = self.ptr else { return out };
+
+        // custom menu: zatvorí sa klikom na položku alebo mimo (nie odchodom myši)
+        if matches!(self.panel, Panel::Menu(_)) {
+            if button == BTN_LEFT {
+                if let Some(Hit::MenuItem(k)) = self.hit_at(x, y) {
+                    if let Panel::Menu(mi) = self.panel {
+                        if let Some(item) = self.cfg.menus.get(mi).and_then(|m| m.items.get(k)) {
+                            if !item.command.is_empty() {
+                                out.push(Action::Run(item.command.clone()));
+                            }
+                        }
+                    }
+                }
+                // položka aj klik mimo → zatvoriť
+                self.set_panel(Panel::None);
+                self.collapse_at = None;
+            }
+            return out;
+        }
+
         let Some(h) = self.hit_at(x, y) else { return out };
         match h {
             Hit::Item(i) => {
@@ -939,6 +1012,10 @@ impl Ui {
                 } else if cmd == "calendar" {
                     self.tip_pending = None;
                     self.toggle_calendar();
+                    self.collapse_at = None;
+                } else if let Some(mi) = self.menu_index(&cmd) {
+                    self.tip_pending = None;
+                    self.toggle_menu(mi);
                     self.collapse_at = None;
                 } else if let Some(a) = Self::action_for(&cmd) {
                     if self.panel == Panel::Tip {
@@ -1008,6 +1085,12 @@ impl Ui {
             return None;
         }
         let k = 1.0 / self.scale;
+        // otvorené menu: celý povrch prijíma klik (zatvorenie klikom mimo)
+        if matches!(self.panel, Panel::Menu(_)) {
+            let w = (self.surf_w * k).ceil().max(1.0) as i32;
+            let h = (self.surf_h * k).ceil().max(1.0) as i32;
+            return Some((0, 0, w, h));
+        }
         let x0 = ((self.pill.x - 2.0) * k).floor().max(0.0) as i32;
         let y0 = ((self.pill.y - 2.0) * k).floor().max(0.0) as i32;
         let x1 = ((self.pill.x + self.pill.w + 2.0) * k).ceil() as i32;
@@ -1196,13 +1279,13 @@ impl Ui {
             self.build_notif(&mut frame, text, pill, nt);
         }
 
-        // ---- kalendár (nahrádza obsah ostrovčeka)
+        // ---- kalendár / disky / menu (nahrádza obsah ostrovčeka)
         if ct > 0.01 {
             self.hits.push((pill, Hit::Panel));
-            if self.big == Panel::Disks {
-                self.build_disks(&mut frame, text, pill, ct);
-            } else {
-                self.build_calendar(&mut frame, text, pill, pill.y, ct);
+            match self.big {
+                Panel::Disks => self.build_disks(&mut frame, text, pill, ct),
+                Panel::Menu(mi) => self.build_menu(&mut frame, text, pill, mi, ct),
+                _ => self.build_calendar(&mut frame, text, pill, pill.y, ct),
             }
         }
 
@@ -1223,10 +1306,125 @@ impl Ui {
                         text.layout_to(&mut frame.content, l, px2, pill.x + self.s(16.0), cy + (asc - desc) * 0.5, col);
                     }
                 }
-                Panel::None | Panel::Calendar | Panel::Disks => {}
+                Panel::None | Panel::Calendar | Panel::Disks | Panel::Menu(_) => {}
             }
         }
         frame
+    }
+
+    fn build_menu(&mut self, frame: &mut Frame, text: &mut Text, pill: Rect, mi: usize, pa: f32) {
+        let Some(menu) = self.cfg.menus.get(mi).cloned() else { return };
+        let s = self.scale;
+        let t = self.theme;
+        let cols = menu.columns.max(1);
+        let n = menu.items.len();
+        let rows = menu.rows.unwrap_or_else(|| ((n + cols - 1) / cols).max(1));
+        let pad = menu.padding * s;
+        let gap = menu.gap * s;
+        let title_h = if menu.title.is_empty() { 0.0 } else { 36.0 * s };
+        let (cell_w, cell_h) = match menu.kind {
+            MenuKind::Icons => ((menu.icon_size + 16.0) * s, (menu.icon_size + 16.0) * s),
+            MenuKind::Text => (menu.cell_width * s, (menu.text_size + 18.0) * s),
+        };
+        let icon_px = menu.icon_size * s;
+        let text_px = menu.text_size * s;
+        let (asc_t, desc_t) = text.line_metrics(text_px);
+        let (asc_h, desc_h) = text.line_metrics(self.px_font());
+
+        if !menu.title.is_empty() {
+            let px = self.px_font();
+            let tw = text.measure(&menu.title, px);
+            let cy = pill.y + title_h * 0.5;
+            text.layout_to(
+                &mut frame.content,
+                &menu.title,
+                px,
+                pill.x + (pill.w - tw) * 0.5,
+                cy + (asc_h - desc_h) * 0.5,
+                fade(t.fg, pa),
+            );
+        }
+
+        let grid_top = pill.y + pad + title_h;
+        let grid_left = pill.x + pad;
+        let total = rows * cols;
+        for i in 0..total {
+            let r = i / cols;
+            let c = i % cols;
+            let x = grid_left + c as f32 * (cell_w + gap);
+            let y = grid_top + r as f32 * (cell_h + gap);
+            let cell = Rect::new(x, y, cell_w, cell_h);
+            let item = menu.items.get(i);
+            let hov = self.hover == Some(Hit::MenuItem(i));
+
+            if item.is_some() {
+                self.hits.push((cell, Hit::MenuItem(i)));
+            }
+
+            match menu.kind {
+                MenuKind::Icons => {
+                    if hov && item.is_some() {
+                        frame.content.push(Item::Rect {
+                            r: cell,
+                            radius: 10.0 * s,
+                            soft: 0.8,
+                            color: fade(t.fg, 0.10 * pa),
+                        });
+                    }
+                    if let Some(it) = item {
+                        if !it.icon.is_empty() {
+                            // PNG: názov súboru → config/icons/, alebo plná cesta
+                            if let Some(icon) = self.icons.get(&it.icon) {
+                                let max = icon_px;
+                                let sc = (max / icon.w as f32).min(max / icon.h as f32);
+                                let dw = icon.w as f32 * sc;
+                                let dh = icon.h as f32 * sc;
+                                let ix = x + (cell_w - dw) * 0.5;
+                                let iy = y + (cell_h - dh) * 0.5;
+                                frame.content.push(Item::Image {
+                                    r: Rect::new(ix, iy, dw, dh),
+                                    path: it.icon.clone(),
+                                    color: [1.0, 1.0, 1.0, pa],
+                                });
+                            }
+                        }
+                    }
+                }
+                MenuKind::Text => {
+                    let (bg_col, fg_col) = if hov && item.is_some() {
+                        (fade(t.accent, pa), fade(t.on_accent, pa))
+                    } else {
+                        (fade(t.fg, 0.0), fade(t.fg, pa))
+                    };
+                    if hov && item.is_some() {
+                        frame.content.push(Item::Rect {
+                            r: cell,
+                            radius: 10.0 * s,
+                            soft: 0.8,
+                            color: bg_col,
+                        });
+                    }
+                    if let Some(it) = item {
+                        let label = if it.label.is_empty() { &it.icon } else { &it.label };
+                        if !label.is_empty() {
+                            let maxw = cell_w - 12.0 * s;
+                            let shown = Self::ellipsize(text, label, text_px, maxw);
+                            let tw = text.measure(&shown, text_px);
+                            let cx = x + (cell_w - tw) * 0.5;
+                            let cy = y + cell_h * 0.5;
+                            text.layout_to(
+                                &mut frame.content,
+                                &shown,
+                                text_px,
+                                cx,
+                                cy + (asc_t - desc_t) * 0.5,
+                                fg_col,
+                            );
+                        }
+                    }
+                }
+            }
+        }
     }
 
     fn build_disks(&mut self, frame: &mut Frame, text: &mut Text, pill: Rect, pa: f32) {

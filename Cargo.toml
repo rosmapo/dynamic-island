@@ -18,6 +18,7 @@ wayland-protocols-wlr = { version = "0.3", features = ["client"] }
 wayland-egl = "0.32"
 fontdb = "0.23"
 fontdue = "0.9"
+png = "0.17"
 
 [profile.release]
 opt-level = 3

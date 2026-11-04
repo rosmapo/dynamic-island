@@ -1,6 +1,8 @@
-//! OpenGL ES 2.0 renderer: SDF zaoblené obdĺžniky (tiene, AA) + textové quady z atlasu.
+//! OpenGL ES 2.0 renderer: SDF zaoblené obdĺžniky (tiene, AA) + textové quady z atlasu + RGBA ikony.
 use crate::gl::*;
+use crate::icons::{IconCache, IconRgba};
 use crate::text::{GlyphQuad, Text, ATLAS};
+use std::collections::HashMap;
 use std::ffi::CString;
 
 pub type Color = [f32; 4];
@@ -21,11 +23,13 @@ impl Rect {
     }
 }
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Debug)]
 pub enum Item {
     /// `soft` = šírka okraja v px (0.8 = ostrá hrana, väčšie = rozmazaný tieň); farba nie je premultiplikovaná
     Rect { r: Rect, radius: f32, soft: f32, color: Color },
     Glyph(GlyphQuad),
+    /// RGBA textúra; `path` je kľúč v IconCache (už expandovaný / resolved).
+    Image { r: Rect, path: String, color: Color },
 }
 
 #[derive(Default)]
@@ -75,17 +79,31 @@ precision mediump float;
 varying vec2 v_uv; varying vec4 v_color;
 uniform sampler2D u_tex;
 void main() { gl_FragColor = v_color * texture2D(u_tex, v_uv).a; }";
+// RGBA ikony (premultiplied alpha výstup)
+const IMAGE_FS: &str = "
+precision mediump float;
+varying vec2 v_uv; varying vec4 v_color;
+uniform sampler2D u_tex;
+void main() {
+  vec4 t = texture2D(u_tex, v_uv);
+  gl_FragColor = vec4(t.rgb * t.a, t.a) * v_color;
+}";
 
 pub struct Renderer {
     gl: Gl,
     rect_prog: u32,
     text_prog: u32,
+    image_prog: u32,
     rect_res: i32,
     text_res: i32,
     text_tex_u: i32,
+    image_res: i32,
+    image_tex_u: i32,
     vbo: u32,
     tex: u32,
     tex_gen: u32,
+    /// path → GL texture id
+    img_tex: HashMap<String, u32>,
     verts: Vec<f32>,
 }
 
@@ -99,6 +117,7 @@ impl Renderer {
         unsafe {
             let rect_prog = Self::program(&gl, RECT_VS, RECT_FS, &["a_pos", "a_local", "a_shape", "a_color"])?;
             let text_prog = Self::program(&gl, TEXT_VS, TEXT_FS, &["a_pos", "a_uv", "a_color"])?;
+            let image_prog = Self::program(&gl, TEXT_VS, IMAGE_FS, &["a_pos", "a_uv", "a_color"])?;
             let u = |p: u32, n: &str| {
                 let c = CString::new(n).unwrap();
                 (gl.get_uniform_location)(p, c.as_ptr())
@@ -106,6 +125,8 @@ impl Renderer {
             let rect_res = u(rect_prog, "u_res");
             let text_res = u(text_prog, "u_res");
             let text_tex_u = u(text_prog, "u_tex");
+            let image_res = u(image_prog, "u_res");
+            let image_tex_u = u(image_prog, "u_tex");
             let mut vbo = 0u32;
             (gl.gen_buffers)(1, &mut vbo);
             let mut tex = 0u32;
@@ -115,7 +136,22 @@ impl Renderer {
             (gl.tex_parameteri)(TEXTURE_2D, TEXTURE_MAG_FILTER, LINEAR);
             (gl.tex_parameteri)(TEXTURE_2D, TEXTURE_WRAP_S, CLAMP_TO_EDGE);
             (gl.tex_parameteri)(TEXTURE_2D, TEXTURE_WRAP_T, CLAMP_TO_EDGE);
-            Ok(Renderer { gl, rect_prog, text_prog, rect_res, text_res, text_tex_u, vbo, tex, tex_gen: u32::MAX, verts: Vec::new() })
+            Ok(Renderer {
+                gl,
+                rect_prog,
+                text_prog,
+                image_prog,
+                rect_res,
+                text_res,
+                text_tex_u,
+                image_res,
+                image_tex_u,
+                vbo,
+                tex,
+                tex_gen: u32::MAX,
+                img_tex: HashMap::new(),
+                verts: Vec::new(),
+            })
         }
     }
 
@@ -185,7 +221,43 @@ impl Renderer {
         text.dirty = false;
     }
 
-    pub fn draw(&mut self, w: u32, h: u32, frame: &Frame, text: &mut Text) {
+    fn ensure_image_tex(&mut self, path: &str, icons: &mut IconCache) -> Option<u32> {
+        if let Some(&id) = self.img_tex.get(path) {
+            return Some(id);
+        }
+        let icon = icons.get(path)?;
+        let id = self.upload_rgba(icon);
+        self.img_tex.insert(path.to_string(), id);
+        Some(id)
+    }
+
+    fn upload_rgba(&self, icon: &IconRgba) -> u32 {
+        unsafe {
+            let gl = &self.gl;
+            let mut id = 0u32;
+            (gl.gen_textures)(1, &mut id);
+            (gl.bind_texture)(TEXTURE_2D, id);
+            (gl.tex_parameteri)(TEXTURE_2D, TEXTURE_MIN_FILTER, LINEAR);
+            (gl.tex_parameteri)(TEXTURE_2D, TEXTURE_MAG_FILTER, LINEAR);
+            (gl.tex_parameteri)(TEXTURE_2D, TEXTURE_WRAP_S, CLAMP_TO_EDGE);
+            (gl.tex_parameteri)(TEXTURE_2D, TEXTURE_WRAP_T, CLAMP_TO_EDGE);
+            (gl.pixel_storei)(UNPACK_ALIGNMENT, 4);
+            (gl.tex_image_2d)(
+                TEXTURE_2D,
+                0,
+                RGBA as i32,
+                icon.w as i32,
+                icon.h as i32,
+                0,
+                RGBA,
+                UNSIGNED_BYTE,
+                icon.pixels.as_ptr() as *const _,
+            );
+            id
+        }
+    }
+
+    pub fn draw(&mut self, w: u32, h: u32, frame: &Frame, text: &mut Text, icons: &mut IconCache) {
         self.upload_atlas(text);
         unsafe {
             let gl = &self.gl;
@@ -196,7 +268,7 @@ impl Renderer {
             (gl.enable)(BLEND);
             (gl.blend_func)(ONE, ONE_MINUS_SRC_ALPHA);
         }
-        self.draw_items(&frame.back, w, h);
+        self.draw_items(&frame.back, w, h, icons);
         if let Some(c) = frame.clip {
             unsafe {
                 let x = c.x.floor().max(0.0) as i32;
@@ -207,25 +279,49 @@ impl Renderer {
                 (self.gl.scissor)(x, h as i32 - (y_top + ch), cw, ch);
             }
         }
-        self.draw_items(&frame.content, w, h);
+        self.draw_items(&frame.content, w, h, icons);
         unsafe { (self.gl.disable)(SCISSOR_TEST) };
     }
 
-    fn draw_items(&mut self, items: &[Item], w: u32, h: u32) {
+    fn draw_items(&mut self, items: &[Item], w: u32, h: u32, icons: &mut IconCache) {
         let mut i = 0;
         while i < items.len() {
-            let is_rect = matches!(items[i], Item::Rect { .. });
-            let mut j = i;
-            self.verts.clear();
-            while j < items.len() && matches!(items[j], Item::Rect { .. }) == is_rect {
-                match items[j] {
-                    Item::Rect { r, radius, soft, color } => self.push_rect(r, radius, soft, color),
-                    Item::Glyph(q) => self.push_glyph(q),
+            match &items[i] {
+                Item::Image { r, path, color } => {
+                    if let Some(tex) = self.ensure_image_tex(path, icons) {
+                        self.draw_image(*r, tex, *color, w, h);
+                    }
+                    i += 1;
                 }
-                j += 1;
+                Item::Rect { .. } => {
+                    self.verts.clear();
+                    let mut j = i;
+                    while j < items.len() {
+                        if let Item::Rect { r, radius, soft, color } = items[j] {
+                            self.push_rect(r, radius, soft, color);
+                            j += 1;
+                        } else {
+                            break;
+                        }
+                    }
+                    self.flush_rect(w, h);
+                    i = j;
+                }
+                Item::Glyph(_) => {
+                    self.verts.clear();
+                    let mut j = i;
+                    while j < items.len() {
+                        if let Item::Glyph(q) = &items[j] {
+                            self.push_glyph(*q);
+                            j += 1;
+                        } else {
+                            break;
+                        }
+                    }
+                    self.flush_glyph(w, h);
+                    i = j;
+                }
             }
-            self.flush(is_rect, w, h);
-            i = j;
         }
     }
 
@@ -258,39 +354,86 @@ impl Renderer {
         }
     }
 
-    fn flush(&mut self, rect: bool, w: u32, h: u32) {
+    fn flush_rect(&mut self, w: u32, h: u32) {
         if self.verts.is_empty() {
             return;
         }
-        let stride_f = if rect { 12 } else { 8 };
-        let count = (self.verts.len() / stride_f) as i32;
+        let count = (self.verts.len() / 12) as i32;
         unsafe {
             let gl = &self.gl;
             (gl.bind_buffer)(ARRAY_BUFFER, self.vbo);
             (gl.buffer_data)(ARRAY_BUFFER, (self.verts.len() * 4) as isize, self.verts.as_ptr() as *const _, STREAM_DRAW);
-            let stride = (stride_f * 4) as i32;
+            let stride = 48i32;
             let attr = |idx: u32, n: i32, off: usize| {
                 (gl.enable_vertex_attrib_array)(idx);
                 (gl.vertex_attrib_pointer)(idx, n, FLOAT, 0, stride, (off * 4) as *const _);
             };
-            if rect {
-                (gl.use_program)(self.rect_prog);
-                (gl.uniform2f)(self.rect_res, w as f32, h as f32);
-                attr(0, 2, 0);
-                attr(1, 2, 2);
-                attr(2, 4, 4);
-                attr(3, 4, 8);
-            } else {
-                (gl.use_program)(self.text_prog);
-                (gl.uniform2f)(self.text_res, w as f32, h as f32);
-                (gl.active_texture)(TEXTURE0);
-                (gl.bind_texture)(TEXTURE_2D, self.tex);
-                (gl.uniform1i)(self.text_tex_u, 0);
-                attr(0, 2, 0);
-                attr(1, 2, 2);
-                attr(2, 4, 4);
-            }
+            (gl.use_program)(self.rect_prog);
+            (gl.uniform2f)(self.rect_res, w as f32, h as f32);
+            attr(0, 2, 0);
+            attr(1, 2, 2);
+            attr(2, 4, 4);
+            attr(3, 4, 8);
             (gl.draw_arrays)(TRIANGLES, 0, count);
+        }
+    }
+
+    fn flush_glyph(&mut self, w: u32, h: u32) {
+        if self.verts.is_empty() {
+            return;
+        }
+        let count = (self.verts.len() / 8) as i32;
+        unsafe {
+            let gl = &self.gl;
+            (gl.bind_buffer)(ARRAY_BUFFER, self.vbo);
+            (gl.buffer_data)(ARRAY_BUFFER, (self.verts.len() * 4) as isize, self.verts.as_ptr() as *const _, STREAM_DRAW);
+            let stride = 32i32;
+            let attr = |idx: u32, n: i32, off: usize| {
+                (gl.enable_vertex_attrib_array)(idx);
+                (gl.vertex_attrib_pointer)(idx, n, FLOAT, 0, stride, (off * 4) as *const _);
+            };
+            (gl.use_program)(self.text_prog);
+            (gl.uniform2f)(self.text_res, w as f32, h as f32);
+            (gl.active_texture)(TEXTURE0);
+            (gl.bind_texture)(TEXTURE_2D, self.tex);
+            (gl.uniform1i)(self.text_tex_u, 0);
+            attr(0, 2, 0);
+            attr(1, 2, 2);
+            attr(2, 4, 4);
+            (gl.draw_arrays)(TRIANGLES, 0, count);
+        }
+    }
+
+    fn draw_image(&mut self, r: Rect, tex: u32, color: Color, w: u32, h: u32) {
+        let c = [color[0], color[1], color[2], color[3]]; // alpha multiply v shadri cez v_color
+        let (x0, y0, x1, y1) = (r.x, r.y, r.x + r.w, r.y + r.h);
+        let verts = [
+            // PNG zhora nadol → prvý riadok na v=0; y0 (hore) = v=0
+            x0, y0, 0.0, 0.0, c[0], c[1], c[2], c[3],
+            x1, y0, 1.0, 0.0, c[0], c[1], c[2], c[3],
+            x0, y1, 0.0, 1.0, c[0], c[1], c[2], c[3],
+            x1, y0, 1.0, 0.0, c[0], c[1], c[2], c[3],
+            x1, y1, 1.0, 1.0, c[0], c[1], c[2], c[3],
+            x0, y1, 0.0, 1.0, c[0], c[1], c[2], c[3],
+        ];
+        unsafe {
+            let gl = &self.gl;
+            (gl.bind_buffer)(ARRAY_BUFFER, self.vbo);
+            (gl.buffer_data)(ARRAY_BUFFER, (verts.len() * 4) as isize, verts.as_ptr() as *const _, STREAM_DRAW);
+            let stride = 32i32;
+            let attr = |idx: u32, n: i32, off: usize| {
+                (gl.enable_vertex_attrib_array)(idx);
+                (gl.vertex_attrib_pointer)(idx, n, FLOAT, 0, stride, (off * 4) as *const _);
+            };
+            (gl.use_program)(self.image_prog);
+            (gl.uniform2f)(self.image_res, w as f32, h as f32);
+            (gl.active_texture)(TEXTURE0);
+            (gl.bind_texture)(TEXTURE_2D, tex);
+            (gl.uniform1i)(self.image_tex_u, 0);
+            attr(0, 2, 0);
+            attr(1, 2, 2);
+            attr(2, 4, 4);
+            (gl.draw_arrays)(TRIANGLES, 0, 6);
         }
     }
 
