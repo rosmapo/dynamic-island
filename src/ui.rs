@@ -148,6 +148,10 @@ pub struct Ui {
     hover: Option<Hit>,
     tip_pending: Option<(usize, Instant)>,
     collapse_at: Option<Instant>,
+    /// po prepnutí panelu cez `module:` sa odchod myši ignoruje, kým myš nevstúpi do nového panela
+    /// (nový panel môže mať inú veľkosť, takže myš po kliku často skončí mimo neho)
+    /// Some(najskôr kedy ho pohyb myši môže zrušiť) = odklad zatvorenia je aktívny
+    grace: Option<Instant>,
 
     pub pill: Rect,
     hits: Vec<(Rect, Hit)>,
@@ -293,6 +297,7 @@ impl Ui {
             hover: None,
             tip_pending: None,
             collapse_at: None,
+            grace: None,
             pill: Rect::new(0.0, 0.0, 0.0, 0.0),
             hits: Vec::new(),
         };
@@ -756,6 +761,9 @@ impl Ui {
 
     fn set_panel(&mut self, p: Panel) {
         self.panel = p;
+        if p == Panel::None {
+            self.grace = None;
+        }
         if matches!(p, Panel::Calendar | Panel::Disks | Panel::Menu(_)) {
             self.big = p;
         }
@@ -839,6 +847,11 @@ impl Ui {
         }
     }
 
+    /// Po otvorení veľkého panela dostane myš čas dôjsť k nemu (pozri `pointer_leave`).
+    fn start_grace(&mut self, now: Instant) {
+        self.grace = if self.big_open() { Some(now + Duration::from_millis(500)) } else { None };
+    }
+
     fn menu_index(&self, name: &str) -> Option<usize> {
         self.cfg.menus.iter().position(|m| m.name == name)
     }
@@ -920,6 +933,11 @@ impl Ui {
         let (x, y) = (lx * self.scale, ly * self.scale);
         self.ptr = Some((x, y));
         let h = self.hit_at(x, y);
+        // odklad zruší až vstup myši do panela, a to až po dobehnutí animácie jeho veľkosti
+        // (počas nej ešte pohyb zasahuje starý rozmer ostrovčeka)
+        if h.is_some() && self.grace.map(|t| now >= t).unwrap_or(false) {
+            self.grace = None;
+        }
         if h == self.hover {
             return;
         }
@@ -952,6 +970,11 @@ impl Ui {
         self.ptr = None;
         self.hover = None;
         self.tip_pending = None;
+        // práve otvorený panel (kliknutím na modul / položku menu): nový panel býva menší ako ostrovček,
+        // takže myš po kliku zvyčajne skončí mimo neho – odchod sa ignoruje, kým do panela nevstúpi
+        if self.grace.is_some() {
+            return;
+        }
         match self.panel {
             // menu ostáva otvorené po odchode myši (zatvára sa klikom na položku alebo mimo),
             // pokiaľ nemá `autoclose = true` – vtedy sa zavrie ako kalendár
@@ -979,6 +1002,34 @@ impl Ui {
         }
     }
 
+    /// `module:NAZOV` v príkaze položky menu = vnútorná akcia ostrovčeka namiesto shell príkazu.
+    /// NAZOV: `calendar`, `disks` (zoznam diskov), meno iného `[[menu]]`, alebo vstavaná akcia
+    /// (`audio-mute`, `layout-toggle`, `inhibit-toggle`, `eject-all`). Neznámy názov sa ignoruje.
+    fn run_module(&mut self, name: &str) -> Option<Action> {
+        match name.trim() {
+            "calendar" => {
+                let tm = sys::local_tm(sys::now_unix());
+                self.cal_year = tm.tm_year + 1900;
+                self.cal_month = tm.tm_mon;
+                self.set_panel(Panel::Calendar);
+                None
+            }
+            "disks" => {
+                if !self.data.disks.is_empty() {
+                    self.set_panel(Panel::Disks);
+                }
+                None
+            }
+            other => match self.menu_index(other) {
+                Some(mi) => {
+                    self.set_panel(Panel::Menu(mi));
+                    None
+                }
+                None => Self::action_for(other).filter(|a| !matches!(a, Action::Run(_))),
+            },
+        }
+    }
+
     pub fn click(&mut self, button: u32, now: Instant) -> Vec<Action> {
         let mut out = Vec::new();
         let Some((x, y)) = self.ptr else { return out };
@@ -986,18 +1037,29 @@ impl Ui {
         // custom menu: zatvorí sa klikom na položku alebo mimo (nie odchodom myši)
         if matches!(self.panel, Panel::Menu(_)) {
             if button == BTN_LEFT {
-                if let Some(Hit::MenuItem(k)) = self.hit_at(x, y) {
-                    if let Panel::Menu(mi) = self.panel {
-                        if let Some(item) = self.cfg.menus.get(mi).and_then(|m| m.items.get(k)) {
-                            if !item.command.is_empty() {
-                                out.push(Action::Run(item.command.clone()));
-                            }
-                        }
+                let hit = self.hit_at(x, y);
+                let mut cmd = String::new();
+                if let (Some(Hit::MenuItem(k)), Panel::Menu(mi)) = (hit, self.panel) {
+                    if let Some(item) = self.cfg.menus.get(mi).and_then(|m| m.items.get(k)) {
+                        cmd = item.command.clone();
                     }
+                }
+                // `module:...` – otvorí iný panel ostrovčeka (kalendár, iné menu) namiesto shell príkazu
+                if let Some(name) = cmd.strip_prefix("module:") {
+                    let name = name.to_string();
+                    self.set_panel(Panel::None);
+                    self.collapse_at = None;
+                    self.tip_pending = None;
+                    out.extend(self.run_module(&name));
+                    self.start_grace(now);
+                    return out;
+                }
+                if !cmd.is_empty() {
+                    out.push(Action::Run(cmd));
                 }
                 // položka aj klik mimo → zatvoriť; pri `autoclose` je klik na okraj/nadpis
                 // v paneli ešte „v menu“, takže ho nezatvára (zavrie ho položka alebo odchod myši)
-                let on_item = matches!(self.hit_at(x, y), Some(Hit::MenuItem(_)));
+                let on_item = matches!(hit, Some(Hit::MenuItem(_)));
                 if on_item || !self.menu_autoclose() {
                     self.set_panel(Panel::None);
                     self.collapse_at = None;
@@ -1026,14 +1088,17 @@ impl Ui {
                         self.toggle_disks();
                     }
                     self.collapse_at = None;
+                    self.start_grace(now);
                 } else if cmd == "calendar" {
                     self.tip_pending = None;
                     self.toggle_calendar();
                     self.collapse_at = None;
+                    self.start_grace(now);
                 } else if let Some(mi) = self.menu_index(&cmd) {
                     self.tip_pending = None;
                     self.toggle_menu(mi);
                     self.collapse_at = None;
+                    self.start_grace(now);
                 } else if let Some(a) = Self::action_for(&cmd) {
                     if self.panel == Panel::Tip {
                         self.set_panel(Panel::None);

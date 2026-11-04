@@ -155,4 +155,33 @@ text = "󰍜"
 on_click = "apps"
 ```
 
+### Príkaz `module:` v položke menu
+
+`command` položky je bežne shell príkaz. S predponou `module:` sa namiesto toho spustí vnútorná akcia ostrovčeka –
+menu sa zatvorí a otvorí sa požadovaný panel (alebo sa vykoná akcia):
+
+| `command` | výsledok |
+|---|---|
+| `"calendar"` | spustí sa program `calendar` (ak existuje) ako každý iný shell príkaz |
+| `"module:calendar"` | otvorí sa kalendár v ostrovčeku |
+| `"module:power"` | otvorí sa iné menu s `name = "power"` (ľubovoľné `[[menu]]`) |
+| `"module:disks"` | zoznam diskov (len ak je niečo pripojené) |
+| `"module:audio-mute"`, `module:layout-toggle`, `module:inhibit-toggle`, `module:eject-all` | vstavané akcie ako pri `on_click` modulov |
+
+Neznámy názov sa ignoruje (menu sa len zavrie).
+
+Po otvorení panela (kliknutím na modul ostrovčeka alebo cez `module:`) sa odchod myši ignoruje, kým myš nevstúpi do
+nového panela: nový panel býva menší ako široký ostrovček, takže myš po kliku zvyčajne skončí mimo neho a kalendár,
+disky či menu s `autoclose` by sa hneď zavreli. Po vstupe myši do panela platí bežné zatváranie odchodom myši.
+
+```toml
+[[menu.item]]
+label = "Kalendár"
+command = "module:calendar"
+
+[[menu.item]]
+label = "Napájanie"
+command = "module:power"
+```
+
 Ikonové menu: **PNG** súbory (`icons/` vedľa `config.toml`, alebo plná cesta). Textové menu: Nerd Font / text. Hover text = inverzné `accent`/`on_accent`; ikony = jemné zvýraznenie.

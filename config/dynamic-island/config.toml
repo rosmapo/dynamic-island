@@ -3,7 +3,7 @@
 # Farby sa berú z matugen súboru (colors_file) a menia sa ŽIVO bez reštartu.
 
 # poradie modulov (ako group/island vo waybare)
-modules = ["network", "vpn", "clock", "keyboard", "off", "audio", "capslock", "inhibitor", "recorder", "disks"]
+modules = ["network", "vpn", "clock", "keyboard", "audio", "capslock", "inhibitor", "recorder", "off", "disks"]
 
 [island]
 colors_file = "~/.config/dynamic-island/colors.css"   # @define-color surface / primary ...
@@ -188,7 +188,7 @@ command = "foot"
 
 [[menu.item]]
 icon = "axagon.png"
-command = "mmedit"
+command = "module:power"
 [[menu.item]]
 icon = "samsung.png"
 command = "mmedit"
@@ -199,7 +199,7 @@ command = "mmedit"
 icon = "dotfiles.png"
 command = "mmedit"
 icon = "timeshift.png"
-command = "calendar"
+command = "module:calendar"
 
 #####
 ##### [[menu]]
@@ -301,6 +301,7 @@ command = "~/.config/wayfire/scripts/wallpaper"
 
 [[menu]]
 name = "radio"
+autoclose = true
 type = "text"
 title = ""
 columns = 1
