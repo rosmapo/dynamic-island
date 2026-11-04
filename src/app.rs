@@ -46,8 +46,43 @@ pub fn spawn_detached(cmd: &str) {
     }
 }
 
-fn run_action(a: Action, cfg: &Config, disk_tx: &Option<Tx<DiskCmd>>) {
+/// Spustí `sh -c cmd` a pošle mu `input` (+ nový riadok) na vstup; beží oddelene od ostrovčeka.
+fn spawn_with_stdin(cmd: &str, input: String) {
+    let mut c = Command::new("sh");
+    c.arg("-c").arg(cmd).stdin(Stdio::piped()).stdout(Stdio::null()).stderr(Stdio::null());
+    unsafe {
+        c.pre_exec(|| {
+            sys::new_session();
+            Ok(())
+        });
+    }
+    if let Ok(mut child) = c.spawn() {
+        std::thread::spawn(move || {
+            if let Some(mut si) = child.stdin.take() {
+                use std::io::Write;
+                let _ = si.write_all(input.as_bytes());
+                let _ = si.write_all(b"\n");
+            }
+            let _ = child.wait();
+        });
+    }
+}
+
+fn run_action(a: Action, cfg: &Config, disk_tx: &Option<Tx<DiskCmd>>, tx: &Tx<Msg>) {
     match a {
+        Action::ClipLoad => {
+            // história sa načíta na pozadí, hlavná slučka dostane `Msg::Clip`
+            let (cmd, max, tx) = (cfg.clip_list.clone(), cfg.clip_max, tx.clone());
+            std::thread::spawn(move || {
+                let out = Command::new("sh").arg("-c").arg(&cmd).stdin(Stdio::null()).stderr(Stdio::null()).output();
+                let entries = match out {
+                    Ok(o) => crate::data::parse_clip_list(&String::from_utf8_lossy(&o.stdout), max),
+                    Err(_) => Vec::new(),
+                };
+                tx.send(Msg::Clip(entries));
+            });
+        }
+        Action::ClipCopy(line) => spawn_with_stdin(&cfg.clip_copy, line),
         Action::DiskEject(b) => {
             if let Some(t) = disk_tx {
                 t.send(DiskCmd::Eject(b));
@@ -255,7 +290,7 @@ pub fn run(cfg: Config) -> Result<(), String> {
                 PtrEvent::Leave => ui.pointer_leave(now),
                 PtrEvent::Button(b, true) => {
                     for a in ui.click(b, now) {
-                        run_action(a, &cfg, &disk_tx);
+                        run_action(a, &cfg, &disk_tx, &tx);
                     }
                 }
                 PtrEvent::Button(_, false) => {}

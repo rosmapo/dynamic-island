@@ -9,6 +9,8 @@ pub type Color = [f32; 4];
 pub struct Btn {
     pub click: String,
     pub right: String,
+    /// stredné tlačidlo (`on_click_middle`); predvolene bez akcie
+    pub middle: String,
     pub tooltip: String,
 }
 
@@ -151,6 +153,13 @@ pub struct Config {
 
     pub custom: Vec<CustomCfg>,
     pub menus: Vec<MenuCfg>,
+    /// panel histórie schránky (cliphist) – `[clipboard]`
+    pub clip_font: f32,
+    pub clip_rows: usize,
+    pub clip_width: f32,
+    pub clip_max: usize,
+    pub clip_list: String,
+    pub clip_copy: String,
     pub auto: AutoCfg,
 
     pub notif_enabled: bool,
@@ -199,7 +208,12 @@ fn font_list(t: &Table, key: &str, default: &[&str]) -> Vec<String> {
 }
 
 fn btn(t: &Table, click: &str, right: &str, tip: &str) -> Btn {
-    Btn { click: t.str_or("on_click", click), right: t.str_or("on_click_right", right), tooltip: t.str_or("tooltip", tip) }
+    Btn {
+        click: t.str_or("on_click", click),
+        right: t.str_or("on_click_right", right),
+        middle: t.str_or("on_click_middle", ""),
+        tooltip: t.str_or("tooltip", tip),
+    }
 }
 
 impl Config {
@@ -225,6 +239,7 @@ impl Config {
             }
         }
 
+        let clip = t.sub("clipboard");
         let clock = t.sub("clock");
         let net = t.sub("network");
         let vpn = t.sub("vpn");
@@ -454,6 +469,12 @@ impl Config {
                 .unwrap_or_default(),
             custom,
             menus,
+            clip_font: clip.f64_or("font_size", 15.0).clamp(8.0, 64.0) as f32,
+            clip_rows: clip.f64_or("rows", 8.0).clamp(1.0, 50.0) as usize,
+            clip_width: clip.f64_or("width", 420.0).clamp(120.0, 1400.0) as f32,
+            clip_max: clip.f64_or("max_items", 200.0).clamp(1.0, 5000.0) as usize,
+            clip_list: clip.str_or("list_command", "cliphist list"),
+            clip_copy: clip.str_or("copy_command", "cliphist decode | wl-copy"),
             auto: AutoCfg {
                 enabled: auto.bool_or("enabled", true),
                 bar_height: auto.f64_or("bar_height", 40.0),
@@ -590,6 +611,26 @@ mod tests {
         let c = Theme::load(&Config::from_table(&t, PathBuf::from("x.toml")));
         assert_eq!(c.menu_selected, [1.0, 0.0, 0.0, 1.0]);
         assert_eq!(c.menu_selected_text, c.on_accent);
+    }
+
+    #[test]
+    fn middle_click_binding() {
+        let t = toml::parse("[clock]\non_click_middle=\"clipboard\"\n[[custom]]\nname=\"x\"\ntext=\"t\"\non_click_middle=\"foot\"\n").unwrap();
+        let c = Config::from_table(&t, PathBuf::new());
+        assert_eq!(c.clock.middle, "clipboard");
+        assert_eq!(c.custom[0].btn.middle, "foot");
+        assert_eq!(c.net.middle, "");
+    }
+
+    #[test]
+    fn clipboard_config() {
+        let d = Config::from_table(&Table::new(), PathBuf::new());
+        assert_eq!((d.clip_rows, d.clip_max), (8, 200));
+        assert_eq!(d.clip_list, "cliphist list");
+        assert_eq!(d.clip_copy, "cliphist decode | wl-copy");
+        let t = toml::parse("[clipboard]\nfont_size=18\nrows=5\nwidth=500\n").unwrap();
+        let c = Config::from_table(&t, PathBuf::new());
+        assert_eq!((c.clip_font, c.clip_rows, c.clip_width), (18.0, 5, 500.0));
     }
 
     #[test]

@@ -104,6 +104,16 @@ tooltip = "{list}"    # {list} = „názov (veľkosť)  →  bod pripojenia“ p
 # on_click = "menu"   # "menu" | "eject-all" | príkaz
 # on_click_right = "eject-all"
 
+# História schránky (cliphist): otvorí sa on_click = "clipboard" (napr. on_click_right pri [keyboard]) alebo
+# položkou menu s command = "module:clipboard". Klik na položku ju skopíruje, koliesko skroluje.
+[clipboard]
+font_size = 15
+rows = 8              # viditeľné riadky; viac položiek = skrolovanie
+width = 420
+max_items = 200
+# list_command = "cliphist list"
+# copy_command = "cliphist decode | wl-copy"
+
 [autohide]            # port waybar_autohide.py – vyžaduje Wayfire ipc + ipc-rules
 enabled = true
 bar_height = 40

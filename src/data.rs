@@ -49,9 +49,34 @@ pub struct DiskInfo {
     pub size: String,
 }
 
+/// Položka histórie schránky (cliphist): `raw` je celý riadok z `cliphist list` (ide na vstup
+/// `cliphist decode`), `text` je náhľad na zobrazenie.
+#[derive(Clone, Debug, PartialEq, Default)]
+pub struct ClipEntry {
+    pub raw: String,
+    pub text: String,
+}
+
+/// Rozoberie výstup `cliphist list` (riadok = `id<TAB>náhľad`), najviac `max` najnovších položiek.
+pub fn parse_clip_list(out: &str, max: usize) -> Vec<ClipEntry> {
+    out.lines()
+        .filter(|l| !l.trim().is_empty())
+        .take(max)
+        .map(|l| {
+            let text = match l.split_once('\t') {
+                Some((_, t)) => t,
+                None => l,
+            };
+            ClipEntry { raw: l.to_string(), text: text.split_whitespace().collect::<Vec<_>>().join(" ") }
+        })
+        .collect()
+}
+
 #[derive(Debug)]
 pub enum Msg {
     Disks(Vec<DiskInfo>),
+    /// história schránky (najnovšie prvé)
+    Clip(Vec<ClipEntry>),
     Notif(Notification),
     NotifClose(u32),
     Net(NetInfo),
@@ -122,6 +147,15 @@ mod tests {
     #[test]
     fn markup() {
         assert_eq!(strip_markup("a <b>b</b> &amp; <a href=\"x\">c</a>"), "a b & c");
+    }
+    #[test]
+    fn clip_list() {
+        let out = "12\thello   world\n\n11\t[[ binary data 1 KiB png 10x10 ]]\n10\tx\n";
+        let v = parse_clip_list(out, 2);
+        assert_eq!(v.len(), 2);
+        assert_eq!(v[0], ClipEntry { raw: "12\thello   world".into(), text: "hello world".into() });
+        assert_eq!(v[1].text, "[[ binary data 1 KiB png 10x10 ]]");
+        assert_eq!(parse_clip_list("", 5), vec![]);
     }
     #[test]
     fn unescape() {

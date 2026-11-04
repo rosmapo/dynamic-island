@@ -31,6 +31,10 @@ pub enum Action {
     AudioMute,
     DiskEject(String),
     DiskEjectAll,
+    /// načítať históriu schránky (výsledok príde ako `Msg::Clip`)
+    ClipLoad,
+    /// skopírovať položku histórie (celý riadok z `cliphist list`)
+    ClipCopy(String),
 }
 
 #[derive(Clone, Copy, PartialEq, Debug)]
@@ -39,6 +43,7 @@ enum Panel {
     Calendar,
     Disks,
     Menu(usize),
+    Clip,
     Tip,
 }
 
@@ -49,6 +54,7 @@ enum Hit {
     Disk(usize),
     DiskAll,
     MenuItem(usize),
+    ClipItem(usize),
     Panel,
 }
 
@@ -90,6 +96,7 @@ struct Cell {
 
 const BTN_LEFT: u32 = 0x110;
 const BTN_RIGHT: u32 = 0x111;
+const BTN_MIDDLE: u32 = 0x112;
 
 // logické rozmery kalendára
 const CAL_CELL: f32 = 34.0;
@@ -103,6 +110,13 @@ const DISK_W: f32 = 340.0;
 const DISK_HEAD: f32 = 40.0;
 const DISK_ROW: f32 = 46.0;
 const DISK_BOTTOM: f32 = 12.0;
+
+// panel schránky (logické px)
+const CLIP_PAD: f32 = 10.0;
+const CLIP_ROW_EXTRA: f32 = 14.0; // výška riadku = písmo + toto
+const CLIP_SCROLLBAR: f32 = 8.0;
+/// jednotka osi kolieska zodpovedajúca jednému riadku
+const CLIP_SCROLL_UNIT: f32 = 10.0;
 
 pub struct Ui {
     pub cfg: Config,
@@ -143,6 +157,13 @@ pub struct Ui {
     notif_w: Spring,
     notif_h: Spring,
     events: Vec<NotifEvent>,
+    /// história schránky (najnovšie prvé), prvý viditeľný riadok, nazbieraný posun kolieska
+    clip: Vec<ClipEntry>,
+    clip_loaded: bool,
+    clip_scroll: usize,
+    clip_acc: f32,
+    /// akcie, ktoré vznikli mimo `click` (otvorenie panela) – `click` ich vráti volajúcemu
+    queued: Vec<Action>,
 
     ptr: Option<(f32, f32)>,
     hover: Option<Hit>,
@@ -293,6 +314,11 @@ impl Ui {
             notif_w: Spring::with(0.0, 240.0, 26.0),
             notif_h: Spring::with(0.0, 240.0, 26.0),
             events: Vec::new(),
+            clip: Vec::new(),
+            clip_loaded: false,
+            clip_scroll: 0,
+            clip_acc: 0.0,
+            queued: Vec::new(),
             ptr: None,
             hover: None,
             tip_pending: None,
@@ -337,6 +363,12 @@ impl Ui {
                 if self.data.disks.is_empty() && self.panel == Panel::Disks {
                     self.set_panel(Panel::None);
                 }
+            }
+            Msg::Clip(v) => {
+                self.clip = v;
+                self.clip_loaded = true;
+                let max_start = self.clip.len().saturating_sub(self.cfg.clip_rows);
+                self.clip_scroll = self.clip_scroll.min(max_start);
             }
             Msg::Net(n) => self.data.net = n,
             Msg::Vpn(v) => self.data.vpn = v,
@@ -524,7 +556,7 @@ impl Ui {
         };
         let mut busy = false;
         for (i, it) in self.items.iter_mut().enumerate() {
-            let clickable = it.badge.is_none() && !(it.btn.click.is_empty() && it.btn.right.is_empty());
+            let clickable = it.badge.is_none() && !(it.btn.click.is_empty() && it.btn.right.is_empty() && it.btn.middle.is_empty());
             it.hover.set(if hovered == Some(i) && clickable { 1.0 } else { 0.0 });
             it.w.step(dt);
             it.a.step(dt);
@@ -733,6 +765,11 @@ impl Ui {
                 (DISK_W * self.scale, (DISK_HEAD + n * DISK_ROW + DISK_BOTTOM) * self.scale)
             }
             Panel::Menu(mi) => self.menu_size(mi),
+            Panel::Clip => {
+                let row_h = self.cfg.clip_font + CLIP_ROW_EXTRA;
+                let h = 2.0 * CLIP_PAD + self.clip_rows() as f32 * row_h;
+                (self.cfg.clip_width * self.scale, h * self.scale)
+            }
             _ => {
                 let w = 8.0 * CAL_CELL + 2.0 * CAL_PAD;
                 let h = CAL_HEAD + CAL_NAMES + 6.0 * CAL_ROW + CAL_BOTTOM;
@@ -764,17 +801,23 @@ impl Ui {
         if p == Panel::None {
             self.grace = None;
         }
-        if matches!(p, Panel::Calendar | Panel::Disks | Panel::Menu(_)) {
+        if matches!(p, Panel::Calendar | Panel::Disks | Panel::Menu(_) | Panel::Clip) {
             self.big = p;
         }
-        self.cal_t.set(if matches!(p, Panel::Calendar | Panel::Disks | Panel::Menu(_)) { 1.0 } else { 0.0 });
+        self.cal_t.set(if matches!(p, Panel::Calendar | Panel::Disks | Panel::Menu(_) | Panel::Clip) { 1.0 } else { 0.0 });
+        if p == Panel::Clip {
+            // pri každom otvorení znova načítať históriu (staré položky ostanú viditeľné, kým nepríde nová)
+            self.clip_scroll = 0;
+            self.clip_acc = 0.0;
+            self.queued.push(Action::ClipLoad);
+        }
         match p {
             Panel::None => {
                 self.panel_h.set(0.0);
                 self.panel_w.set(0.0);
                 self.panel_a.set(0.0);
             }
-            Panel::Calendar | Panel::Disks | Panel::Menu(_) => {
+            Panel::Calendar | Panel::Disks | Panel::Menu(_) | Panel::Clip => {
                 if p == Panel::Calendar {
                     self.rebuild_cal();
                 }
@@ -809,7 +852,20 @@ impl Ui {
     }
 
     fn big_open(&self) -> bool {
-        matches!(self.panel, Panel::Calendar | Panel::Disks | Panel::Menu(_))
+        matches!(self.panel, Panel::Calendar | Panel::Disks | Panel::Menu(_) | Panel::Clip)
+    }
+
+    /// Počet riadkov panela schránky, ktoré sú práve vidieť.
+    fn clip_rows(&self) -> usize {
+        self.cfg.clip_rows.min(self.clip.len()).max(1)
+    }
+
+    fn toggle_clip(&mut self) {
+        if self.panel == Panel::Clip {
+            self.set_panel(Panel::None);
+        } else {
+            self.set_panel(Panel::Clip);
+        }
     }
 
     fn toggle_disks(&mut self) {
@@ -968,7 +1024,7 @@ impl Ui {
             return;
         }
         match self.panel {
-            Panel::Calendar | Panel::Disks | Panel::Menu(_) => {
+            Panel::Calendar | Panel::Disks | Panel::Menu(_) | Panel::Clip => {
                 self.collapse_at = Some(now + Duration::from_millis(self.cfg.collapse_ms))
             }
             Panel::Tip => self.collapse_at = Some(now + Duration::from_millis(200)),
@@ -978,7 +1034,7 @@ impl Ui {
 
     fn action_for(cmd: &str) -> Option<Action> {
         match cmd {
-            "" | "calendar" | "menu" => None,
+            "" | "calendar" | "menu" | "clipboard" => None,
             "eject-all" => Some(Action::DiskEjectAll),
             "inhibit-toggle" => Some(Action::InhibitToggle),
             "layout-toggle" => Some(Action::LayoutToggle),
@@ -1005,6 +1061,10 @@ impl Ui {
                 }
                 None
             }
+            "clipboard" => {
+                self.set_panel(Panel::Clip);
+                None
+            }
             other => match self.menu_index(other) {
                 Some(mi) => {
                     self.set_panel(Panel::Menu(mi));
@@ -1016,6 +1076,12 @@ impl Ui {
     }
 
     pub fn click(&mut self, button: u32, now: Instant) -> Vec<Action> {
+        let mut out = self.click_inner(button, now);
+        out.extend(self.queued.drain(..));
+        out
+    }
+
+    fn click_inner(&mut self, button: u32, now: Instant) -> Vec<Action> {
         let mut out = Vec::new();
         let Some((x, y)) = self.ptr else { return out };
 
@@ -1057,6 +1123,7 @@ impl Ui {
                 let cmd = match button {
                     BTN_LEFT => self.items[i].btn.click.clone(),
                     BTN_RIGHT => self.items[i].btn.right.clone(),
+                    BTN_MIDDLE => self.items[i].btn.middle.clone(),
                     _ => String::new(),
                 };
                 if cmd == "menu" {
@@ -1075,6 +1142,11 @@ impl Ui {
                 } else if cmd == "calendar" {
                     self.tip_pending = None;
                     self.toggle_calendar();
+                    self.collapse_at = None;
+                    self.start_grace(now);
+                } else if cmd == "clipboard" {
+                    self.tip_pending = None;
+                    self.toggle_clip();
                     self.collapse_at = None;
                     self.start_grace(now);
                 } else if let Some(mi) = self.menu_index(&cmd) {
@@ -1102,6 +1174,15 @@ impl Ui {
                     out.push(Action::DiskEjectAll);
                 }
             }
+            Hit::ClipItem(i) => {
+                if button == BTN_LEFT {
+                    if let Some(e) = self.clip.get(i) {
+                        out.push(Action::ClipCopy(e.raw.clone()));
+                    }
+                    self.set_panel(Panel::None);
+                    self.collapse_at = None;
+                }
+            }
             Hit::Notif(k) => match button {
                 BTN_LEFT => {
                     let rule_click = self.notifs.get(k).and_then(|n| self.rule_for(&n.n)).map(|r| r.on_click.clone()).filter(|c| !c.is_empty());
@@ -1125,7 +1206,7 @@ impl Ui {
                         self.dismiss(k, 2);
                     }
                 }
-                0x112 => {
+                BTN_MIDDLE => {
                     while !self.notifs.is_empty() {
                         self.dismiss(0, 2);
                     }
@@ -1141,6 +1222,14 @@ impl Ui {
     pub fn scroll(&mut self, value: f32) {
         if self.panel == Panel::Calendar && self.hover.is_some() {
             self.cal_shift(if value > 0.0 { 1 } else { -1 });
+        }
+        if self.panel == Panel::Clip && self.hover.is_some() {
+            // koliesko aj touchpad: posun sa zbiera a každá celá jednotka = jeden riadok
+            self.clip_acc += value;
+            let rows = (self.clip_acc / CLIP_SCROLL_UNIT).trunc();
+            self.clip_acc -= rows * CLIP_SCROLL_UNIT;
+            let max_start = self.clip.len().saturating_sub(self.cfg.clip_rows) as f32;
+            self.clip_scroll = (self.clip_scroll as f32 + rows).clamp(0.0, max_start) as usize;
         }
     }
 
@@ -1344,6 +1433,7 @@ impl Ui {
             match self.big {
                 Panel::Disks => self.build_disks(&mut frame, text, pill, ct),
                 Panel::Menu(mi) => self.build_menu(&mut frame, text, pill, mi, ct),
+                Panel::Clip => self.build_clip(&mut frame, text, pill, ct),
                 _ => self.build_calendar(&mut frame, text, pill, pill.y, ct),
             }
         }
@@ -1365,7 +1455,7 @@ impl Ui {
                         text.layout_to(&mut frame.content, l, px2, pill.x + self.s(16.0), cy + (asc - desc) * 0.5, col);
                     }
                 }
-                Panel::None | Panel::Calendar | Panel::Disks | Panel::Menu(_) => {}
+                Panel::None | Panel::Calendar | Panel::Disks | Panel::Menu(_) | Panel::Clip => {}
             }
         }
         frame
@@ -1483,6 +1573,58 @@ impl Ui {
                     }
                 }
             }
+        }
+    }
+
+    fn build_clip(&mut self, frame: &mut Frame, text: &mut Text, pill: Rect, pa: f32) {
+        let s = self.scale;
+        let t = self.theme;
+        let px = self.cfg.clip_font * s;
+        let (asc, desc) = text.line_metrics(px);
+        let pad = CLIP_PAD * s;
+        let row_h = (self.cfg.clip_font + CLIP_ROW_EXTRA) * s;
+        let n = self.clip.len();
+
+        if n == 0 {
+            let msg = if self.clip_loaded { "Schránka je prázdna" } else { "Načítavam…" };
+            let tw = text.measure(msg, px);
+            let cy = pill.y + pill.h * 0.5;
+            text.layout_to(&mut frame.content, msg, px, pill.x + (pill.w - tw) * 0.5, cy + (asc - desc) * 0.5, fade(t.fg, 0.7 * pa));
+            return;
+        }
+
+        let rows = self.clip_rows();
+        let scrollable = n > rows;
+        let sb = if scrollable { CLIP_SCROLLBAR * s } else { 0.0 };
+        let start = self.clip_scroll.min(n - rows);
+        let inset = 10.0 * s;
+        let cell_w = pill.w - 2.0 * pad - sb;
+
+        for k in 0..rows {
+            let i = start + k;
+            let y = pill.y + pad + k as f32 * row_h;
+            let cell = Rect::new(pill.x + pad, y, cell_w, row_h);
+            self.hits.push((cell, Hit::ClipItem(i)));
+            let hov = self.hover == Some(Hit::ClipItem(i));
+            let fg = if hov {
+                frame.content.push(Item::Rect { r: cell, radius: 10.0 * s, soft: 0.8, color: fade(t.menu_selected, pa) });
+                fade(t.menu_selected_text, pa)
+            } else {
+                fade(t.fg, pa)
+            };
+            let label = Self::ellipsize(text, &self.clip[i].text, px, cell_w - 2.0 * inset);
+            text.layout_to(&mut frame.content, &label, px, cell.x + inset, y + row_h * 0.5 + (asc - desc) * 0.5, fg);
+        }
+
+        if scrollable {
+            // posuvník: dráha vpravo, bežec ukazuje polohu a podiel viditeľných riadkov
+            let track_h = rows as f32 * row_h;
+            let thumb_h = (track_h * rows as f32 / n as f32).max(16.0 * s).min(track_h);
+            let frac = start as f32 / (n - rows) as f32;
+            let thumb_y = pill.y + pad + (track_h - thumb_h) * frac;
+            let w = 4.0 * s;
+            let x = pill.x + pill.w - pad - sb + (sb - w) * 0.5;
+            frame.content.push(Item::Rect { r: Rect::new(x, thumb_y, w, thumb_h), radius: w * 0.5, soft: 0.8, color: fade(t.fg, 0.35 * pa) });
         }
     }
 

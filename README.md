@@ -99,6 +99,17 @@ Zatiaľ bez ikon aplikácií, bez histórie (`makoctl restore`) a bez režimu �
 Skript s `makoctl list` už netreba: pravidlá `[[notifications.rule]]` priradia kliku príkaz podľa textu
 v súhrne (`summary`), aplikácii (`app`) alebo tele (`body`); voliteľne vlastný `timeout_ms`.
 
+## Tlačidlá modulov
+
+Každý modul (aj `[[custom]]`) má `on_click` (ľavé), `on_click_right` (pravé) a `on_click_middle` (stredné tlačidlo).
+Hodnota je shell príkaz, alebo vstavaná akcia: `calendar`, `clipboard`, názov `[[menu]]`, `menu` (zoznam diskov),
+`eject-all`, `inhibit-toggle`, `layout-toggle`, `audio-mute`. Prázdna hodnota = tlačidlo nič nerobí.
+
+    [clock]
+    on_click        = "calendar"
+    on_click_right  = "~/.config/wayfire/scripts/wallpaper -r"
+    on_click_middle = "clipboard"
+
 ## Tooltipy
 
 Každý modul má `tooltip = "..."` (prázdne = žiadny). Zástupné symboly: sieť `{ssid} {ifname} {ip} {gateway} {signal} {dbm} {freq}`
@@ -113,6 +124,26 @@ Notifikácie sa zobrazujú priamo v ostrovčeku (nahradia jeho obsah ako HUD), �
 `[[idle]]` s `timeout` (s), `on_idle`, `on_resume` používa `ext-idle-notify-v1`, rovnako ako `swayidle`; odstráň
 `swayidle -w timeout 600 'systemctl suspend' &` z autostartu. Inhibit (Super+Z vo Wayfire) ho blokuje rovnako ako swayidle.
 Ikona inhibítora je už len ukazovateľ (`on_click = ""`).
+
+## Schránka (cliphist)
+
+Panel s históriou schránky: náhrada `cliphist list | rofi -dmenu … | cliphist decode | wl-copy`. Otvorí sa
+`on_click = "clipboard"` na ľubovoľnom module (napr. `on_click_right = "clipboard"` pri `[keyboard]`), alebo položkou
+menu s `command = "module:clipboard"`. Zobrazí náhľady položiek (najnovšie hore), **klik** položku skopíruje do
+schránky a panel zavrie. Ak je položiek viac ako `rows`, panel sa skroluje kolieskom myši (vpravo je posuvník);
+zatvára sa odchodom myši ako kalendár. História sa musí plniť ako doteraz (`wl-paste --watch cliphist store`).
+
+```toml
+[clipboard]
+font_size = 15      # veľkosť písma (px)
+rows = 8            # koľko riadkov je vidieť naraz; viac položiek = skrolovanie
+width = 420         # šírka panela (px)
+max_items = 200     # najviac koľko najnovších položiek sa načíta
+# list_command = "cliphist list"                # príkaz, ktorého riadky `id<TAB>náhľad` sa zobrazia
+# copy_command = "cliphist decode | wl-copy"    # dostane vybraný riadok na vstup
+```
+
+Vybraná (hover) položka používa farby `menu_selected` / `menu_selected_text` z `[colors]` (pozri nižšie).
 
 ## Vlastné menu
 
