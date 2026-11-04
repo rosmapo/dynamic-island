@@ -47,6 +47,8 @@ pub struct IdleCfg {
 pub enum MenuKind {
     Icons,
     Text,
+    /// Typ podľa položky: `icon` → ikona, `label` → text, `separator` → čiara.
+    Hybrid,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -54,6 +56,8 @@ pub struct MenuItemCfg {
     pub icon: String,
     pub label: String,
     pub command: String,
+    /// Vlastný riadok s oddelovačom; `icon`/`label`/`command` sa ignorujú.
+    pub separator: bool,
 }
 
 /// Vlastné menu (panel ako kalendár). Spúšťa sa cez `on_click = "meno_menu"`.
@@ -62,13 +66,22 @@ pub struct MenuCfg {
     pub name: String,
     pub kind: MenuKind,
     pub title: String,
+    /// Spoločný fallback pre `icon_columns` / `text_columns` (staré configy).
     pub columns: usize,
+    /// Počet stĺpcov pre ikony (hybrid / icons).
+    pub icon_columns: usize,
+    /// Počet stĺpcov pre textové položky (hybrid / text).
+    pub text_columns: usize,
     pub rows: Option<usize>,
     pub icon_size: f32,
     pub text_size: f32,
     pub cell_width: f32,
     pub gap: f32,
     pub padding: f32,
+    /// Hrúbka čiary separátora (logické px).
+    pub separator_thickness: f32,
+    /// Dĺžka separátora ako podiel šírky obsahu (0.0–1.0).
+    pub separator_length: f32,
     pub items: Vec<MenuItemCfg>,
 }
 
@@ -291,37 +304,97 @@ impl Config {
                     if name.is_empty() {
                         continue;
                     }
-                    let kind = match m.str_or("type", "icons").as_str() {
-                        "text" => MenuKind::Text,
-                        _ => MenuKind::Icons,
-                    };
+                    // Explicitný type, inak sa odvodí z položiek (čisté ikony → Icons, …).
+                    let type_str = m.str_or("type", "");
                     let mut items = Vec::new();
                     if let Some(ia) = m.get("item").and_then(|v| v.as_arr()) {
                         for iv in ia {
                             if let Value::Table(it) = iv {
+                                let separator = it.bool_or("separator", false);
+                                if separator {
+                                    items.push(MenuItemCfg {
+                                        separator: true,
+                                        ..Default::default()
+                                    });
+                                    continue;
+                                }
                                 let icon = it.str_or("icon", "");
                                 let label = it.str_or("label", "");
                                 let command = it.str_or("command", "");
                                 if command.is_empty() && icon.is_empty() && label.is_empty() {
                                     continue;
                                 }
-                                items.push(MenuItemCfg { icon, label, command });
+                                // Buď icon, alebo label — nie oboje.
+                                let (icon, label) = if !icon.is_empty() {
+                                    (icon, String::new())
+                                } else {
+                                    (String::new(), label)
+                                };
+                                items.push(MenuItemCfg {
+                                    icon,
+                                    label,
+                                    command,
+                                    separator: false,
+                                });
                             }
                         }
                     }
-                    let columns = m.f64_or("columns", 3.0).max(1.0) as usize;
+                    let kind = match type_str.as_str() {
+                        "text" => MenuKind::Text,
+                        "icons" => MenuKind::Icons,
+                        "hybrid" => MenuKind::Hybrid,
+                        _ => {
+                            // bez type: odvodiť podľa obsahu
+                            let has_sep = items.iter().any(|it| it.separator);
+                            let has_icon = items.iter().any(|it| !it.icon.is_empty());
+                            let has_label = items.iter().any(|it| !it.label.is_empty());
+                            if has_sep || (has_icon && has_label) {
+                                MenuKind::Hybrid
+                            } else if has_label {
+                                MenuKind::Text
+                            } else {
+                                MenuKind::Icons
+                            }
+                        }
+                    };
+                    // `columns` = spoločný fallback (staré configy).
+                    // Ak chýba úplne a ide o čistý text, default 1 stĺpec (nie 3).
+                    let columns_explicit = m.get("columns").and_then(|v| v.as_f64()).map(|v| v.max(1.0) as usize);
+                    let columns = columns_explicit.unwrap_or(3);
+                    let icon_columns = m
+                        .get("icon_columns")
+                        .and_then(|v| v.as_f64())
+                        .map(|v| v.max(1.0) as usize)
+                        .unwrap_or(columns);
+                    let text_columns = m
+                        .get("text_columns")
+                        .and_then(|v| v.as_f64())
+                        .map(|v| v.max(1.0) as usize)
+                        .unwrap_or_else(|| {
+                            if let Some(c) = columns_explicit {
+                                c
+                            } else if kind == MenuKind::Text {
+                                1
+                            } else {
+                                columns
+                            }
+                        });
                     let rows = m.get("rows").and_then(|v| v.as_f64()).map(|v| v.max(1.0) as usize);
                     menus.push(MenuCfg {
                         name,
                         kind,
                         title: m.str_or("title", ""),
                         columns,
+                        icon_columns,
+                        text_columns,
                         rows,
                         icon_size: m.f64_or("icon_size", 28.0).max(8.0) as f32,
                         text_size: m.f64_or("text_size", 15.0).max(8.0) as f32,
                         cell_width: m.f64_or("cell_width", 120.0).max(20.0) as f32,
                         gap: m.f64_or("gap", 8.0).max(0.0) as f32,
                         padding: m.f64_or("padding", 12.0).max(0.0) as f32,
+                        separator_thickness: m.f64_or("separator_thickness", 1.5).max(0.5) as f32,
+                        separator_length: m.f64_or("separator_length", 0.6).clamp(0.1, 1.0) as f32,
                         items,
                     });
                 }

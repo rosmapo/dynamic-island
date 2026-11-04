@@ -83,8 +83,7 @@ max_items = 200   # koľko najnovších položiek sa načíta
 name = "off"
 text = ""
 on_click = "power"
-on_click_right = "backup"
-on_click_middle = "settings"
+on_click_right = "sysmenu"
 
 [capslock]
 text = "CAPS"
@@ -195,14 +194,18 @@ on_idle = "systemctl suspend"
 
 ### Backup menu #################################################################
 [[menu]]
-name = "backup"
-type = "icons"
-title = ""              # prázdne = bez nadpisu
-columns = 5
-rows = 2              # voliteľné; inak sa dopočíta z položiek
+name = "sysmenu"
+# title = "Systémové nástroje a nastavenia"              # prázdne = bez nadpisu
+icon_columns = 5           # ikony
+text_columns = 3           # labely
 icon_size = 60
+text_size = 18
+cell_width = 140
 gap = 10
 padding = 12
+separator_thickness = 2
+separator_length = 0.6
+### Backup ###
 [[menu.item]]
 icon = "bleachbit.png"    # PNG v icons/ vedľa config.toml (alebo plná cesta)
 command = "foot bash -c 'cleansystem.sh; exec bash'"
@@ -219,32 +222,8 @@ command = "foot bash -c 'dotfilesbkp.sh; exec bash'"
 icon = "timeshift.png"
 command = "timeshift-launcher"
 [[menu.item]]
-icon = "qdirstat.png"
-command = "qdirstat"
-[[menu.item]]
-icon = "axagon.png"
-command = "foot bash -c '/home/mm/.config/dynamic-island/scripts/axagon.sh; exec bash'"
-[[menu.item]]
-icon = "samsung.png"
-command = "foot bash -c '/home/mm/.config/dynamic-island/scripts/samsung.sh; exec bash'"
-[[menu.item]]
-icon = "diskutility.png"
-command = "gnome-disks"
-[[menu.item]]
-icon = "sysmonitor.png"
-command = "gnome-system-monitor"
-
-### Settings menu #################################################################
-[[menu]]
-name = "settings"
-type = "text"
-title = ""
-columns = 3
-rows = 5
-text_size = 18
-cell_width = 140
-gap = 2
-padding = 12
+separator = true
+### Settings ###
 [[menu.item]]
 label = "Audio"
 command = "myxer"
@@ -290,13 +269,30 @@ command = "QDiskInfo"
 [[menu.item]]
 label = "Wallpaper"
 command = "~/.config/wayfire/scripts/wallpaper"
+[[menu.item]]
+separator = true
+### System Tools ###
+[[menu.item]]
+icon = "axagon.png"
+command = "foot bash -c '/home/mm/.config/dynamic-island/scripts/axagon.sh; exec bash'"
+[[menu.item]]
+icon = "samsung.png"
+command = "foot bash -c '/home/mm/.config/dynamic-island/scripts/samsung.sh; exec bash'"
+[[menu.item]]
+icon = "diskutility.png"
+command = "gnome-disks"
+[[menu.item]]
+icon = "qdirstat.png"
+command = "qdirstat"
+[[menu.item]]
+icon = "sysmonitor.png"
+command = "gnome-system-monitor"
 
 ### Radio menu #############################################################################
 [[menu]]
 name = "radio"
-type = "text"
 title = ""
-columns = 1
+text_columns = 1
 rows = 5
 text_size = 18
 cell_width = 120
@@ -321,9 +317,8 @@ command = "sh -c 'killall mpv; sleep 0.5; killall mpv'"
 ### Power menu #######################################################################
 [[menu]]
 name = "power"
-type = "text"
 title = ""
-columns = 5
+text_columns = 5
 rows = 1
 text_size = 48
 cell_width = 100

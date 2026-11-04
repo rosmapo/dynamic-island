@@ -58,6 +58,13 @@ enum Hit {
     Panel,
 }
 
+/// Riadok vo flow layoute menu (indexy do `menu.items`).
+enum MenuLayoutRow {
+    Icons(Vec<usize>),
+    Labels(Vec<usize>),
+    Separator,
+}
+
 /// Udalosti pre D-Bus vlákno (zatvorenie / akcia notifikácie).
 #[derive(Clone, Debug, PartialEq)]
 pub enum NotifEvent {
@@ -219,6 +226,30 @@ fn capitalize(s: &str) -> String {
     match c.next() {
         Some(f) => f.to_uppercase().collect::<String>() + c.as_str(),
         None => String::new(),
+    }
+}
+
+
+fn menu_content_width(kind: MenuKind, icon_grid_w: f32, text_grid_w: f32, m: &crate::config::MenuCfg) -> f32 {
+    match kind {
+        MenuKind::Text => text_grid_w,
+        MenuKind::Icons => icon_grid_w,
+        MenuKind::Hybrid => {
+            let has_icons = m.items.iter().any(|it| !it.separator && !it.icon.is_empty());
+            let has_labels = m.items.iter().any(|it| !it.separator && it.icon.is_empty() && !it.label.is_empty());
+            let mut w = 0.0f32;
+            if has_icons {
+                w = w.max(icon_grid_w);
+            }
+            if has_labels {
+                w = w.max(text_grid_w);
+            }
+            if w > 0.0 {
+                w
+            } else {
+                icon_grid_w
+            }
+        }
     }
 }
 
@@ -778,21 +809,117 @@ impl Ui {
         }
     }
 
-    /// Logické → fyzické rozmery mriežky menu.
+    fn menu_rows(menu: &crate::config::MenuCfg) -> Vec<MenuLayoutRow> {
+        let icon_cols = menu.icon_columns.max(1);
+        let text_cols = menu.text_columns.max(1);
+        let mut rows: Vec<MenuLayoutRow> = Vec::new();
+        let mut icons: Vec<usize> = Vec::new();
+        let mut labels: Vec<usize> = Vec::new();
+
+        let flush_icons = |icons: &mut Vec<usize>, rows: &mut Vec<MenuLayoutRow>| {
+            if !icons.is_empty() {
+                rows.push(MenuLayoutRow::Icons(std::mem::take(icons)));
+            }
+        };
+        let flush_labels = |labels: &mut Vec<usize>, rows: &mut Vec<MenuLayoutRow>| {
+            if !labels.is_empty() {
+                rows.push(MenuLayoutRow::Labels(std::mem::take(labels)));
+            }
+        };
+
+        for (i, it) in menu.items.iter().enumerate() {
+            if it.separator {
+                flush_icons(&mut icons, &mut rows);
+                flush_labels(&mut labels, &mut rows);
+                rows.push(MenuLayoutRow::Separator);
+                continue;
+            }
+            match menu.kind {
+                MenuKind::Text => {
+                    // text menu: všetky položky ako labely (label, alebo icon ako nerd-font glyf)
+                    if it.label.is_empty() && it.icon.is_empty() {
+                        continue;
+                    }
+                    labels.push(i);
+                    if labels.len() >= text_cols {
+                        flush_labels(&mut labels, &mut rows);
+                    }
+                }
+                MenuKind::Icons => {
+                    if it.icon.is_empty() {
+                        continue;
+                    }
+                    icons.push(i);
+                    if icons.len() >= icon_cols {
+                        flush_icons(&mut icons, &mut rows);
+                    }
+                }
+                MenuKind::Hybrid => {
+                    if !it.icon.is_empty() {
+                        flush_labels(&mut labels, &mut rows);
+                        icons.push(i);
+                        if icons.len() >= icon_cols {
+                            flush_icons(&mut icons, &mut rows);
+                        }
+                    } else if !it.label.is_empty() {
+                        flush_icons(&mut icons, &mut rows);
+                        labels.push(i);
+                        if labels.len() >= text_cols {
+                            flush_labels(&mut labels, &mut rows);
+                        }
+                    }
+                }
+            }
+        }
+        flush_icons(&mut icons, &mut rows);
+        flush_labels(&mut labels, &mut rows);
+
+        if let Some(max_rows) = menu.rows {
+            let only_icons = menu.kind == MenuKind::Icons
+                || (menu.kind == MenuKind::Hybrid
+                    && menu.items.iter().all(|it| it.separator || !it.icon.is_empty() || it.label.is_empty()));
+            if only_icons {
+                rows.truncate(max_rows);
+            }
+        }
+        rows
+    }
+
+    /// Logické → fyzické rozmery menu (hybrid / icons / text).
     fn menu_size(&self, mi: usize) -> (f32, f32) {
         let Some(m) = self.cfg.menus.get(mi) else {
             return (self.s(120.0), self.s(80.0));
         };
-        let cols = m.columns.max(1);
-        let n = m.items.len();
-        let rows = m.rows.unwrap_or_else(|| ((n + cols - 1) / cols).max(1));
+        let icon_cols = m.icon_columns.max(1);
+        let text_cols = m.text_columns.max(1);
         let title_h = if m.title.is_empty() { 0.0 } else { 36.0 };
-        let (cell_w, cell_h) = match m.kind {
-            MenuKind::Icons => (m.icon_size + 16.0, m.icon_size + 16.0),
-            MenuKind::Text => (m.cell_width, m.text_size + 18.0),
-        };
-        let w = m.padding * 2.0 + cols as f32 * cell_w + (cols.saturating_sub(1)) as f32 * m.gap;
-        let h = m.padding * 2.0 + title_h + rows as f32 * cell_h + (rows.saturating_sub(1)) as f32 * m.gap;
+        let icon_cell = m.icon_size + 16.0;
+        let label_h = m.text_size + 18.0;
+        let sep_h = (m.separator_thickness + 12.0).max(14.0);
+
+        let icon_grid_w = icon_cols as f32 * icon_cell + (icon_cols.saturating_sub(1)) as f32 * m.gap;
+        let text_grid_w = text_cols as f32 * m.cell_width + (text_cols.saturating_sub(1)) as f32 * m.gap;
+        // Hybrid: šírka len podľa typov, ktoré v menu skutočne sú (nie default cell_width navyše).
+        let content_w = menu_content_width(m.kind, icon_grid_w, text_grid_w, m);
+
+        let layout = Self::menu_rows(m);
+        let mut body_h = 0.0f32;
+        for (ri, row) in layout.iter().enumerate() {
+            if ri > 0 {
+                body_h += m.gap;
+            }
+            body_h += match row {
+                MenuLayoutRow::Icons(_) => icon_cell,
+                MenuLayoutRow::Labels(_) => label_h,
+                MenuLayoutRow::Separator => sep_h,
+            };
+        }
+        if layout.is_empty() {
+            body_h = icon_cell;
+        }
+
+        let w = m.padding * 2.0 + content_w;
+        let h = m.padding * 2.0 + title_h + body_h;
         (w * self.scale, h * self.scale)
     }
 
@@ -1465,20 +1592,26 @@ impl Ui {
         let Some(menu) = self.cfg.menus.get(mi).cloned() else { return };
         let s = self.scale;
         let t = self.theme;
-        let cols = menu.columns.max(1);
-        let n = menu.items.len();
-        let rows = menu.rows.unwrap_or_else(|| ((n + cols - 1) / cols).max(1));
+        let icon_cols = menu.icon_columns.max(1);
+        let text_cols = menu.text_columns.max(1);
         let pad = menu.padding * s;
         let gap = menu.gap * s;
         let title_h = if menu.title.is_empty() { 0.0 } else { 36.0 * s };
-        let (cell_w, cell_h) = match menu.kind {
-            MenuKind::Icons => ((menu.icon_size + 16.0) * s, (menu.icon_size + 16.0) * s),
-            MenuKind::Text => (menu.cell_width * s, (menu.text_size + 18.0) * s),
-        };
+        let icon_cell = (menu.icon_size + 16.0) * s;
+        let label_h = (menu.text_size + 18.0) * s;
+        let label_cell_w = menu.cell_width * s;
+        let sep_h = ((menu.separator_thickness + 12.0).max(14.0)) * s;
+        let sep_thick = menu.separator_thickness * s;
+
+        let icon_grid_w = icon_cols as f32 * icon_cell + (icon_cols.saturating_sub(1)) as f32 * gap;
+        let text_grid_w = text_cols as f32 * label_cell_w + (text_cols.saturating_sub(1)) as f32 * gap;
+        let content_w = menu_content_width(menu.kind, icon_grid_w, text_grid_w, &menu);
+
         let icon_px = menu.icon_size * s;
         let text_px = menu.text_size * s;
         let (asc_t, desc_t) = text.line_metrics(text_px);
         let (asc_h, desc_h) = text.line_metrics(self.px_font());
+        let layout = Self::menu_rows(&menu);
 
         if !menu.title.is_empty() {
             let px = self.px_font();
@@ -1495,82 +1628,110 @@ impl Ui {
         }
 
         let grid_top = pill.y + pad + title_h;
-        let grid_left = pill.x + pad;
-        let total = rows * cols;
-        for i in 0..total {
-            let r = i / cols;
-            let c = i % cols;
-            let x = grid_left + c as f32 * (cell_w + gap);
-            let y = grid_top + r as f32 * (cell_h + gap);
-            let cell = Rect::new(x, y, cell_w, cell_h);
-            let item = menu.items.get(i);
-            let hov = self.hover == Some(Hit::MenuItem(i));
+        let grid_left = pill.x + (pill.w - content_w) * 0.5;
 
-            if item.is_some() {
-                self.hits.push((cell, Hit::MenuItem(i)));
+        let mut y = grid_top;
+        for (ri, row) in layout.iter().enumerate() {
+            if ri > 0 {
+                y += gap;
             }
-
-            match menu.kind {
-                MenuKind::Icons => {
-                    if hov && item.is_some() {
-                        frame.content.push(Item::Rect {
-                            r: cell,
-                            radius: 10.0 * s,
-                            soft: 0.8,
-                            color: fade(t.fg, 0.10 * pa),
-                        });
-                    }
-                    if let Some(it) = item {
-                        if !it.icon.is_empty() {
-                            // PNG: názov súboru → config/icons/, alebo plná cesta
-                            if let Some(icon) = self.icons.get(&it.icon) {
-                                let max = icon_px;
-                                let sc = (max / icon.w as f32).min(max / icon.h as f32);
-                                let dw = icon.w as f32 * sc;
-                                let dh = icon.h as f32 * sc;
-                                let ix = x + (cell_w - dw) * 0.5;
-                                let iy = y + (cell_h - dh) * 0.5;
-                                frame.content.push(Item::Image {
-                                    r: Rect::new(ix, iy, dw, dh),
-                                    path: it.icon.clone(),
-                                    color: [1.0, 1.0, 1.0, pa],
-                                });
+            match row {
+                MenuLayoutRow::Icons(indices) => {
+                    let n = indices.len();
+                    let row_w = n as f32 * icon_cell + (n.saturating_sub(1)) as f32 * gap;
+                    // centrovať riadok v rámci content_w (neúplný aj pri užšej ikonovej mriežke)
+                    let row_left = grid_left + (content_w - row_w) * 0.5;
+                    for (c, &i) in indices.iter().enumerate() {
+                        let x = row_left + c as f32 * (icon_cell + gap);
+                        let cell = Rect::new(x, y, icon_cell, icon_cell);
+                        let hov = self.hover == Some(Hit::MenuItem(i));
+                        self.hits.push((cell, Hit::MenuItem(i)));
+                        if hov {
+                            frame.content.push(Item::Rect {
+                                r: cell,
+                                radius: 10.0 * s,
+                                soft: 0.8,
+                                color: fade(t.fg, 0.10 * pa),
+                            });
+                        }
+                        if let Some(it) = menu.items.get(i) {
+                            if !it.icon.is_empty() {
+                                if let Some(icon) = self.icons.get(&it.icon) {
+                                    let max = icon_px;
+                                    let sc = (max / icon.w as f32).min(max / icon.h as f32);
+                                    let dw = icon.w as f32 * sc;
+                                    let dh = icon.h as f32 * sc;
+                                    let ix = x + (icon_cell - dw) * 0.5;
+                                    let iy = y + (icon_cell - dh) * 0.5;
+                                    frame.content.push(Item::Image {
+                                        r: Rect::new(ix, iy, dw, dh),
+                                        path: it.icon.clone(),
+                                        color: [1.0, 1.0, 1.0, pa],
+                                    });
+                                }
                             }
                         }
                     }
+                    y += icon_cell;
                 }
-                MenuKind::Text => {
-                    let (bg_col, fg_col) = if hov && item.is_some() {
-                        (fade(t.menu_selected, pa), fade(t.menu_selected_text, pa))
-                    } else {
-                        (fade(t.fg, 0.0), fade(t.fg, pa))
-                    };
-                    if hov && item.is_some() {
-                        frame.content.push(Item::Rect {
-                            r: cell,
-                            radius: 10.0 * s,
-                            soft: 0.8,
-                            color: bg_col,
-                        });
-                    }
-                    if let Some(it) = item {
-                        let label = if it.label.is_empty() { &it.icon } else { &it.label };
-                        if !label.is_empty() {
-                            let maxw = cell_w - 12.0 * s;
-                            let shown = Self::ellipsize(text, label, text_px, maxw);
-                            let tw = text.measure(&shown, text_px);
-                            let cx = x + (cell_w - tw) * 0.5;
-                            let cy = y + cell_h * 0.5;
-                            text.layout_to(
-                                &mut frame.content,
-                                &shown,
-                                text_px,
-                                cx,
-                                cy + (asc_t - desc_t) * 0.5,
-                                fg_col,
-                            );
+                MenuLayoutRow::Labels(indices) => {
+                    let n = indices.len();
+                    let row_w = n as f32 * label_cell_w + (n.saturating_sub(1)) as f32 * gap;
+                    let row_left = grid_left + (content_w - row_w) * 0.5;
+                    for (c, &i) in indices.iter().enumerate() {
+                        let x = row_left + c as f32 * (label_cell_w + gap);
+                        let cell = Rect::new(x, y, label_cell_w, label_h);
+                        let hov = self.hover == Some(Hit::MenuItem(i));
+                        self.hits.push((cell, Hit::MenuItem(i)));
+                        let (bg_col, fg_col) = if hov {
+                            (fade(t.menu_selected, pa), fade(t.menu_selected_text, pa))
+                        } else {
+                            (fade(t.fg, 0.0), fade(t.fg, pa))
+                        };
+                        if hov {
+                            frame.content.push(Item::Rect {
+                                r: cell,
+                                radius: 10.0 * s,
+                                soft: 0.8,
+                                color: bg_col,
+                            });
+                        }
+                        if let Some(it) = menu.items.get(i) {
+                            let label = if !it.label.is_empty() {
+                                it.label.as_str()
+                            } else {
+                                it.icon.as_str()
+                            };
+                            if !label.is_empty() {
+                                let maxw = label_cell_w - 12.0 * s;
+                                let shown = Self::ellipsize(text, label, text_px, maxw);
+                                let tw = text.measure(&shown, text_px);
+                                let cx = x + (label_cell_w - tw) * 0.5;
+                                let cy = y + label_h * 0.5;
+                                text.layout_to(
+                                    &mut frame.content,
+                                    &shown,
+                                    text_px,
+                                    cx,
+                                    cy + (asc_t - desc_t) * 0.5,
+                                    fg_col,
+                                );
+                            }
                         }
                     }
+                    y += label_h;
+                }
+                MenuLayoutRow::Separator => {
+                    let line_w = content_w * menu.separator_length;
+                    let lx = grid_left + (content_w - line_w) * 0.5;
+                    let ly = y + (sep_h - sep_thick) * 0.5;
+                    frame.content.push(Item::Rect {
+                        r: Rect::new(lx, ly, line_w, sep_thick),
+                        radius: sep_thick * 0.5,
+                        soft: 0.6,
+                        color: fade(t.fg, 0.28 * pa),
+                    });
+                    y += sep_h;
                 }
             }
         }
