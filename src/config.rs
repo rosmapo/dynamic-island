@@ -173,6 +173,8 @@ pub struct Config {
     pub clip_max: usize,
     pub clip_list: String,
     pub clip_copy: String,
+    /// modul wallpaper – `[wallpaper]`
+    pub wall: crate::wallpaper::WallCfg,
     pub auto: AutoCfg,
 
     pub notif_enabled: bool,
@@ -548,6 +550,7 @@ impl Config {
             clip_max: clip.f64_or("max_items", 200.0).clamp(1.0, 5000.0) as usize,
             clip_list: clip.str_or("list_command", "cliphist list"),
             clip_copy: clip.str_or("copy_command", "cliphist decode | wl-copy"),
+            wall: crate::wallpaper::WallCfg::from_table(&t.sub("wallpaper")),
             auto: AutoCfg {
                 enabled: auto.bool_or("enabled", true),
                 bar_height: auto.f64_or("bar_height", 40.0),
@@ -704,6 +707,15 @@ mod tests {
         let t = toml::parse("[clipboard]\nfont_size=18\nrows=5\nwidth=500\n").unwrap();
         let c = Config::from_table(&t, PathBuf::new());
         assert_eq!((c.clip_font, c.clip_rows, c.clip_width), (18.0, 5, 500.0));
+    }
+
+    #[test]
+    fn wallpaper_config() {
+        let d = Config::from_table(&Table::new(), PathBuf::new());
+        assert_eq!((d.wall.columns, d.wall.rows), (4, 4));
+        let t = toml::parse("[wallpaper]\ncolumns=5\nrows=2\ndirectory=\"/x\"\n").unwrap();
+        let c = Config::from_table(&t, PathBuf::new());
+        assert_eq!((c.wall.columns, c.wall.rows, c.wall.dir.as_str()), (5, 2, "/x"));
     }
 
     #[test]

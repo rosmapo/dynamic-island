@@ -35,6 +35,10 @@ pub enum Action {
     ClipLoad,
     /// skopírovať položku histórie (celý riadok z `cliphist list`)
     ClipCopy(String),
+    /// načítať zoznam obrázkov a náhľady modulu wallpaper
+    WallLoad,
+    /// nastaviť pozadie skriptom (`wallpaper -v CESTA`)
+    WallApply(String),
 }
 
 #[derive(Clone, Copy, PartialEq, Debug)]
@@ -44,6 +48,7 @@ enum Panel {
     Disks,
     Menu(usize),
     Clip,
+    Wall,
     Tip,
 }
 
@@ -55,6 +60,7 @@ enum Hit {
     DiskAll,
     MenuItem(usize),
     ClipItem(usize),
+    WallItem(usize),
     Panel,
 }
 
@@ -119,6 +125,10 @@ const DISK_ROW: f32 = 46.0;
 const DISK_BOTTOM: f32 = 12.0;
 
 // panel schránky (logické px)
+const WALL_PAD: f32 = 10.0;
+const WALL_GAP: f32 = 8.0;
+const WALL_SCROLLBAR: f32 = 8.0;
+const WALL_SCROLL_UNIT: f32 = 10.0;
 const CLIP_PAD: f32 = 10.0;
 const CLIP_ROW_EXTRA: f32 = 14.0; // výška riadku = písmo + toto
 const CLIP_SCROLLBAR: f32 = 8.0;
@@ -169,6 +179,12 @@ pub struct Ui {
     clip_loaded: bool,
     clip_scroll: usize,
     clip_acc: f32,
+    /// modul wallpaper: obrázky, aktuálne pozadie, prvý viditeľný riadok mriežky, nazbieraný posun kolieska
+    wall: Vec<crate::wallpaper::WallEntry>,
+    wall_loaded: bool,
+    wall_current: String,
+    wall_scroll: usize,
+    wall_acc: f32,
     /// akcie, ktoré vznikli mimo `click` (otvorenie panela) – `click` ich vráti volajúcemu
     queued: Vec<Action>,
 
@@ -349,6 +365,11 @@ impl Ui {
             clip_loaded: false,
             clip_scroll: 0,
             clip_acc: 0.0,
+            wall: Vec::new(),
+            wall_loaded: false,
+            wall_current: String::new(),
+            wall_scroll: 0,
+            wall_acc: 0.0,
             queued: Vec::new(),
             ptr: None,
             hover: None,
@@ -400,6 +421,21 @@ impl Ui {
                 self.clip_loaded = true;
                 let max_start = self.clip.len().saturating_sub(self.cfg.clip_rows);
                 self.clip_scroll = self.clip_scroll.min(max_start);
+            }
+            Msg::Wall(v, current) => {
+                self.wall = v;
+                self.wall_loaded = true;
+                self.wall_current = current;
+                let max_start = self.wall_row_count().saturating_sub(self.cfg.wall.rows);
+                self.wall_scroll = self.wall_scroll.min(max_start);
+            }
+            Msg::WallCurrent(path) => self.wall_current = path,
+            Msg::WallThumb(i, thumb) => {
+                if let Some(e) = self.wall.get_mut(i) {
+                    if e.thumb == thumb {
+                        e.ready = true;
+                    }
+                }
             }
             Msg::Net(n) => self.data.net = n,
             Msg::Vpn(v) => self.data.vpn = v,
@@ -796,6 +832,15 @@ impl Ui {
                 (DISK_W * self.scale, (DISK_HEAD + n * DISK_ROW + DISK_BOTTOM) * self.scale)
             }
             Panel::Menu(mi) => self.menu_size(mi),
+            Panel::Wall => {
+                let c = &self.cfg.wall;
+                let (tw, th) = c.thumb_size();
+                let sb = if self.wall_row_count() > c.rows { WALL_SCROLLBAR } else { 0.0 };
+                let w = 2.0 * WALL_PAD + c.columns as f32 * tw + (c.columns - 1) as f32 * WALL_GAP + sb;
+                let n = self.wall_rows_shown() as f32;
+                let h = 2.0 * WALL_PAD + n * th + (n - 1.0) * WALL_GAP;
+                (w * self.scale, h * self.scale)
+            }
             Panel::Clip => {
                 let row_h = self.cfg.clip_font + CLIP_ROW_EXTRA;
                 let h = 2.0 * CLIP_PAD + self.clip_rows() as f32 * row_h;
@@ -928,10 +973,16 @@ impl Ui {
         if p == Panel::None {
             self.grace = None;
         }
-        if matches!(p, Panel::Calendar | Panel::Disks | Panel::Menu(_) | Panel::Clip) {
+        if Self::is_big(p) {
             self.big = p;
         }
-        self.cal_t.set(if matches!(p, Panel::Calendar | Panel::Disks | Panel::Menu(_) | Panel::Clip) { 1.0 } else { 0.0 });
+        self.cal_t.set(if Self::is_big(p) { 1.0 } else { 0.0 });
+        if p == Panel::Wall {
+            // zoznam sa pri každom otvorení načíta znova (nové obrázky, dorobené náhľady)
+            self.wall_scroll = 0;
+            self.wall_acc = 0.0;
+            self.queued.push(Action::WallLoad);
+        }
         if p == Panel::Clip {
             // pri každom otvorení znova načítať históriu (staré položky ostanú viditeľné, kým nepríde nová)
             self.clip_scroll = 0;
@@ -944,7 +995,7 @@ impl Ui {
                 self.panel_w.set(0.0);
                 self.panel_a.set(0.0);
             }
-            Panel::Calendar | Panel::Disks | Panel::Menu(_) | Panel::Clip => {
+            Panel::Calendar | Panel::Disks | Panel::Menu(_) | Panel::Clip | Panel::Wall => {
                 if p == Panel::Calendar {
                     self.rebuild_cal();
                 }
@@ -979,7 +1030,29 @@ impl Ui {
     }
 
     fn big_open(&self) -> bool {
-        matches!(self.panel, Panel::Calendar | Panel::Disks | Panel::Menu(_) | Panel::Clip)
+        Self::is_big(self.panel)
+    }
+
+    fn is_big(p: Panel) -> bool {
+        matches!(p, Panel::Calendar | Panel::Disks | Panel::Menu(_) | Panel::Clip | Panel::Wall)
+    }
+
+    /// Počet riadkov celej mriežky náhľadov.
+    fn wall_row_count(&self) -> usize {
+        self.wall.len().div_ceil(self.cfg.wall.columns)
+    }
+
+    /// Počet práve viditeľných riadkov mriežky (aspoň 1 – aj pre hlášku o prázdnom adresári).
+    fn wall_rows_shown(&self) -> usize {
+        self.wall_row_count().min(self.cfg.wall.rows).max(1)
+    }
+
+    fn toggle_wall(&mut self) {
+        if self.panel == Panel::Wall {
+            self.set_panel(Panel::None);
+        } else {
+            self.set_panel(Panel::Wall);
+        }
     }
 
     /// Počet riadkov panela schránky, ktoré sú práve vidieť.
@@ -1151,7 +1224,7 @@ impl Ui {
             return;
         }
         match self.panel {
-            Panel::Calendar | Panel::Disks | Panel::Menu(_) | Panel::Clip => {
+            Panel::Calendar | Panel::Disks | Panel::Menu(_) | Panel::Clip | Panel::Wall => {
                 self.collapse_at = Some(now + Duration::from_millis(self.cfg.collapse_ms))
             }
             Panel::Tip => self.collapse_at = Some(now + Duration::from_millis(200)),
@@ -1161,7 +1234,7 @@ impl Ui {
 
     fn action_for(cmd: &str) -> Option<Action> {
         match cmd {
-            "" | "calendar" | "menu" | "clipboard" => None,
+            "" | "calendar" | "menu" | "clipboard" | "wallpaper" => None,
             "eject-all" => Some(Action::DiskEjectAll),
             "inhibit-toggle" => Some(Action::InhibitToggle),
             "layout-toggle" => Some(Action::LayoutToggle),
@@ -1190,6 +1263,10 @@ impl Ui {
             }
             "clipboard" => {
                 self.set_panel(Panel::Clip);
+                None
+            }
+            "wallpaper" => {
+                self.set_panel(Panel::Wall);
                 None
             }
             other => match self.menu_index(other) {
@@ -1276,6 +1353,11 @@ impl Ui {
                     self.toggle_clip();
                     self.collapse_at = None;
                     self.start_grace(now);
+                } else if cmd == "wallpaper" {
+                    self.tip_pending = None;
+                    self.toggle_wall();
+                    self.collapse_at = None;
+                    self.start_grace(now);
                 } else if let Some(mi) = self.menu_index(&cmd) {
                     self.tip_pending = None;
                     self.toggle_menu(mi);
@@ -1305,6 +1387,15 @@ impl Ui {
                 if button == BTN_LEFT {
                     if let Some(e) = self.clip.get(i) {
                         out.push(Action::ClipCopy(e.raw.clone()));
+                    }
+                    self.set_panel(Panel::None);
+                    self.collapse_at = None;
+                }
+            }
+            Hit::WallItem(i) => {
+                if button == BTN_LEFT {
+                    if let Some(e) = self.wall.get(i) {
+                        out.push(Action::WallApply(e.path.clone()));
                     }
                     self.set_panel(Panel::None);
                     self.collapse_at = None;
@@ -1349,6 +1440,13 @@ impl Ui {
     pub fn scroll(&mut self, value: f32) {
         if self.panel == Panel::Calendar && self.hover.is_some() {
             self.cal_shift(if value > 0.0 { 1 } else { -1 });
+        }
+        if self.panel == Panel::Wall && self.hover.is_some() {
+            self.wall_acc += value;
+            let rows = (self.wall_acc / WALL_SCROLL_UNIT).trunc();
+            self.wall_acc -= rows * WALL_SCROLL_UNIT;
+            let max_start = self.wall_row_count().saturating_sub(self.cfg.wall.rows) as f32;
+            self.wall_scroll = (self.wall_scroll as f32 + rows).clamp(0.0, max_start) as usize;
         }
         if self.panel == Panel::Clip && self.hover.is_some() {
             // koliesko aj touchpad: posun sa zbiera a každá celá jednotka = jeden riadok
@@ -1561,6 +1659,7 @@ impl Ui {
                 Panel::Disks => self.build_disks(&mut frame, text, pill, ct),
                 Panel::Menu(mi) => self.build_menu(&mut frame, text, pill, mi, ct),
                 Panel::Clip => self.build_clip(&mut frame, text, pill, ct),
+                Panel::Wall => self.build_wall(&mut frame, text, pill, ct),
                 _ => self.build_calendar(&mut frame, text, pill, pill.y, ct),
             }
         }
@@ -1582,7 +1681,7 @@ impl Ui {
                         text.layout_to(&mut frame.content, l, px2, pill.x + self.s(16.0), cy + (asc - desc) * 0.5, col);
                     }
                 }
-                Panel::None | Panel::Calendar | Panel::Disks | Panel::Menu(_) | Panel::Clip => {}
+                Panel::None | Panel::Calendar | Panel::Disks | Panel::Menu(_) | Panel::Clip | Panel::Wall => {}
             }
         }
         frame
@@ -1786,6 +1885,66 @@ impl Ui {
             let w = 4.0 * s;
             let x = pill.x + pill.w - pad - sb + (sb - w) * 0.5;
             frame.content.push(Item::Rect { r: Rect::new(x, thumb_y, w, thumb_h), radius: w * 0.5, soft: 0.8, color: fade(t.fg, 0.35 * pa) });
+        }
+    }
+
+    fn build_wall(&mut self, frame: &mut Frame, text: &mut Text, pill: Rect, pa: f32) {
+        let s = self.scale;
+        let t = self.theme;
+        let (tw, th) = self.cfg.wall.thumb_size();
+        let (tw, th, gap, pad) = (tw * s, th * s, WALL_GAP * s, WALL_PAD * s);
+        let cols = self.cfg.wall.columns;
+        let n = self.wall.len();
+
+        if n == 0 {
+            let px = self.px_font();
+            let (asc, desc) = text.line_metrics(px);
+            let msg = if self.wall_loaded { "Žiadne obrázky" } else { "Načítavam…" };
+            let mw = text.measure(msg, px);
+            let cy = pill.y + pill.h * 0.5;
+            text.layout_to(&mut frame.content, msg, px, pill.x + (pill.w - mw) * 0.5, cy + (asc - desc) * 0.5, fade(t.fg, 0.7 * pa));
+            return;
+        }
+
+        let total_rows = self.wall_row_count();
+        let rows = self.wall_rows_shown();
+        let scrollable = total_rows > rows;
+        let start = self.wall_scroll.min(total_rows - rows);
+
+        for r in 0..rows {
+            for c in 0..cols {
+                let i = (start + r) * cols + c;
+                if i >= n {
+                    break;
+                }
+                let cell = Rect::new(pill.x + pad + c as f32 * (tw + gap), pill.y + pad + r as f32 * (th + gap), tw, th);
+                self.hits.push((cell, Hit::WallItem(i)));
+                let e = &self.wall[i];
+                let hov = self.hover == Some(Hit::WallItem(i));
+                let current = !self.wall_current.is_empty() && e.path == self.wall_current;
+                // rámik okolo náhľadu: zvýraznenie pod kurzorom / aktuálne pozadie
+                if hov || current {
+                    let ring = if hov { t.menu_selected } else { t.accent };
+                    let g = 3.0 * s;
+                    let outer = Rect::new(cell.x - g, cell.y - g, cell.w + 2.0 * g, cell.h + 2.0 * g);
+                    frame.content.push(Item::Rect { r: outer, radius: (crate::wallpaper::THUMB_RADIUS + g / s) * s, soft: 0.8, color: fade(ring, (if hov { 1.0 } else { 0.8 }) * pa) });
+                }
+                if e.ready {
+                    frame.content.push(Item::Image { r: cell, path: e.thumb.clone(), color: [1.0, 1.0, 1.0, pa] });
+                } else {
+                    frame.content.push(Item::Rect { r: cell, radius: crate::wallpaper::THUMB_RADIUS * s, soft: 0.8, color: fade(t.fg, 0.12 * pa) });
+                }
+            }
+        }
+
+        if scrollable {
+            let track_h = rows as f32 * th + (rows - 1) as f32 * gap;
+            let thumb_h = (track_h * rows as f32 / total_rows as f32).max(16.0 * s).min(track_h);
+            let frac = start as f32 / (total_rows - rows) as f32;
+            let w = 4.0 * s;
+            let x = pill.x + pill.w - pad - (WALL_SCROLLBAR * s - w) * 0.5 - w;
+            let y = pill.y + pad + (track_h - thumb_h) * frac;
+            frame.content.push(Item::Rect { r: Rect::new(x, y, w, thumb_h), radius: w * 0.5, soft: 0.8, color: fade(t.fg, 0.35 * pa) });
         }
     }
 

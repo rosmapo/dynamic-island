@@ -77,6 +77,12 @@ pub enum Msg {
     Disks(Vec<DiskInfo>),
     /// história schránky (najnovšie prvé)
     Clip(Vec<ClipEntry>),
+    /// zoznam obrázkov modulu wallpaper + cesta k aktuálnemu pozadiu
+    Wall(Vec<crate::wallpaper::WallEntry>, String),
+    /// náhľad obrázka s daným indexom je hotový
+    WallThumb(usize, String),
+    /// pozadie bolo úspešne nastavené (cesta)
+    WallCurrent(String),
     Notif(Notification),
     NotifClose(u32),
     Net(NetInfo),

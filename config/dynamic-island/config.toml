@@ -79,6 +79,14 @@ max_items = 200   # koľko najnovších položiek sa načíta
 # list_command = "cliphist list"
 # copy_command = "cliphist decode | wl-copy"
 
+[wallpaper]
+directory = "~/.config/wayfire/media/wallpaper"
+columns = 4
+rows = 4
+thumb_width = 160
+command = "~/.config/wayfire/scripts/wallpaper"
+cache_dir = "~/.cache/wallpaper-chooser"
+
 [[custom]]
 name = "off"
 text = ""

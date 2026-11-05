@@ -19,6 +19,7 @@ mod sys;
 mod text;
 mod toml;
 mod ui;
+mod wallpaper;
 mod wayfire;
 mod wl;
 

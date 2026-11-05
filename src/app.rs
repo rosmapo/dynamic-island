@@ -83,6 +83,8 @@ fn run_action(a: Action, cfg: &Config, disk_tx: &Option<Tx<DiskCmd>>, tx: &Tx<Ms
             });
         }
         Action::ClipCopy(line) => spawn_with_stdin(&cfg.clip_copy, line),
+        Action::WallLoad => crate::wallpaper::load(cfg.wall.clone(), tx.clone()),
+        Action::WallApply(path) => crate::wallpaper::apply(cfg.wall.clone(), path, tx.clone()),
         Action::DiskEject(b) => {
             if let Some(t) = disk_tx {
                 t.send(DiskCmd::Eject(b));

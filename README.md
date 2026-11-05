@@ -102,7 +102,7 @@ v súhrne (`summary`), aplikácii (`app`) alebo tele (`body`); voliteľne vlastn
 ## Tlačidlá modulov
 
 Každý modul (aj `[[custom]]`) má `on_click` (ľavé), `on_click_right` (pravé) a `on_click_middle` (stredné tlačidlo).
-Hodnota je shell príkaz, alebo vstavaná akcia: `calendar`, `clipboard`, názov `[[menu]]`, `menu` (zoznam diskov),
+Hodnota je shell príkaz, alebo vstavaná akcia: `calendar`, `clipboard`, `wallpaper`, názov `[[menu]]`, `menu` (zoznam diskov),
 `eject-all`, `inhibit-toggle`, `layout-toggle`, `audio-mute`. Prázdna hodnota = tlačidlo nič nerobí.
 
     [clock]
@@ -144,6 +144,26 @@ max_items = 200     # najviac koľko najnovších položiek sa načíta
 ```
 
 Vybraná (hover) položka používa farby `menu_selected` / `menu_selected_text` z `[colors]` (pozri nižšie).
+
+## Wallpaper
+
+Mriežka náhľadov obrázkov z adresára. Otvorí sa `on_click = "wallpaper"` na module, alebo položkou menu
+s `command = "module:wallpaper"`. **Ľavý klik** na náhľad spustí `command -v CESTA` (skript nastaví pozadie, farby
+a pošle prípadné notifikácie) a panel sa zavrie. Ak skript skončí úspešne, ostrovček zapíše cestu do
+`cache_dir/current` a náhľad označí rámikom. Ak je riadkov viac ako `rows`, mriežka sa skroluje kolieskom.
+
+Náhľady vyrába ImageMagick (`magick` alebo `convert`) presne vo veľkosti `thumb_width` × 9/16, so zaoblenými
+rohmi, do `cache_dir/thumbs`. Pri prvom otvorení sa dorábajú na pozadí a objavujú sa postupne.
+
+```toml
+[wallpaper]
+directory = "~/.config/wayfire/media/wallpaper"
+columns = 4
+rows = 4                    # koľko riadkov je vidieť naraz
+thumb_width = 160           # šírka náhľadu (px), výška je 9/16
+command = "~/.config/wayfire/scripts/wallpaper"
+cache_dir = "~/.cache/wallpaper-chooser"
+```
 
 ## Vlastné menu
 
