@@ -1,6 +1,7 @@
 //! Wayland vrstva: wlr-layer-shell povrch, ukazovateľ, frame callbacky, EGL okno.
 use crate::gl::Egl;
 use crate::sys::{self, PollFd, POLLIN};
+use crate::xkb::Xkb;
 use std::collections::HashMap;
 use std::ffi::c_void;
 use std::os::fd::{AsRawFd, RawFd};
@@ -9,6 +10,7 @@ use wayland_client::globals::{registry_queue_init, GlobalListContents};
 use wayland_client::protocol::{
     wl_callback::{self, WlCallback},
     wl_compositor::{self, WlCompositor},
+    wl_keyboard::{self, WlKeyboard},
     wl_output::{self, WlOutput},
     wl_pointer::{self, WlPointer},
     wl_region::{self, WlRegion},
@@ -26,6 +28,14 @@ use wayland_protocols_wlr::layer_shell::v1::client::{
     zwlr_layer_surface_v1::{self, Anchor, KeyboardInteractivity, ZwlrLayerSurfaceV1},
 };
 
+/// Stlačená klávesa (po preklade cez xkb).
+#[derive(Debug, Clone)]
+pub struct KeyEvent {
+    pub sym: u32,
+    pub text: String,
+    pub ctrl: bool,
+}
+
 #[derive(Debug, Clone, Copy)]
 pub enum PtrEvent {
     Enter(f64, f64),
@@ -40,6 +50,9 @@ pub struct WlState {
     compositor: WlCompositor,
     layer: ZwlrLayerSurfaceV1,
     pointer: Option<WlPointer>,
+    keyboard: Option<WlKeyboard>,
+    xkb: Option<Xkb>,
+    pub key_events: Vec<KeyEvent>,
     outputs: HashMap<ObjectId, i32>,
     entered: Vec<ObjectId>,
     pub configured: bool,
@@ -124,6 +137,9 @@ impl Wl {
             compositor,
             layer,
             pointer: None,
+            keyboard: None,
+            xkb: None,
+            key_events: Vec::new(),
             outputs: HashMap::new(),
             entered: Vec::new(),
             configured: false,
@@ -161,6 +177,17 @@ impl Wl {
             w.resize(pw, ph, 0, 0);
         }
         self.st.scale_dirty = false;
+    }
+
+    /// Výhradné zachytávanie klávesnice len počas písania (heslo); inak ostrovček klávesnicu nechá.
+    pub fn set_keyboard(&mut self, on: bool) {
+        self.st.layer.set_keyboard_interactivity(if on { KeyboardInteractivity::Exclusive } else { KeyboardInteractivity::None });
+        self.st.surface.commit();
+    }
+
+    /// Máme mapu kláves? Bez nej by zachytená klávesnica nebola použiteľná, preto ju vtedy nikdy nezachytávame.
+    pub fn keyboard_ready(&self) -> bool {
+        self.st.xkb.is_some()
     }
 
     pub fn request_frame(&mut self) {
@@ -285,6 +312,14 @@ impl Dispatch<WlSeat, ()> for WlState {
             } else if let Some(p) = st.pointer.take() {
                 p.release();
             }
+            if caps.contains(wl_seat::Capability::Keyboard) {
+                if st.keyboard.is_none() {
+                    st.keyboard = Some(seat.get_keyboard(qh, ()));
+                }
+            } else if let Some(k) = st.keyboard.take() {
+                k.release();
+                st.xkb = None;
+            }
         }
     }
 }
@@ -301,6 +336,42 @@ impl Dispatch<WlPointer, ()> for WlState {
             wl_pointer::Event::Axis { axis, value, .. } => {
                 if matches!(axis, WEnum::Value(wl_pointer::Axis::VerticalScroll)) {
                     st.ptr_events.push(PtrEvent::Scroll(value));
+                }
+            }
+            _ => {}
+        }
+    }
+}
+
+impl Dispatch<WlKeyboard, ()> for WlState {
+    fn event(st: &mut Self, _: &WlKeyboard, ev: wl_keyboard::Event, _: &(), _: &Connection, _: &QueueHandle<Self>) {
+        match ev {
+            wl_keyboard::Event::Keymap { format: WEnum::Value(wl_keyboard::KeymapFormat::XkbV1), fd, size } => {
+                // čítame od pozície 0 bez ohľadu na offset: deskriptor zdieľa offset s kompozitorom,
+                // ktorý do súboru práve zapisoval (obyčajné read() by vrátilo EOF)
+                use std::os::unix::fs::FileExt;
+                let f = std::fs::File::from(fd);
+                let mut buf = vec![0u8; size as usize];
+                if f.read_exact_at(&mut buf, 0).is_ok() {
+                    if let Some(end) = buf.iter().position(|b| *b == 0) {
+                        buf.truncate(end);
+                    }
+                    st.xkb = Xkb::new(&buf);
+                    if st.xkb.is_none() {
+                        eprintln!("dynamic-island: mapu kláves sa nepodarilo načítať (libxkbcommon?)");
+                    }
+                } else {
+                    eprintln!("dynamic-island: mapu kláves sa nepodarilo prečítať");
+                }
+            }
+            wl_keyboard::Event::Key { key, state: WEnum::Value(wl_keyboard::KeyState::Pressed), .. } => {
+                if let Some(x) = &st.xkb {
+                    st.key_events.push(KeyEvent { sym: x.sym(key), text: x.utf8(key), ctrl: x.ctrl() });
+                }
+            }
+            wl_keyboard::Event::Modifiers { mods_depressed, mods_latched, mods_locked, group, .. } => {
+                if let Some(x) = &mut st.xkb {
+                    x.update(mods_depressed, mods_latched, mods_locked, group);
                 }
             }
             _ => {}

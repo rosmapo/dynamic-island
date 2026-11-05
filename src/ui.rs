@@ -39,6 +39,9 @@ pub enum Action {
     WallLoad,
     /// nastaviť pozadie skriptom (`wallpaper -v CESTA`)
     WallApply(String),
+    Wifi(crate::wifi::WifiCmd),
+    /// vložiť schránku do poľa hesla
+    WifiPaste,
 }
 
 #[derive(Clone, Copy, PartialEq, Debug)]
@@ -49,6 +52,7 @@ enum Panel {
     Menu(usize),
     Clip,
     Wall,
+    Wifi,
     Tip,
 }
 
@@ -61,6 +65,10 @@ enum Hit {
     MenuItem(usize),
     ClipItem(usize),
     WallItem(usize),
+    WifiRow(usize),
+    WifiToggle,
+    WifiRefresh,
+    WifiEditor,
     Panel,
 }
 
@@ -125,6 +133,14 @@ const DISK_ROW: f32 = 46.0;
 const DISK_BOTTOM: f32 = 12.0;
 
 // panel schránky (logické px)
+/// po koľkých sekundách bez stlačenia klávesu sa zadávanie hesla zruší
+const WIFI_PW_IDLE_SECS: u64 = 45;
+const WIFI_PAD: f32 = 10.0;
+const WIFI_HEAD: f32 = 40.0;
+const WIFI_ROW_EXTRA: f32 = 16.0; // výška riadku = písmo + toto
+const WIFI_FOOT: f32 = 26.0;
+const WIFI_SCROLLBAR: f32 = 8.0;
+const WIFI_SCROLL_UNIT: f32 = 10.0;
 const WALL_PAD: f32 = 10.0;
 const WALL_GAP: f32 = 8.0;
 const WALL_SCROLLBAR: f32 = 8.0;
@@ -185,6 +201,15 @@ pub struct Ui {
     wall_current: String,
     wall_scroll: usize,
     wall_acc: f32,
+    /// modul Wi-Fi: stav, správa vo päte, skrolovanie, rozpísané heslo
+    wifi: crate::wifi::WifiState,
+    wifi_loaded: bool,
+    wifi_note: String,
+    wifi_scroll: usize,
+    wifi_acc: f32,
+    wifi_pw: Option<WifiPw>,
+    /// poistka: zadávanie hesla sa po nečinnosti samo zruší (uvoľní klávesnicu)
+    wifi_pw_until: Option<Instant>,
     /// akcie, ktoré vznikli mimo `click` (otvorenie panela) – `click` ich vráti volajúcemu
     queued: Vec<Action>,
 
@@ -199,6 +224,14 @@ pub struct Ui {
 
     pub pill: Rect,
     hits: Vec<(Rect, Hit)>,
+}
+
+/// Rozpísané zadávanie hesla pre zabezpečenú sieť.
+struct WifiPw {
+    ssid: String,
+    ap: String,
+    key_mgmt: String,
+    text: String,
 }
 
 fn fade(c: Color, a: f32) -> Color {
@@ -370,6 +403,13 @@ impl Ui {
             wall_current: String::new(),
             wall_scroll: 0,
             wall_acc: 0.0,
+            wifi: Default::default(),
+            wifi_loaded: false,
+            wifi_note: String::new(),
+            wifi_scroll: 0,
+            wifi_acc: 0.0,
+            wifi_pw: None,
+            wifi_pw_until: None,
             queued: Vec::new(),
             ptr: None,
             hover: None,
@@ -430,6 +470,18 @@ impl Ui {
                 self.wall_scroll = self.wall_scroll.min(max_start);
             }
             Msg::WallCurrent(path) => self.wall_current = path,
+            Msg::Wifi(s) => {
+                self.wifi = s;
+                self.wifi_loaded = true;
+                let max_start = self.wifi.aps.len().saturating_sub(self.cfg.wifi.rows);
+                self.wifi_scroll = self.wifi_scroll.min(max_start);
+            }
+            Msg::WifiNote(n) => self.wifi_note = n,
+            Msg::WifiPaste(t) => {
+                if let Some(pw) = &mut self.wifi_pw {
+                    pw.text.extend(t.trim_end_matches(['\n', '\r']).chars().filter(|c| !c.is_control()));
+                }
+            }
             Msg::WallThumb(i, thumb) => {
                 if let Some(e) = self.wall.get_mut(i) {
                     if e.thumb == thumb {
@@ -832,6 +884,16 @@ impl Ui {
                 (DISK_W * self.scale, (DISK_HEAD + n * DISK_ROW + DISK_BOTTOM) * self.scale)
             }
             Panel::Menu(mi) => self.menu_size(mi),
+            Panel::Wifi => {
+                let c = &self.cfg.wifi;
+                let f = c.font_size;
+                let h = if self.wifi_pw.is_some() {
+                    2.0 * WIFI_PAD + WIFI_HEAD + 4.0 + (f + 18.0) + 10.0 + (f * 0.85 + 6.0)
+                } else {
+                    2.0 * WIFI_PAD + WIFI_HEAD + self.wifi_rows_shown() as f32 * (f + WIFI_ROW_EXTRA) + WIFI_FOOT
+                };
+                (c.width * self.scale, h * self.scale)
+            }
             Panel::Wall => {
                 let c = &self.cfg.wall;
                 let (tw, th) = c.thumb_size();
@@ -977,6 +1039,16 @@ impl Ui {
             self.big = p;
         }
         self.cal_t.set(if Self::is_big(p) { 1.0 } else { 0.0 });
+        if p != Panel::Wifi {
+            self.wifi_pw = None;
+        }
+        if p == Panel::Wifi {
+            self.wifi_pw = None;
+            self.wifi_scroll = 0;
+            self.wifi_acc = 0.0;
+            self.wifi_note.clear();
+            self.queued.push(Action::Wifi(crate::wifi::WifiCmd::Load));
+        }
         if p == Panel::Wall {
             // zoznam sa pri každom otvorení načíta znova (nové obrázky, dorobené náhľady)
             self.wall_scroll = 0;
@@ -995,7 +1067,7 @@ impl Ui {
                 self.panel_w.set(0.0);
                 self.panel_a.set(0.0);
             }
-            Panel::Calendar | Panel::Disks | Panel::Menu(_) | Panel::Clip | Panel::Wall => {
+            Panel::Calendar | Panel::Disks | Panel::Menu(_) | Panel::Clip | Panel::Wall | Panel::Wifi => {
                 if p == Panel::Calendar {
                     self.rebuild_cal();
                 }
@@ -1034,7 +1106,63 @@ impl Ui {
     }
 
     fn is_big(p: Panel) -> bool {
-        matches!(p, Panel::Calendar | Panel::Disks | Panel::Menu(_) | Panel::Clip | Panel::Wall)
+        matches!(p, Panel::Calendar | Panel::Disks | Panel::Menu(_) | Panel::Clip | Panel::Wall | Panel::Wifi)
+    }
+
+    /// Počet riadkov zoznamu sietí, ktoré sú vidieť (aspoň 1 – kvôli správe „žiadne siete“).
+    fn wifi_rows_shown(&self) -> usize {
+        if !self.wifi.available || !self.wifi.enabled {
+            return 1;
+        }
+        self.wifi.aps.len().min(self.cfg.wifi.rows).max(1)
+    }
+
+    fn toggle_wifi(&mut self) {
+        if self.panel == Panel::Wifi {
+            self.set_panel(Panel::None);
+        } else {
+            self.set_panel(Panel::Wifi);
+        }
+    }
+
+    /// Klávesnicu potrebujeme len pri zadávaní hesla.
+    pub fn wants_keyboard(&self) -> bool {
+        self.panel == Panel::Wifi && self.wifi_pw.is_some()
+    }
+
+    /// Klávesnicu sa nepodarilo použiť (chýba mapa kláves) – zadávanie hesla sa zruší.
+    pub fn keyboard_unavailable(&mut self) {
+        self.wifi_pw = None;
+        self.wifi_note = "Klávesnica nie je dostupná (pozri stderr)".into();
+    }
+
+    pub fn key(&mut self, k: &crate::wl::KeyEvent) -> Vec<Action> {
+        self.wifi_pw_until = Some(Instant::now() + Duration::from_secs(WIFI_PW_IDLE_SECS));
+        let mut out = Vec::new();
+        let Some(pw) = &mut self.wifi_pw else { return out };
+        match k.sym {
+            0xff1b => self.wifi_pw = None, // Escape
+            0xff08 => {
+                pw.text.pop();
+            }
+            0xff0d | 0xff8d => {
+                // Enter
+                if pw.text.is_empty() {
+                    return out;
+                }
+                if pw.key_mgmt == "wpa-psk" && pw.text.chars().count() < 8 {
+                    self.wifi_note = "Heslo WPA musí mať aspoň 8 znakov".into();
+                    return out;
+                }
+                let pw = self.wifi_pw.take().unwrap_or(WifiPw { ssid: String::new(), ap: String::new(), key_mgmt: String::new(), text: String::new() });
+                self.wifi_note = format!("Pripájam k {}…", pw.ssid);
+                out.push(Action::Wifi(crate::wifi::WifiCmd::Connect { ssid: pw.ssid, ap: pw.ap, saved: None, password: Some(pw.text), key_mgmt: pw.key_mgmt }));
+            }
+            0x76 | 0x56 if k.ctrl => out.push(Action::WifiPaste),
+            _ if !k.ctrl => pw.text.extend(k.text.chars().filter(|c| !c.is_control())),
+            _ => {}
+        }
+        out
     }
 
     /// Počet riadkov celej mriežky náhľadov.
@@ -1133,6 +1261,15 @@ impl Ui {
                 changed = true;
             }
         }
+        if let Some(t) = self.wifi_pw_until {
+            if now >= t {
+                self.wifi_pw_until = None;
+                if self.wifi_pw.take().is_some() {
+                    self.wifi_note = "Zadávanie hesla vypršalo".into();
+                    changed = true;
+                }
+            }
+        }
         if let Some(t) = self.collapse_at {
             if now >= t {
                 self.collapse_at = None;
@@ -1160,7 +1297,7 @@ impl Ui {
     }
 
     pub fn next_deadline(&self) -> Option<Instant> {
-        [self.hud_until, self.collapse_at, self.tip_pending.map(|t| t.1), self.notifs.iter().filter_map(|n| n.expires).min()].into_iter().flatten().min()
+        [self.hud_until, self.collapse_at, self.wifi_pw.as_ref().and(self.wifi_pw_until), self.tip_pending.map(|t| t.1), self.notifs.iter().filter_map(|n| n.expires).min()].into_iter().flatten().min()
     }
 
     // ------------------------------------------------------- ukazovateľ
@@ -1223,8 +1360,12 @@ impl Ui {
         if self.grace.is_some() {
             return;
         }
+        // počas písania hesla panel nezatvárame (zavrie ho Esc / odoslanie)
+        if self.wants_keyboard() {
+            return;
+        }
         match self.panel {
-            Panel::Calendar | Panel::Disks | Panel::Menu(_) | Panel::Clip | Panel::Wall => {
+            Panel::Calendar | Panel::Disks | Panel::Menu(_) | Panel::Clip | Panel::Wall | Panel::Wifi => {
                 self.collapse_at = Some(now + Duration::from_millis(self.cfg.collapse_ms))
             }
             Panel::Tip => self.collapse_at = Some(now + Duration::from_millis(200)),
@@ -1234,7 +1375,7 @@ impl Ui {
 
     fn action_for(cmd: &str) -> Option<Action> {
         match cmd {
-            "" | "calendar" | "menu" | "clipboard" | "wallpaper" => None,
+            "" | "calendar" | "menu" | "clipboard" | "wallpaper" | "wifi" => None,
             "eject-all" => Some(Action::DiskEjectAll),
             "inhibit-toggle" => Some(Action::InhibitToggle),
             "layout-toggle" => Some(Action::LayoutToggle),
@@ -1267,6 +1408,10 @@ impl Ui {
             }
             "wallpaper" => {
                 self.set_panel(Panel::Wall);
+                None
+            }
+            "wifi" => {
+                self.set_panel(Panel::Wifi);
                 None
             }
             other => match self.menu_index(other) {
@@ -1353,6 +1498,11 @@ impl Ui {
                     self.toggle_clip();
                     self.collapse_at = None;
                     self.start_grace(now);
+                } else if cmd == "wifi" {
+                    self.tip_pending = None;
+                    self.toggle_wifi();
+                    self.collapse_at = None;
+                    self.start_grace(now);
                 } else if cmd == "wallpaper" {
                     self.tip_pending = None;
                     self.toggle_wall();
@@ -1390,6 +1540,50 @@ impl Ui {
                     }
                     self.set_panel(Panel::None);
                     self.collapse_at = None;
+                }
+            }
+            Hit::WifiToggle => {
+                if button == BTN_LEFT {
+                    self.wifi_note.clear();
+                    out.push(Action::Wifi(crate::wifi::WifiCmd::SetEnabled(!self.wifi.enabled)));
+                }
+            }
+            Hit::WifiEditor => {
+                if button == BTN_LEFT {
+                    out.push(Action::Run(self.cfg.wifi.editor_command.clone()));
+                    self.set_panel(Panel::None);
+                    self.collapse_at = None;
+                }
+            }
+            Hit::WifiRefresh => {
+                if button == BTN_LEFT {
+                    self.wifi_note = "Hľadám siete…".into();
+                    out.push(Action::Wifi(crate::wifi::WifiCmd::Load));
+                }
+            }
+            Hit::WifiRow(i) => {
+                if let Some(ap) = self.wifi.aps.get(i).cloned() {
+                    if button == BTN_RIGHT {
+                        if let Some(conn) = ap.saved {
+                            out.push(Action::Wifi(crate::wifi::WifiCmd::Forget(conn)));
+                            self.wifi_note = format!("Zabúdam {}…", ap.ssid);
+                        }
+                    } else if button == BTN_LEFT {
+                        if ap.active {
+                            out.push(Action::Wifi(crate::wifi::WifiCmd::Disconnect));
+                            self.wifi_note = "Odpájam…".into();
+                        } else if ap.saved.is_some() || !ap.secured {
+                            self.wifi_note = format!("Pripájam k {}…", ap.ssid);
+                            out.push(Action::Wifi(crate::wifi::WifiCmd::Connect { ssid: ap.ssid, ap: ap.ap, saved: ap.saved, password: None, key_mgmt: ap.key_mgmt }));
+                        } else if ap.supported {
+                            self.wifi_note.clear();
+                            self.collapse_at = None;
+                            self.wifi_pw = Some(WifiPw { ssid: ap.ssid, ap: ap.ap, key_mgmt: ap.key_mgmt, text: String::new() });
+                            self.wifi_pw_until = Some(now + Duration::from_secs(WIFI_PW_IDLE_SECS));
+                        } else {
+                            self.wifi_note = "Tento typ zabezpečenia ostrovček nepodporuje".into();
+                        }
+                    }
                 }
             }
             Hit::WallItem(i) => {
@@ -1440,6 +1634,13 @@ impl Ui {
     pub fn scroll(&mut self, value: f32) {
         if self.panel == Panel::Calendar && self.hover.is_some() {
             self.cal_shift(if value > 0.0 { 1 } else { -1 });
+        }
+        if self.panel == Panel::Wifi && self.hover.is_some() && self.wifi_pw.is_none() {
+            self.wifi_acc += value;
+            let rows = (self.wifi_acc / WIFI_SCROLL_UNIT).trunc();
+            self.wifi_acc -= rows * WIFI_SCROLL_UNIT;
+            let max_start = self.wifi.aps.len().saturating_sub(self.cfg.wifi.rows) as f32;
+            self.wifi_scroll = (self.wifi_scroll as f32 + rows).clamp(0.0, max_start) as usize;
         }
         if self.panel == Panel::Wall && self.hover.is_some() {
             self.wall_acc += value;
@@ -1660,6 +1861,7 @@ impl Ui {
                 Panel::Menu(mi) => self.build_menu(&mut frame, text, pill, mi, ct),
                 Panel::Clip => self.build_clip(&mut frame, text, pill, ct),
                 Panel::Wall => self.build_wall(&mut frame, text, pill, ct),
+                Panel::Wifi => self.build_wifi(&mut frame, text, pill, ct),
                 _ => self.build_calendar(&mut frame, text, pill, pill.y, ct),
             }
         }
@@ -1681,7 +1883,7 @@ impl Ui {
                         text.layout_to(&mut frame.content, l, px2, pill.x + self.s(16.0), cy + (asc - desc) * 0.5, col);
                     }
                 }
-                Panel::None | Panel::Calendar | Panel::Disks | Panel::Menu(_) | Panel::Clip | Panel::Wall => {}
+                Panel::None | Panel::Calendar | Panel::Disks | Panel::Menu(_) | Panel::Clip | Panel::Wall | Panel::Wifi => {}
             }
         }
         frame
@@ -1885,6 +2087,221 @@ impl Ui {
             let w = 4.0 * s;
             let x = pill.x + pill.w - pad - sb + (sb - w) * 0.5;
             frame.content.push(Item::Rect { r: Rect::new(x, thumb_y, w, thumb_h), radius: w * 0.5, soft: 0.8, color: fade(t.fg, 0.35 * pa) });
+        }
+    }
+
+    fn build_wifi(&mut self, frame: &mut Frame, text: &mut Text, pill: Rect, pa: f32) {
+        let s = self.scale;
+        let t = self.theme;
+        let f = self.cfg.wifi.font_size;
+        let px = f * s;
+        let (asc, desc) = text.line_metrics(px);
+        let pad = WIFI_PAD * s;
+        let head = WIFI_HEAD * s;
+        let row_h = (f + WIFI_ROW_EXTRA) * s;
+        let x0 = pill.x + pad;
+        let w_in = pill.w - 2.0 * pad;
+        let inset = 10.0 * s;
+        let hy = pill.y + pad;
+        let hcy = hy + head * 0.5;
+        let base = |cy: f32| cy + (asc - desc) * 0.5;
+
+        // ---- zadávanie hesla
+        if let Some(pw) = &self.wifi_pw {
+            let title = format!("\u{f033e}  Heslo pre {}", pw.ssid);
+            let title = Self::ellipsize(text, &title, px, w_in - 2.0 * inset);
+            text.layout_to(&mut frame.content, &title, px, x0 + inset, base(hcy), fade(t.fg, pa));
+            let bx = Rect::new(x0, hy + head + 4.0 * s, w_in, (f + 18.0) * s);
+            frame.content.push(Item::Rect { r: bx, radius: 10.0 * s, soft: 0.8, color: fade(t.fg, 0.12 * pa) });
+            let max_w = bx.w - 2.0 * inset;
+            let mut dots: String = "\u{25cf}".repeat(pw.text.chars().count());
+            while !dots.is_empty() && text.measure(&dots, px) > max_w {
+                dots.remove(0);
+            }
+            let cy = bx.y + bx.h * 0.5;
+            let mut cx = bx.x + inset;
+            if dots.is_empty() {
+                text.layout_to(&mut frame.content, "Heslo", px, cx, base(cy), fade(t.fg, 0.4 * pa));
+            } else {
+                text.layout_to(&mut frame.content, &dots, px, cx, base(cy), fade(t.fg, pa));
+                cx += text.measure(&dots, px);
+            }
+            frame.content.push(Item::Rect { r: Rect::new(cx + 2.0 * s, bx.y + 8.0 * s, 1.5 * s, bx.h - 16.0 * s), radius: 0.7 * s, soft: 0.8, color: fade(t.accent, pa) });
+            let px2 = px * 0.85;
+            let (a2, d2) = text.line_metrics(px2);
+            let msg = if self.wifi_note.is_empty() { "Enter – pripojiť · Esc – zrušiť · Ctrl+V – vložiť" } else { self.wifi_note.as_str() };
+            let msg = Self::ellipsize(text, msg, px2, w_in - 2.0 * inset);
+            let hy2 = bx.y + bx.h + 10.0 * s + (f * 0.85 + 6.0) * s * 0.5;
+            text.layout_to(&mut frame.content, &msg, px2, x0 + inset, hy2 + (a2 - d2) * 0.5, fade(t.fg, 0.65 * pa));
+            return;
+        }
+
+        // ---- hlavička: vľavo prepínač rádia + obnoviť, v strede pripojená sieť, vpravo správca pripojení
+        let usable = self.wifi.available && self.wifi.error.is_empty();
+        let on = usable && self.wifi.enabled;
+        let active = self.wifi.aps.iter().find(|a| a.active).cloned();
+        let tw = 40.0 * s;
+        let th = 22.0 * s;
+        let tog = Rect::new(x0 + inset * 0.5, hcy - th * 0.5, tw, th);
+        let ref_sz = px * 1.7;
+        let rbtn = Rect::new(tog.x + tog.w + 6.0 * s, hcy - ref_sz * 0.5, ref_sz, ref_sz);
+        let ed_label = format!("\u{f0493}  {}", self.cfg.wifi.editor_label);
+        let ed_w = text.measure(&ed_label, px) + 2.0 * inset;
+        let ed = Rect::new(pill.x + pill.w - pad - ed_w, hcy - ref_sz * 0.55, ed_w, ref_sz * 1.1);
+        if !self.cfg.wifi.editor_command.is_empty() {
+            self.hits.push((ed, Hit::WifiEditor));
+            let hov = self.hover == Some(Hit::WifiEditor);
+            let bg = if hov { fade(t.menu_selected, pa) } else { fade(t.fg, 0.12 * pa) };
+            frame.content.push(Item::Rect { r: ed, radius: ed.h * 0.5, soft: 0.8, color: bg });
+            text.layout_to(&mut frame.content, &ed_label, px, ed.x + inset, base(hcy), fade(if hov { t.menu_selected_text } else { t.fg }, pa));
+        }
+        if self.wifi.available {
+            self.hits.push((tog, Hit::WifiToggle));
+            let track = if self.wifi.enabled { t.accent } else { t.fg };
+            frame.content.push(Item::Rect { r: tog, radius: th * 0.5, soft: 0.8, color: fade(track, (if self.wifi.enabled { 1.0 } else { 0.3 }) * pa) });
+            let kn = th - 6.0 * s;
+            let kx = if self.wifi.enabled { tog.x + tog.w - 3.0 * s - kn } else { tog.x + 3.0 * s };
+            frame.content.push(Item::Rect { r: Rect::new(kx, tog.y + 3.0 * s, kn, kn), radius: kn * 0.5, soft: 0.8, color: fade(if self.wifi.enabled { t.on_accent } else { t.fg }, pa) });
+            if on {
+                self.hits.push((rbtn, Hit::WifiRefresh));
+                let hov = self.hover == Some(Hit::WifiRefresh);
+                if hov {
+                    frame.content.push(Item::Rect { r: rbtn, radius: 8.0 * s, soft: 0.8, color: fade(t.menu_selected, pa) });
+                }
+                let gw = text.measure("\u{f0450}", px);
+                text.layout_to(&mut frame.content, "\u{f0450}", px, rbtn.x + (rbtn.w - gw) * 0.5, base(hcy), fade(if hov { t.menu_selected_text } else { t.fg }, pa));
+            }
+        }
+        // stred: názov pripojenej siete (so silou signálu) alebo stav
+        let (mid, mid_col) = if !self.wifi.error.is_empty() {
+            ("Wi-Fi nedostupné".to_string(), 0.7)
+        } else if !self.wifi_loaded {
+            ("Načítavam…".to_string(), 0.7)
+        } else if !self.wifi.available {
+            ("Wi-Fi zariadenie nenájdené".to_string(), 0.7)
+        } else if !self.wifi.enabled {
+            ("Wi-Fi vypnuté".to_string(), 0.7)
+        } else if let Some(a) = &active {
+            (format!("{}  {}", crate::wifi::signal_glyph(a.strength), a.ssid), 1.0)
+        } else {
+            ("Nepripojené".to_string(), 0.7)
+        };
+        let left = rbtn.x + rbtn.w + 10.0 * s;
+        let right = ed.x - 10.0 * s;
+        if right > left {
+            let mid = Self::ellipsize(text, &mid, px, right - left);
+            let mw = text.measure(&mid, px);
+            let col = if active.is_some() && on { t.accent } else { t.fg };
+            text.layout_to(&mut frame.content, &mid, px, left + (right - left - mw) * 0.5, base(hcy), fade(col, mid_col * pa));
+        }
+
+        // ---- zoznam sietí
+        let top = pill.y + pad + head;
+        let n = self.wifi.aps.len();
+        let list_on = usable && self.wifi.enabled && n > 0;
+        let rows = self.wifi_rows_shown();
+        if !list_on {
+            let msg = if !self.wifi.error.is_empty() {
+                self.wifi.error.clone()
+            } else if !self.wifi_loaded {
+                "Načítavam…".to_string()
+            } else if !self.wifi.available {
+                "Nenašiel som žiadne Wi-Fi zariadenie".to_string()
+            } else if !self.wifi.enabled {
+                "Wi-Fi je vypnuté".to_string()
+            } else {
+                "Žiadne siete".to_string()
+            };
+            let msg = Self::ellipsize(text, &msg, px, w_in - 2.0 * inset);
+            let mw = text.measure(&msg, px);
+            text.layout_to(&mut frame.content, &msg, px, x0 + (w_in - mw) * 0.5, base(top + row_h * 0.5), fade(t.fg, 0.7 * pa));
+        } else {
+            let scrollable = n > rows;
+            let sb = if scrollable { WIFI_SCROLLBAR * s } else { 0.0 };
+            let start = self.wifi_scroll.min(n - rows.min(n));
+            let cell_w = w_in - sb;
+            let px_small = px * 0.8;
+            let (a3, d3) = text.line_metrics(px_small);
+            // šírka stĺpca zabezpečenia = najširší popis v zozname; vpravo je pevné miesto na značku pripojenia
+            let check_w = text.measure("\u{f012c}", px) + 6.0 * s;
+            let sec_w = self.wifi.aps.iter().map(|a| text.measure(if a.sec.is_empty() { "Otvorená" } else { &a.sec }, px_small)).fold(0.0f32, f32::max);
+            for k in 0..rows.min(n) {
+                let i = start + k;
+                let y = top + k as f32 * row_h;
+                let cell = Rect::new(x0, y, cell_w, row_h);
+                self.hits.push((cell, Hit::WifiRow(i)));
+                let hov = self.hover == Some(Hit::WifiRow(i));
+                let ap = &self.wifi.aps[i];
+                let fg = if hov {
+                    frame.content.push(Item::Rect { r: cell, radius: 10.0 * s, soft: 0.8, color: fade(t.menu_selected, pa) });
+                    t.menu_selected_text
+                } else if ap.active {
+                    // aktuálne pripojená sieť: jemné podfarbenie a farba zvýraznenia
+                    frame.content.push(Item::Rect { r: cell, radius: 10.0 * s, soft: 0.8, color: fade(t.accent, 0.18 * pa) });
+                    t.accent
+                } else {
+                    t.fg
+                };
+                let cy = y + row_h * 0.5;
+                text.layout_to(&mut frame.content, crate::wifi::signal_glyph(ap.strength), px, cell.x + inset, base(cy), fade(fg, pa));
+                // zprava doľava: značka pripojenia, stĺpec zabezpečenia, „uložená“
+                let mut rx = cell.x + cell.w - inset - check_w;
+                if ap.active {
+                    text.layout_to(&mut frame.content, "\u{f012c}", px, rx, base(cy), fade(fg, pa));
+                }
+                rx -= 8.0 * s;
+                let (label, dim) = if ap.sec.is_empty() { ("Otvorená", 0.5) } else { (ap.sec.as_str(), 0.75) };
+                let lw = text.measure(label, px_small);
+                // zarovnané vľavo v stĺpci, aby si popisy boli pod sebou
+                let col_x = rx - sec_w;
+                text.layout_to(&mut frame.content, label, px_small, col_x, cy + (a3 - d3) * 0.5, fade(fg, dim * pa));
+                let _ = lw;
+                rx = col_x - 10.0 * s;
+                if ap.saved.is_some() && !ap.active {
+                    let label = "uložená";
+                    let gw = text.measure(label, px_small);
+                    rx -= gw;
+                    text.layout_to(&mut frame.content, label, px_small, rx, cy + (a3 - d3) * 0.5, fade(fg, 0.55 * pa));
+                    rx -= 8.0 * s;
+                }
+                let name_x = cell.x + inset + px * 1.9;
+                let name = Self::ellipsize(text, &ap.ssid, px, rx - name_x);
+                text.layout_to(&mut frame.content, &name, px, name_x, base(cy), fade(fg, pa));
+            }
+            if scrollable {
+                let track_h = rows as f32 * row_h;
+                let thumb_h = (track_h * rows as f32 / n as f32).max(16.0 * s).min(track_h);
+                let frac = start as f32 / (n - rows) as f32;
+                let w = 4.0 * s;
+                let x = x0 + cell_w + (sb - w) * 0.5;
+                frame.content.push(Item::Rect { r: Rect::new(x, top + (track_h - thumb_h) * frac, w, thumb_h), radius: w * 0.5, soft: 0.8, color: fade(t.fg, 0.35 * pa) });
+            }
+        }
+
+        // ---- päta: stav / nápoveda k riadku pod kurzorom
+        let hint = match self.hover {
+            Some(Hit::WifiRow(i)) => self.wifi.aps.get(i).map(|ap| {
+                if ap.active {
+                    "Klik – odpojiť"
+                } else if ap.saved.is_some() {
+                    "Klik – pripojiť · pravý klik – zabudnúť sieť"
+                } else if !ap.supported {
+                    "Nepodporované zabezpečenie"
+                } else if ap.secured {
+                    "Klik – zadať heslo"
+                } else {
+                    "Klik – pripojiť"
+                }
+            }),
+            _ => None,
+        };
+        let msg = if !self.wifi_note.is_empty() { Some(self.wifi_note.as_str()) } else { hint };
+        if let Some(m) = msg {
+            let px2 = px * 0.85;
+            let (a2, d2) = text.line_metrics(px2);
+            let m = Self::ellipsize(text, m, px2, w_in - 2.0 * inset);
+            let cy = pill.y + pill.h - pad - WIFI_FOOT * s * 0.5;
+            text.layout_to(&mut frame.content, &m, px2, x0 + inset, cy + (a2 - d2) * 0.5, fade(t.fg, 0.65 * pa));
         }
     }
 

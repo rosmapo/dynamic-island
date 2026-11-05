@@ -47,6 +47,13 @@ tooltip_wifi = ""
 # tooltip_ethernet = "Rozhranie: {ifname}\nIP adresa: {ip}\nBrána: {gateway}"
 # tooltip_disconnected = "Nepripojené"
 
+[wifi]
+font_size = 16
+rows = 8
+width = 450
+editor_command = "nm-connection-editor"
+editor_label = "Pripojenia   "		# Prázdny editor_command tlačidlo skryje.
+
 [vpn]
 interfaces = ["tun*"]
 text = "VPN"
@@ -84,8 +91,10 @@ directory = "~/.config/wayfire/media/wallpaper"
 columns = 4
 rows = 4
 thumb_width = 160
-command = "~/.config/wayfire/scripts/wallpaper"
-cache_dir = "~/.cache/wallpaper-chooser"
+# command = "~/.config/wayfire/scripts/wallpaper"
+# cache_dir = "~/.cache/wallpaper-chooser"
+# state_dir = "~/.cache/wallpaper-chooser"
+
 
 [[custom]]
 name = "off"
@@ -252,7 +261,7 @@ label = "Kvantum"
 command = "kvantummanager"
 [[menu.item]]
 label = "Wifi"
-command = "connex"
+command = "module:wifi"
 [[menu.item]]
 label = "Firewall"
 command = "rungufw.sh"
@@ -276,7 +285,7 @@ label = "S.M.A.R.T"
 command = "QDiskInfo"
 [[menu.item]]
 label = "Wallpaper"
-command = "~/.config/wayfire/scripts/wallpaper"
+command = "module:wallpaper"
 [[menu.item]]
 separator = true
 ### System Tools ###

@@ -175,6 +175,8 @@ pub struct Config {
     pub clip_copy: String,
     /// modul wallpaper – `[wallpaper]`
     pub wall: crate::wallpaper::WallCfg,
+    /// modul Wi-Fi – `[wifi]`
+    pub wifi: crate::wifi::WifiCfg,
     pub auto: AutoCfg,
 
     pub notif_enabled: bool,
@@ -551,6 +553,7 @@ impl Config {
             clip_list: clip.str_or("list_command", "cliphist list"),
             clip_copy: clip.str_or("copy_command", "cliphist decode | wl-copy"),
             wall: crate::wallpaper::WallCfg::from_table(&t.sub("wallpaper")),
+            wifi: crate::wifi::WifiCfg::from_table(&t.sub("wifi")),
             auto: AutoCfg {
                 enabled: auto.bool_or("enabled", true),
                 bar_height: auto.f64_or("bar_height", 40.0),
@@ -707,6 +710,13 @@ mod tests {
         let t = toml::parse("[clipboard]\nfont_size=18\nrows=5\nwidth=500\n").unwrap();
         let c = Config::from_table(&t, PathBuf::new());
         assert_eq!((c.clip_font, c.clip_rows, c.clip_width), (18.0, 5, 500.0));
+    }
+
+    #[test]
+    fn wifi_config() {
+        let t = toml::parse("[wifi]\nrows=5\nwidth=400\n").unwrap();
+        let c = Config::from_table(&t, PathBuf::new());
+        assert_eq!((c.wifi.rows, c.wifi.width), (5, 400.0));
     }
 
     #[test]

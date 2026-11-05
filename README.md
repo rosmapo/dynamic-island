@@ -102,7 +102,7 @@ v súhrne (`summary`), aplikácii (`app`) alebo tele (`body`); voliteľne vlastn
 ## Tlačidlá modulov
 
 Každý modul (aj `[[custom]]`) má `on_click` (ľavé), `on_click_right` (pravé) a `on_click_middle` (stredné tlačidlo).
-Hodnota je shell príkaz, alebo vstavaná akcia: `calendar`, `clipboard`, `wallpaper`, názov `[[menu]]`, `menu` (zoznam diskov),
+Hodnota je shell príkaz, alebo vstavaná akcia: `calendar`, `clipboard`, `wallpaper`, `wifi`, názov `[[menu]]`, `menu` (zoznam diskov),
 `eject-all`, `inhibit-toggle`, `layout-toggle`, `audio-mute`. Prázdna hodnota = tlačidlo nič nerobí.
 
     [clock]
@@ -144,6 +144,37 @@ max_items = 200     # najviac koľko najnovších položiek sa načíta
 ```
 
 Vybraná (hover) položka používa farby `menu_selected` / `menu_selected_text` z `[colors]` (pozri nižšie).
+
+## Wi-Fi
+
+Panel nad **NetworkManagerom** (D-Bus, systémová zbernica). Otvorí sa `on_click = "wifi"` na ľubovoľnom module
+(typicky `[network]`), alebo položkou menu s `command = "module:wifi"`. Zobrazí zoznam sietí (aktívna hore, potom
+podľa signálu), pri otvorení spustí vyhľadávanie.
+
+- **klik** na uloženú alebo otvorenú sieť ju pripojí, na aktívnu ju odpojí
+- **klik** na zabezpečenú novú sieť otvorí zadávanie hesla priamo v ostrovčeku (WPA2/WPA3-PSK); **Enter** pripojí,
+  **Esc** zruší, **Ctrl+V** vloží schránku (`wl-paste`). Pri zlom hesle sa vytvorený profil zmaže
+- **pravý klik** na uloženú sieť ju zabudne
+- hlavička: vľavo prepínač rádia Wi-Fi a tlačidlo obnovenia, v strede názov pripojenej siete, vpravo tlačidlo
+  „Pripojenia“ (`editor_command`, predvolene `nm-connection-editor`)
+- zoznam má stĺpec zabezpečenia (WPA2, WPA3, WPA2/WPA3, WEP, Otvorená …); aktuálne pripojená sieť má podfarbený riadok,
+  farbu zvýraznenia a značku ✓
+- siete s 802.1X (firemné), WEP a skryté siete zatiaľ nie sú podporované
+
+Klávesnicu ostrovček zachytáva **iba počas zadávania hesla** (layer-shell `exclusive`), inak ju nechá aplikáciám.
+Vyžaduje `libxkbcommon` (načíta sa za behu) a oprávnenie meniť siete (polkit – bežná používateľská relácia stačí).
+
+```toml
+[network]
+on_click = "wifi"
+
+[wifi]
+font_size = 15   # písmo
+rows = 8         # koľko sietí je vidieť naraz, viac = skrolovanie kolieskom
+width = 420      # šírka panela
+editor_command = "nm-connection-editor"   # tlačidlo v hlavičke (prázdne = bez tlačidla)
+editor_label = "Pripojenia"
+```
 
 ## Wallpaper
 

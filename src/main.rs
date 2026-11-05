@@ -21,7 +21,9 @@ mod toml;
 mod ui;
 mod wallpaper;
 mod wayfire;
+mod wifi;
 mod wl;
+mod xkb;
 
 use std::path::PathBuf;
 

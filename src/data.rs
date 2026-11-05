@@ -83,6 +83,12 @@ pub enum Msg {
     WallThumb(usize, String),
     /// pozadie bolo úspešne nastavené (cesta)
     WallCurrent(String),
+    /// stav Wi-Fi z NetworkManagera
+    Wifi(crate::wifi::WifiState),
+    /// stavová / chybová správa Wi-Fi panela (prázdna = vymazať)
+    WifiNote(String),
+    /// text zo schránky pre pole hesla
+    WifiPaste(String),
     Notif(Notification),
     NotifClose(u32),
     Net(NetInfo),

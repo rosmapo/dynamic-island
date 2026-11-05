@@ -83,6 +83,8 @@ fn run_action(a: Action, cfg: &Config, disk_tx: &Option<Tx<DiskCmd>>, tx: &Tx<Ms
             });
         }
         Action::ClipCopy(line) => spawn_with_stdin(&cfg.clip_copy, line),
+        Action::Wifi(cmd) => crate::wifi::run(cmd, tx.clone()),
+        Action::WifiPaste => crate::wifi::paste(tx.clone()),
         Action::WallLoad => crate::wallpaper::load(cfg.wall.clone(), tx.clone()),
         Action::WallApply(path) => crate::wallpaper::apply(cfg.wall.clone(), path, tx.clone()),
         Action::DiskEject(b) => {
@@ -182,6 +184,7 @@ pub fn run(cfg: Config) -> Result<(), String> {
     let mut clock_next = Instant::now();
     let mut last_clock = String::new();
     let mut first_draw = true;
+    let mut kb_on = false;
 
     loop {
         let now = Instant::now();
@@ -298,6 +301,25 @@ pub fn run(cfg: Config) -> Result<(), String> {
                 PtrEvent::Button(_, false) => {}
                 PtrEvent::Scroll(v) => ui.scroll(v as f32),
             }
+            dirty = true;
+        }
+
+        // klávesnica (len pri písaní hesla Wi-Fi; inak povrch klávesnicu nedostáva)
+        for k in std::mem::take(&mut wl.st.key_events) {
+            for a in ui.key(&k) {
+                run_action(a, &cfg, &disk_tx, &tx);
+            }
+            dirty = true;
+        }
+        let mut want_kb = ui.wants_keyboard();
+        if want_kb && !wl.keyboard_ready() {
+            // bez mapy kláves by sme klávesnicu zobrali a nevedeli ju použiť – radšej písanie zrušiť
+            ui.keyboard_unavailable();
+            want_kb = false;
+        }
+        if want_kb != kb_on {
+            wl.set_keyboard(want_kb);
+            kb_on = want_kb;
             dirty = true;
         }
 
