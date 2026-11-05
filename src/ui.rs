@@ -41,6 +41,7 @@ pub enum Action {
     WallApply { path: String, background_only: bool },
     /// nastaviť tému (názov, cesta) alebo návrat do režimu „wallpaper“ (`None`)
     WallTheme(Option<(String, String)>),
+    Audio(crate::audio::AudioCmd),
     Wifi(crate::wifi::WifiCmd),
     /// vložiť schránku do poľa hesla
     WifiPaste,
@@ -55,6 +56,7 @@ enum Panel {
     Clip,
     Wall,
     Wifi,
+    Audio,
     Tip,
 }
 
@@ -67,6 +69,9 @@ enum Hit {
     MenuItem(usize),
     ClipItem(usize),
     WallItem(usize),
+    AudioMute(bool),
+    AudioSlider(bool),
+    AudioDev(bool, usize),
     WallRollout,
     WallButton(usize),
     WallTheme(usize),
@@ -146,6 +151,11 @@ const WIFI_ROW_EXTRA: f32 = 16.0; // výška riadku = písmo + toto
 const WIFI_FOOT: f32 = 26.0;
 const WIFI_SCROLLBAR: f32 = 8.0;
 const WIFI_SCROLL_UNIT: f32 = 10.0;
+const AUDIO_PAD: f32 = 10.0;
+const AUDIO_ROW_EXTRA: f32 = 16.0;
+const AUDIO_LABEL: f32 = 22.0;
+const AUDIO_GAP: f32 = 10.0;
+const AUDIO_SCROLL_UNIT: f32 = 10.0;
 const WALL_HEAD: f32 = 40.0;
 const WALL_PAD: f32 = 10.0;
 const WALL_GAP: f32 = 8.0;
@@ -212,6 +222,14 @@ pub struct Ui {
     wall_theme: String,
     wall_menu: bool,
     wall_menu_scroll: usize,
+    /// modul audio: zariadenia, ťahaný posuvník (`false` = výstup, `true` = vstup), dráhy posuvníkov z posledného kreslenia
+    audio: crate::audio::AudioState,
+    audio_loaded: bool,
+    audio_drag: Option<bool>,
+    audio_sent: Instant,
+    audio_unsent: bool,
+    audio_rects: [Rect; 2],
+    audio_acc: f32,
     /// modul Wi-Fi: stav, správa vo päte, skrolovanie, rozpísané heslo
     wifi: crate::wifi::WifiState,
     wifi_loaded: bool,
@@ -418,6 +436,13 @@ impl Ui {
             wall_theme: String::new(),
             wall_menu: false,
             wall_menu_scroll: 0,
+            audio: Default::default(),
+            audio_loaded: false,
+            audio_drag: None,
+            audio_sent: Instant::now(),
+            audio_unsent: false,
+            audio_rects: [Rect::new(0.0, 0.0, 0.0, 0.0); 2],
+            audio_acc: 0.0,
             wifi: Default::default(),
             wifi_loaded: false,
             wifi_note: String::new(),
@@ -512,12 +537,25 @@ impl Ui {
             Msg::Net(n) => self.data.net = n,
             Msg::Vpn(v) => self.data.vpn = v,
             Msg::Layout(l) => self.data.layout = l,
+            Msg::AudioDev(st) => {
+                // počas ťahania posuvníka by nás staré hodnoty z `pactl` vracali späť
+                if self.audio_drag.is_none() {
+                    self.audio = st;
+                }
+                self.audio_loaded = true;
+            }
             Msg::Audio { muted, volume } => {
+                if self.audio_drag.is_none() {
+                    if let Some(i) = self.audio_default(false) {
+                        self.audio.sinks[i].volume = (volume * 100.0).round().max(0.0) as u32;
+                        self.audio.sinks[i].mute = muted;
+                    }
+                }
                 let changed = self.data.audio_known && (self.data.muted != muted || (self.data.volume - volume).abs() > 0.004);
                 self.data.muted = muted;
                 self.data.volume = volume;
                 self.data.audio_known = true;
-                if changed && self.cfg.audio_hud {
+                if changed && self.cfg.audio_hud && self.panel != Panel::Audio {
                     self.data.hud_bright = false;
                     self.hud_until = Some(now + Duration::from_millis(self.cfg.hud_ms));
                     self.hud_t.set(1.0);
@@ -904,6 +942,13 @@ impl Ui {
                 (DISK_W * self.scale, (DISK_HEAD + n * DISK_ROW + DISK_BOTTOM) * self.scale)
             }
             Panel::Menu(mi) => self.menu_size(mi),
+            Panel::Audio => {
+                let c = &self.cfg.audio_panel;
+                let row = c.font_size + AUDIO_ROW_EXTRA;
+                let sec = |len: usize| AUDIO_LABEL + row + len.min(c.rows).max(1) as f32 * row;
+                let h = 2.0 * AUDIO_PAD + sec(self.audio.sinks.len()) + AUDIO_GAP + sec(self.audio.sources.len());
+                (c.width * self.scale, h * self.scale)
+            }
             Panel::Wifi => {
                 let c = &self.cfg.wifi;
                 let f = c.font_size;
@@ -1062,6 +1107,13 @@ impl Ui {
         if p != Panel::Wifi {
             self.wifi_pw = None;
         }
+        if p != Panel::Audio {
+            self.audio_drag = None;
+        }
+        if p == Panel::Audio {
+            self.audio_acc = 0.0;
+            self.queued.push(Action::Audio(crate::audio::AudioCmd::Load));
+        }
         if p == Panel::Wifi {
             self.wifi_pw = None;
             self.wifi_scroll = 0;
@@ -1089,7 +1141,7 @@ impl Ui {
                 self.panel_w.set(0.0);
                 self.panel_a.set(0.0);
             }
-            Panel::Calendar | Panel::Disks | Panel::Menu(_) | Panel::Clip | Panel::Wall | Panel::Wifi => {
+            Panel::Calendar | Panel::Disks | Panel::Menu(_) | Panel::Clip | Panel::Wall | Panel::Wifi | Panel::Audio => {
                 if p == Panel::Calendar {
                     self.rebuild_cal();
                 }
@@ -1128,7 +1180,87 @@ impl Ui {
     }
 
     fn is_big(p: Panel) -> bool {
-        matches!(p, Panel::Calendar | Panel::Disks | Panel::Menu(_) | Panel::Clip | Panel::Wall | Panel::Wifi)
+        matches!(p, Panel::Calendar | Panel::Disks | Panel::Menu(_) | Panel::Clip | Panel::Wall | Panel::Wifi | Panel::Audio)
+    }
+
+    fn toggle_audio(&mut self) {
+        if self.panel == Panel::Audio {
+            self.set_panel(Panel::None);
+        } else {
+            self.set_panel(Panel::Audio);
+        }
+    }
+
+    /// Najvyššia hodnota posuvníka v % (`limit` z `[audio]`).
+    fn audio_max(&self) -> u32 {
+        (self.cfg.vol_limit * 100.0).round().max(1.0) as u32
+    }
+
+    /// Index predvoleného zariadenia (alebo prvého, ak predvolené nepoznáme).
+    fn audio_default(&self, src: bool) -> Option<usize> {
+        let (list, def) = if src { (&self.audio.sources, &self.audio.default_source) } else { (&self.audio.sinks, &self.audio.default_sink) };
+        if list.is_empty() {
+            None
+        } else {
+            Some(list.iter().position(|d| &d.name == def).unwrap_or(0))
+        }
+    }
+
+    /// Nastaví hlasitosť predvoleného zariadenia (hneď v zobrazení, príkaz sa posiela najviac každých 40 ms).
+    fn audio_set_volume(&mut self, src: bool, pct: u32, force: bool) {
+        let Some(i) = self.audio_default(src) else { return };
+        let dev = if src { &mut self.audio.sources[i] } else { &mut self.audio.sinks[i] };
+        let changed = dev.volume != pct;
+        dev.volume = pct;
+        self.audio_unsent |= changed;
+        let now = Instant::now();
+        if self.audio_unsent && (force || now.duration_since(self.audio_sent) >= Duration::from_millis(40)) {
+            self.audio_unsent = false;
+            self.audio_sent = now;
+            self.queued.push(Action::Audio(crate::audio::AudioCmd::Volume { source: src, pct }));
+        }
+    }
+
+    /// Z polohy kurzora (fyzické px) na hodnotu posuvníka.
+    fn audio_drag_to(&mut self, src: bool, x: f32, force: bool) {
+        let r = self.audio_rects[src as usize];
+        if r.w <= 1.0 {
+            return;
+        }
+        let pct = (((x - r.x) / r.w).clamp(0.0, 1.0) * self.audio_max() as f32).round() as u32;
+        self.audio_set_volume(src, pct, force);
+    }
+
+    /// Po skončení ťahania pošle poslednú hodnotu, ak ešte nebola odoslaná.
+    fn audio_flush(&mut self, src: bool) {
+        if !self.audio_unsent {
+            return;
+        }
+        if let Some(i) = self.audio_default(src) {
+            let pct = if src { self.audio.sources[i].volume } else { self.audio.sinks[i].volume };
+            self.audio_unsent = false;
+            self.audio_sent = Instant::now();
+            self.queued.push(Action::Audio(crate::audio::AudioCmd::Volume { source: src, pct }));
+        }
+    }
+
+    /// Uvoľnenie tlačidla myši (koniec ťahania posuvníka).
+    pub fn release(&mut self, button: u32, now: Instant) {
+        if button != BTN_LEFT {
+            return;
+        }
+        if let Some(src) = self.audio_drag.take() {
+            self.audio_flush(src);
+            let outside = self.ptr.map(|(x, y)| self.hit_at(x, y).is_none()).unwrap_or(true);
+            if outside {
+                self.collapse_at = Some(now + Duration::from_millis(self.cfg.collapse_ms));
+            }
+        }
+    }
+
+    /// Akcie vzniknuté mimo `click` (ťahanie posuvníka, koliesko).
+    pub fn take_queued(&mut self) -> Vec<Action> {
+        std::mem::take(&mut self.queued)
     }
 
     /// Počet riadkov zoznamu sietí, ktoré sú vidieť (aspoň 1 – kvôli správe „žiadne siete“).
@@ -1339,6 +1471,10 @@ impl Ui {
     pub fn pointer_move(&mut self, lx: f32, ly: f32, now: Instant) {
         let (x, y) = (lx * self.scale, ly * self.scale);
         self.ptr = Some((x, y));
+        if let Some(src) = self.audio_drag {
+            self.audio_drag_to(src, x, false);
+            return;
+        }
         let h = self.hit_at(x, y);
         // odklad zruší až vstup myši do panela, a to až po dobehnutí animácie jeho veľkosti
         // (počas nej ešte pohyb zasahuje starý rozmer ostrovčeka)
@@ -1383,11 +1519,11 @@ impl Ui {
             return;
         }
         // počas písania hesla panel nezatvárame (zavrie ho Esc / odoslanie)
-        if self.wants_keyboard() {
+        if self.wants_keyboard() || self.audio_drag.is_some() {
             return;
         }
         match self.panel {
-            Panel::Calendar | Panel::Disks | Panel::Menu(_) | Panel::Clip | Panel::Wall | Panel::Wifi => {
+            Panel::Calendar | Panel::Disks | Panel::Menu(_) | Panel::Clip | Panel::Wall | Panel::Wifi | Panel::Audio => {
                 self.collapse_at = Some(now + Duration::from_millis(self.cfg.collapse_ms))
             }
             Panel::Tip => self.collapse_at = Some(now + Duration::from_millis(200)),
@@ -1397,7 +1533,7 @@ impl Ui {
 
     fn action_for(cmd: &str) -> Option<Action> {
         match cmd {
-            "" | "calendar" | "menu" | "clipboard" | "wallpaper" | "wifi" => None,
+            "" | "calendar" | "menu" | "clipboard" | "wallpaper" | "wifi" | "audio" => None,
             "eject-all" => Some(Action::DiskEjectAll),
             "inhibit-toggle" => Some(Action::InhibitToggle),
             "layout-toggle" => Some(Action::LayoutToggle),
@@ -1434,6 +1570,10 @@ impl Ui {
             }
             "wifi" => {
                 self.set_panel(Panel::Wifi);
+                None
+            }
+            "audio" => {
+                self.set_panel(Panel::Audio);
                 None
             }
             other => match self.menu_index(other) {
@@ -1520,6 +1660,11 @@ impl Ui {
                     self.toggle_clip();
                     self.collapse_at = None;
                     self.start_grace(now);
+                } else if cmd == "audio" {
+                    self.tip_pending = None;
+                    self.toggle_audio();
+                    self.collapse_at = None;
+                    self.start_grace(now);
                 } else if cmd == "wifi" {
                     self.tip_pending = None;
                     self.toggle_wifi();
@@ -1568,6 +1713,34 @@ impl Ui {
                 if button == BTN_LEFT {
                     self.wifi_note.clear();
                     out.push(Action::Wifi(crate::wifi::WifiCmd::SetEnabled(!self.wifi.enabled)));
+                }
+            }
+            Hit::AudioMute(src) => {
+                if button == BTN_LEFT {
+                    if let Some(i) = self.audio_default(src) {
+                        let d = if src { &mut self.audio.sources[i] } else { &mut self.audio.sinks[i] };
+                        d.mute = !d.mute;
+                    }
+                    out.push(Action::Audio(crate::audio::AudioCmd::ToggleMute { source: src }));
+                }
+            }
+            Hit::AudioDev(src, i) => {
+                if button == BTN_LEFT {
+                    let name = if src { self.audio.sources.get(i).map(|d| d.name.clone()) } else { self.audio.sinks.get(i).map(|d| d.name.clone()) };
+                    if let Some(name) = name {
+                        if src {
+                            self.audio.default_source = name.clone();
+                        } else {
+                            self.audio.default_sink = name.clone();
+                        }
+                        out.push(Action::Audio(crate::audio::AudioCmd::SetDefault { source: src, name }));
+                    }
+                }
+            }
+            Hit::AudioSlider(src) => {
+                if button == BTN_LEFT {
+                    self.audio_drag = Some(src);
+                    self.audio_drag_to(src, x, true);
                 }
             }
             Hit::WifiEditor => {
@@ -1684,6 +1857,21 @@ impl Ui {
     }
 
     pub fn scroll(&mut self, value: f32) {
+        if self.panel == Panel::Audio {
+            // koliesko nad posuvníkom mení hlasitosť o `step` % (hore = viac)
+            if let Some(Hit::AudioSlider(src)) = self.hover {
+                self.audio_acc += value;
+                let steps = (self.audio_acc / AUDIO_SCROLL_UNIT).trunc();
+                self.audio_acc -= steps * AUDIO_SCROLL_UNIT;
+                if steps != 0.0 {
+                    if let Some(i) = self.audio_default(src) {
+                        let cur = if src { self.audio.sources[i].volume } else { self.audio.sinks[i].volume } as f32;
+                        let new = (cur - steps * self.cfg.vol_step as f32).clamp(0.0, self.audio_max() as f32);
+                        self.audio_set_volume(src, new.round() as u32, true);
+                    }
+                }
+            }
+        }
         if self.panel == Panel::Calendar && self.hover.is_some() {
             self.cal_shift(if value > 0.0 { 1 } else { -1 });
         }
@@ -1920,6 +2108,7 @@ impl Ui {
                 Panel::Clip => self.build_clip(&mut frame, text, pill, ct),
                 Panel::Wall => self.build_wall(&mut frame, text, pill, ct),
                 Panel::Wifi => self.build_wifi(&mut frame, text, pill, ct),
+                Panel::Audio => self.build_audio(&mut frame, text, pill, ct),
                 _ => self.build_calendar(&mut frame, text, pill, pill.y, ct),
             }
         }
@@ -1941,7 +2130,7 @@ impl Ui {
                         text.layout_to(&mut frame.content, l, px2, pill.x + self.s(16.0), cy + (asc - desc) * 0.5, col);
                     }
                 }
-                Panel::None | Panel::Calendar | Panel::Disks | Panel::Menu(_) | Panel::Clip | Panel::Wall | Panel::Wifi => {}
+                Panel::None | Panel::Calendar | Panel::Disks | Panel::Menu(_) | Panel::Clip | Panel::Wall | Panel::Wifi | Panel::Audio => {}
             }
         }
         frame
@@ -2360,6 +2549,117 @@ impl Ui {
             let m = Self::ellipsize(text, m, px2, w_in - 2.0 * inset);
             let cy = pill.y + pill.h - pad - WIFI_FOOT * s * 0.5;
             text.layout_to(&mut frame.content, &m, px2, x0 + inset, cy + (a2 - d2) * 0.5, fade(t.fg, 0.65 * pa));
+        }
+    }
+
+    fn build_audio(&mut self, frame: &mut Frame, text: &mut Text, pill: Rect, pa: f32) {
+        let s = self.scale;
+        let t = self.theme;
+        let f = self.cfg.audio_panel.font_size;
+        let px = f * s;
+        let px_small = px * 0.8;
+        let (asc, desc) = text.line_metrics(px);
+        let (a3, d3) = text.line_metrics(px_small);
+        let base = |cy: f32| cy + (asc - desc) * 0.5;
+        let pad = AUDIO_PAD * s;
+        let row_h = (f + AUDIO_ROW_EXTRA) * s;
+        let inset = 10.0 * s;
+        let x0 = pill.x + pad;
+        let w_in = pill.w - 2.0 * pad;
+        let max_pct = self.audio_max() as f32;
+        let mut y = pill.y + pad;
+
+        for src in [false, true] {
+            let list_len = if src { self.audio.sources.len() } else { self.audio.sinks.len() };
+            let shown = list_len.min(self.cfg.audio_panel.rows).max(1);
+            let di = self.audio_default(src);
+            let (vol, muted) = match di {
+                Some(i) => {
+                    let d = if src { &self.audio.sources[i] } else { &self.audio.sinks[i] };
+                    (d.volume, d.mute)
+                }
+                None => (0, false),
+            };
+
+            // názov sekcie
+            let label = if src { "Vstup" } else { "Výstup" };
+            let lh = AUDIO_LABEL * s;
+            text.layout_to(&mut frame.content, label, px_small, x0 + inset, y + lh * 0.5 + (a3 - d3) * 0.5, fade(t.fg, 0.6 * pa));
+            y += lh;
+
+            // riadok posuvníka: tlačidlo stlmenia, dráha, percentá
+            let cy = y + row_h * 0.5;
+            let mb = Rect::new(x0, y, row_h, row_h);
+            self.hits.push((mb, Hit::AudioMute(src)));
+            let mhov = self.hover == Some(Hit::AudioMute(src));
+            if mhov {
+                frame.content.push(Item::Rect { r: mb, radius: 10.0 * s, soft: 0.8, color: fade(t.menu_selected, pa) });
+            }
+            let glyph = crate::audio::icon(src, muted, vol);
+            let gw = text.measure(glyph, px);
+            text.layout_to(&mut frame.content, glyph, px, mb.x + (mb.w - gw) * 0.5, base(cy), fade(if mhov { t.menu_selected_text } else if muted { t.alert } else { t.fg }, pa));
+            let pct_w = text.measure("150%", px);
+            let track_x = mb.x + mb.w + 8.0 * s;
+            let track = Rect::new(track_x, cy - 3.0 * s, (x0 + w_in - pct_w - 12.0 * s - track_x).max(10.0 * s), 6.0 * s);
+            self.audio_rects[src as usize] = track;
+            self.hits.push((Rect::new(track.x - 8.0 * s, y, track.w + 16.0 * s, row_h), Hit::AudioSlider(src)));
+            frame.content.push(Item::Rect { r: track, radius: 3.0 * s, soft: 0.8, color: fade(t.fg, 0.2 * pa) });
+            let frac = (vol as f32 / max_pct).clamp(0.0, 1.0);
+            let fill = (track.w * frac).max(if vol > 0 { 6.0 * s } else { 0.0 });
+            let fill_col = if muted { fade(t.fg, 0.45 * pa) } else { fade(t.accent, pa) };
+            if fill > 0.0 {
+                frame.content.push(Item::Rect { r: Rect::new(track.x, track.y, fill, track.h), radius: 3.0 * s, soft: 0.8, color: fill_col });
+            }
+            let kn = 14.0 * s;
+            let dragging = self.audio_drag == Some(src);
+            let khov = dragging || self.hover == Some(Hit::AudioSlider(src));
+            let kd = if khov { kn + 2.0 * s } else { kn };
+            frame.content.push(Item::Rect { r: Rect::new(track.x + track.w * frac - kd * 0.5, cy - kd * 0.5, kd, kd), radius: kd * 0.5, soft: 0.8, color: fade(if muted { t.fg } else { t.accent }, pa) });
+            let ptxt = format!("{vol}%");
+            let pw = text.measure(&ptxt, px);
+            text.layout_to(&mut frame.content, &ptxt, px, x0 + w_in - pw, base(cy), fade(t.fg, (if muted { 0.5 } else { 1.0 }) * pa));
+            y += row_h;
+
+            // zoznam zariadení
+            if list_len == 0 {
+                let msg = if !self.audio.error.is_empty() {
+                    self.audio.error.clone()
+                } else if !self.audio_loaded {
+                    "Načítavam…".to_string()
+                } else {
+                    "Žiadne zariadenie".to_string()
+                };
+                let msg = Self::ellipsize(text, &msg, px, w_in - 2.0 * inset);
+                text.layout_to(&mut frame.content, &msg, px, x0 + inset, base(y + row_h * 0.5), fade(t.fg, 0.6 * pa));
+            } else {
+                for k in 0..shown.min(list_len) {
+                    let cell = Rect::new(x0, y + k as f32 * row_h, w_in, row_h);
+                    self.hits.push((cell, Hit::AudioDev(src, k)));
+                    let hov = self.hover == Some(Hit::AudioDev(src, k));
+                    let d = if src { &self.audio.sources[k] } else { &self.audio.sinks[k] };
+                    let is_def = Some(k) == di;
+                    let fg = if hov {
+                        frame.content.push(Item::Rect { r: cell, radius: 10.0 * s, soft: 0.8, color: fade(t.menu_selected, pa) });
+                        t.menu_selected_text
+                    } else if is_def {
+                        frame.content.push(Item::Rect { r: cell, radius: 10.0 * s, soft: 0.8, color: fade(t.accent, 0.18 * pa) });
+                        t.accent
+                    } else {
+                        t.fg
+                    };
+                    let ccy = cell.y + row_h * 0.5;
+                    let mut right = cell.x + cell.w - inset;
+                    if is_def {
+                        let cw = text.measure("\u{f012c}", px);
+                        right -= cw;
+                        text.layout_to(&mut frame.content, "\u{f012c}", px, right, base(ccy), fade(fg, pa));
+                        right -= 6.0 * s;
+                    }
+                    let name = Self::ellipsize(text, &d.desc, px, right - cell.x - inset);
+                    text.layout_to(&mut frame.content, &name, px, cell.x + inset, base(ccy), fade(fg, pa));
+                }
+            }
+            y += shown as f32 * row_h + AUDIO_GAP * s;
         }
     }
 

@@ -83,6 +83,7 @@ fn run_action(a: Action, cfg: &Config, disk_tx: &Option<Tx<DiskCmd>>, tx: &Tx<Ms
             });
         }
         Action::ClipCopy(line) => spawn_with_stdin(&cfg.clip_copy, line),
+        Action::Audio(cmd) => crate::audio::run(cmd, cfg.vol_limit, tx.clone()),
         Action::Wifi(cmd) => crate::wifi::run(cmd, tx.clone()),
         Action::WifiPaste => crate::wifi::paste(tx.clone()),
         Action::WallLoad => crate::wallpaper::load(cfg.wall.clone(), tx.clone()),
@@ -300,8 +301,12 @@ pub fn run(cfg: Config) -> Result<(), String> {
                         run_action(a, &cfg, &disk_tx, &tx);
                     }
                 }
-                PtrEvent::Button(_, false) => {}
+                PtrEvent::Button(b, false) => ui.release(b, now),
                 PtrEvent::Scroll(v) => ui.scroll(v as f32),
+            }
+            // akcie vzniknuté pohybom / kolieskom (posuvník hlasitosti)
+            for a in ui.take_queued() {
+                run_action(a, &cfg, &disk_tx, &tx);
             }
             dirty = true;
         }

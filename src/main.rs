@@ -2,6 +2,7 @@
 //! Rust + EGL/OpenGL ES 2.0, bez UI frameworku.
 mod anim;
 mod app;
+mod audio;
 mod config;
 mod data;
 mod dbus;

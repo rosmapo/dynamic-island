@@ -68,6 +68,9 @@ step = 5                  # krok skratiek v %
 limit = 1.0               # strop hlasitosti (1.0 = 100 %)
 hud = true
 hud_ms = 1000
+panel_font_size = 15
+panel_width = 380
+panel_rows = 10
 
 [keyboard]
 on_click = "layout-toggle"
@@ -91,10 +94,19 @@ directory = "~/.config/wayfire/media/wallpaper"
 columns = 4
 rows = 4
 thumb_width = 160
-# command = "~/.config/wayfire/scripts/wallpaper"
-# cache_dir = "~/.cache/wallpaper-chooser"
-# state_dir = "~/.cache/wallpaper-chooser"
-
+command = "~/.config/wayfire/scripts/wallpaper"
+cache_dir = "~/.cache/wallpaper-chooser"
+themes_directory = "~/.config/matugen/themes"
+theme_width = 190
+# button_max_width = 120
+button1_label = "GTK"
+button1_command = "nwg-look"
+button2_label = "Kvantum"
+button2_command = "kvantummanager"
+button3_label = "qt5"
+button3_command = "qt5ct"
+button4_label = "qt6"
+button4_command = "qt6ct"
 
 [[custom]]
 name = "off"
@@ -242,49 +254,39 @@ command = "timeshift-launcher"
 separator = true
 ### Settings ###
 [[menu.item]]
-label = "Audio"
-command = "myxer"
-[[menu.item]]
 label = "Wayfire"
 command = "wcm"
-[[menu.item]]
-label = "GTK"
-command = "nwg-look"
-[[menu.item]]
-label = "Bluetooth"
-command = "blueman-manager"
 [[menu.item]]
 label = "Gestures"
 command = "wstroke-config"
 [[menu.item]]
-label = "Kvantum"
-command = "kvantummanager"
-[[menu.item]]
-label = "Wifi"
-command = "module:wifi"
-[[menu.item]]
 label = "Firewall"
 command = "rungufw.sh"
 [[menu.item]]
-label = "QT5"
-command = "qt5ct"
+label = "Audio"
+command = "module:audio"
 [[menu.item]]
-label = "MX Master"
-command = "solaar"
-[[menu.item]]
-label = "Logs"
-command = "journal-viewer"
-[[menu.item]]
-label = "QT6"
-command = "qt6ct"
+label = "Bluetooth"
+command = "blueman-manager"
 [[menu.item]]
 label = "Monitor"
 command = "iiyama"
 [[menu.item]]
+label = "Wifi"
+command = "module:wifi"
+[[menu.item]]
+label = "MX Master"
+command = "solaar"
+# [[menu.item]]
+# label = "Logs"
+# command = "journal-viewer"
+[[menu.item]]
 label = "S.M.A.R.T"
 command = "QDiskInfo"
 [[menu.item]]
-label = "Wallpaper"
+separator = true
+[[menu.item]]
+label = "Themes"
 command = "module:wallpaper"
 [[menu.item]]
 separator = true

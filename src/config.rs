@@ -177,6 +177,8 @@ pub struct Config {
     pub wall: crate::wallpaper::WallCfg,
     /// modul Wi-Fi – `[wifi]`
     pub wifi: crate::wifi::WifiCfg,
+    /// panel audio – kľúče `panel_*` v `[audio]`
+    pub audio_panel: crate::audio::AudioCfg,
     pub auto: AutoCfg,
 
     pub notif_enabled: bool,
@@ -554,6 +556,7 @@ impl Config {
             clip_copy: clip.str_or("copy_command", "cliphist decode | wl-copy"),
             wall: crate::wallpaper::WallCfg::from_table(&t.sub("wallpaper")),
             wifi: crate::wifi::WifiCfg::from_table(&t.sub("wifi")),
+            audio_panel: crate::audio::AudioCfg::from_table(&audio),
             auto: AutoCfg {
                 enabled: auto.bool_or("enabled", true),
                 bar_height: auto.f64_or("bar_height", 40.0),

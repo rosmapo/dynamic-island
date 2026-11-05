@@ -93,6 +93,8 @@ pub enum Msg {
     WifiNote(String),
     /// text zo schránky pre pole hesla
     WifiPaste(String),
+    /// zoznam audio zariadení a predvolené zariadenia
+    AudioDev(crate::audio::AudioState),
     Notif(Notification),
     NotifClose(u32),
     Net(NetInfo),
