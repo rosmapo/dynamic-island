@@ -26,7 +26,7 @@ poll_ms = 300           # kontrola caps/inhibitor/rec/rozloženia
 # foreground = "@primary"
 # alert      = "#dc2f2f"
 menu_selected      = "@secondary"   # pozadie vybranej položky
-##menu_selected_text = "#ffffff"   # text vybranej položky
+menu_selected_text = "@surface"   # text vybranej položky
 
 [clock]
 format = "%A  %d. %B,  %H:%M"
@@ -211,20 +211,6 @@ on_idle = "systemctl suspend"
 # on_resume = ""
 
 # [[custom]]
-# name = "terminal"
-# text = "T"
-# on_click = "foot"
-# on_click_right = "foot"
-# tooltip = "Terminál"
-
-# [[custom]]
-# name = "ram"
-# exec = "awk '/MemTotal/{t=$2} /MemAvailable/{a=$2} END{printf \"\uf2db %.1f GB\", (t-a)/1048576}' /proc/meminfo"
-# interval = 5
-# json = false
-# tooltip = "Použitá pamäť"
-
-# [[custom]]
 # name = "sett"
 # text = ""
 # on_click = "settings"
@@ -237,7 +223,6 @@ on_idle = "systemctl suspend"
 
 
 # Vlastné menu (panel ako kalendár). Spúšťa sa on_click = "meno" na ľubovoľnom module.
-# type = "icons" | "text". Icons = PNG (icons/ vedľa configu alebo plná cesta). Text môže Nerd Font.
 # Command može byť aj iny modul (command = "module:calendar")
 
 ### Backup menu #################################################################
@@ -256,7 +241,7 @@ separator_length = 0.6
 ### Backup ###
 [[menu.item]]
 icon = "bleachbit.png"    # PNG v icons/ vedľa config.toml (alebo plná cesta)
-command = "foot bash -c 'cleansystem.sh; exec bash'"
+command = "foot bash -c '/home/mm/.config/dynamic-island/scripts/cleansystem.sh; exec bash'"
 [[menu.item]]
 icon = "fsarchiver.png"
 command = "foot bash -c '/home/mm/.config/dynamic-island/scripts/fsarchiver.sh; exec bash'"
@@ -265,7 +250,7 @@ icon = "packages.png"
 command = "apt-mark showmanual > /home/mm/Linux/Debian/packages_list.txt && notify-send -t 3000 'Zoznam naištalovaných balíkov bol aktualizovaný.'"
 [[menu.item]]
 icon = "dotfiles.png"
-command = "foot bash -c 'dotfilesbkp.sh; exec bash'"
+command = "foot bash -c '/home/mm/.config/dynamic-island/scripts/dotfilesbkp.sh; exec bash'"
 [[menu.item]]
 icon = "timeshift.png"
 command = "timeshift-launcher"
@@ -296,9 +281,6 @@ command = "module:wifi"
 [[menu.item]]
 label = "MX Master"
 command = "solaar"
-# [[menu.item]]
-# label = "Logs"
-# command = "journal-viewer"
 [[menu.item]]
 label = "S.M.A.R.T"
 command = "QDiskInfo"
