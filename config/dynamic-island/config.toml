@@ -7,7 +7,7 @@ modules = ["network", "vpn", "radio", "clock", "keyboard", "audio", "capslock", 
 [island]
 colors_file = "~/.config/dynamic-island/colors.css"   # @define-color surface / primary ...
 font_family = ["Inter"]
-icon_family = ["Symbols Nerd Font"]
+icon_family = ["Symbols Nerd Font Mono"]
 font_size   = 17
 height      = 34        # výška kompaktného ostrovčeka (px)
 margin_top  = 6
@@ -50,7 +50,7 @@ tooltip_wifi = ""
 [wifi]
 font_size = 16
 rows = 8
-width = 450
+width = 500
 editor_command = "nm-connection-editor"
 editor_label = "Pripojenia   "		# Prázdny editor_command tlačidlo skryje.
 
@@ -68,9 +68,28 @@ step = 5                  # krok skratiek v %
 limit = 1.0               # strop hlasitosti (1.0 = 100 %)
 hud = true
 hud_ms = 1000
-panel_font_size = 15
-panel_width = 380
+panel_font_size = 16
+panel_width = 420
 panel_rows = 10
+
+[monitor]
+bus = "10"
+width = 350
+font_size = 16
+night_temp = 4500
+# voliteľné (predvolené sú pre tvoj Iiyama):
+# presets = [5, 6, 8]
+# preset_labels = ["6500 K", "7500 K", "9300 K"]
+# inputs = [15, 17]
+# input_labels = ["DisplayPort", "HDMI"]
+
+[bluetooth]			# sudo apt install bluez-tools   # bt-agent
+width = 450
+font_size = 16
+rows = 8
+scan_ms = 4000
+# editor_command = "blueman-manager"
+# editor_label = "Správca"
 
 [keyboard]
 on_click = "layout-toggle"
@@ -267,10 +286,10 @@ label = "Audio"
 command = "module:audio"
 [[menu.item]]
 label = "Bluetooth"
-command = "blueman-manager"
+command = "module:bluetooth"
 [[menu.item]]
 label = "Monitor"
-command = "iiyama"
+command = "module:monitor"
 [[menu.item]]
 label = "Wifi"
 command = "module:wifi"

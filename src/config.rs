@@ -181,6 +181,8 @@ pub struct Config {
     pub audio_panel: crate::audio::AudioCfg,
     /// panel monitor – `[monitor]`
     pub monitor: crate::monitor::MonitorCfg,
+    /// panel bluetooth – `[bluetooth]`
+    pub bluetooth: crate::bluetooth::BtCfg,
     pub auto: AutoCfg,
 
     pub notif_enabled: bool,
@@ -560,6 +562,7 @@ impl Config {
             wifi: crate::wifi::WifiCfg::from_table(&t.sub("wifi")),
             audio_panel: crate::audio::AudioCfg::from_table(&audio),
             monitor: crate::monitor::MonitorCfg::from_table(&t.sub("monitor")),
+            bluetooth: crate::bluetooth::BtCfg::from_table(&t.sub("bluetooth")),
             auto: AutoCfg {
                 enabled: auto.bool_or("enabled", true),
                 bar_height: auto.f64_or("bar_height", 40.0),

@@ -44,6 +44,7 @@ pub enum Action {
     Audio(crate::audio::AudioCmd),
     Wifi(crate::wifi::WifiCmd),
     Monitor(crate::monitor::MonitorCmd),
+    Bluetooth(crate::bluetooth::BtCmd),
     /// vložiť schránku do poľa hesla
     WifiPaste,
 }
@@ -59,6 +60,7 @@ enum Panel {
     Wifi,
     Audio,
     Monitor,
+    Bluetooth,
     Tip,
 }
 
@@ -89,6 +91,11 @@ enum Hit {
     MonInput(usize),
     /// prepínač nočného režimu
     MonNight,
+    BtRow(usize),
+    BtToggle,
+    BtDiscoverable,
+    BtRefresh,
+    BtEditor,
     Panel,
 }
 
@@ -258,6 +265,11 @@ pub struct Ui {
     monitor_unsent: bool,
     /// dráhy posuvníkov z posledného kreslenia [jas, kontrast]
     monitor_rects: [Rect; 2],
+    /// modul Bluetooth
+    bluetooth: crate::bluetooth::BtState,
+    bluetooth_loaded: bool,
+    bluetooth_scroll: usize,
+    bluetooth_acc: f32,
     /// akcie, ktoré vznikli mimo `click` (otvorenie panela) – `click` ich vráti volajúcemu
     queued: Vec<Action>,
 
@@ -475,6 +487,10 @@ impl Ui {
             monitor_sent: Instant::now(),
             monitor_unsent: false,
             monitor_rects: [Rect::new(0.0, 0.0, 0.0, 0.0); 2],
+            bluetooth: Default::default(),
+            bluetooth_loaded: false,
+            bluetooth_scroll: 0,
+            bluetooth_acc: 0.0,
             queued: Vec::new(),
             ptr: None,
             hover: None,
@@ -592,6 +608,12 @@ impl Ui {
                     self.monitor.loaded = loaded;
                 }
                 self.monitor_loaded = true;
+            }
+            Msg::Bluetooth(st) => {
+                self.bluetooth = st;
+                self.bluetooth_loaded = true;
+                let max_start = self.bluetooth.devices.len().saturating_sub(self.cfg.bluetooth.rows);
+                self.bluetooth_scroll = self.bluetooth_scroll.min(max_start);
             }
             Msg::Audio { muted, volume } => {
                 if self.audio_drag.is_none() {
@@ -1013,6 +1035,13 @@ impl Ui {
                     + gap + row;           // nočný režim
                 (c.width * self.scale, h * self.scale)
             }
+            Panel::Bluetooth => {
+                let c = &self.cfg.bluetooth;
+                let f = c.font_size;
+                let rows = self.bluetooth.devices.len().min(c.rows).max(1) as f32;
+                let h = 2.0 * WIFI_PAD + WIFI_HEAD + rows * (f + WIFI_ROW_EXTRA) + WIFI_FOOT;
+                (c.width * self.scale, h * self.scale)
+            }
             Panel::Wifi => {
                 let c = &self.cfg.wifi;
                 let f = c.font_size;
@@ -1184,6 +1213,11 @@ impl Ui {
         if p == Panel::Monitor {
             self.queued.push(Action::Monitor(crate::monitor::MonitorCmd::Load));
         }
+        if p == Panel::Bluetooth {
+            self.bluetooth_scroll = 0;
+            self.bluetooth_acc = 0.0;
+            self.queued.push(Action::Bluetooth(crate::bluetooth::BtCmd::Load { scan: true }));
+        }
         if p == Panel::Wifi {
             self.wifi_pw = None;
             self.wifi_scroll = 0;
@@ -1211,7 +1245,7 @@ impl Ui {
                 self.panel_w.set(0.0);
                 self.panel_a.set(0.0);
             }
-            Panel::Calendar | Panel::Disks | Panel::Menu(_) | Panel::Clip | Panel::Wall | Panel::Wifi | Panel::Audio | Panel::Monitor => {
+            Panel::Calendar | Panel::Disks | Panel::Menu(_) | Panel::Clip | Panel::Wall | Panel::Wifi | Panel::Audio | Panel::Monitor | Panel::Bluetooth => {
                 if p == Panel::Calendar {
                     self.rebuild_cal();
                 }
@@ -1250,7 +1284,7 @@ impl Ui {
     }
 
     fn is_big(p: Panel) -> bool {
-        matches!(p, Panel::Calendar | Panel::Disks | Panel::Menu(_) | Panel::Clip | Panel::Wall | Panel::Wifi | Panel::Audio | Panel::Monitor)
+        matches!(p, Panel::Calendar | Panel::Disks | Panel::Menu(_) | Panel::Clip | Panel::Wall | Panel::Wifi | Panel::Audio | Panel::Monitor | Panel::Bluetooth)
     }
 
     fn toggle_audio(&mut self) {
@@ -1649,7 +1683,7 @@ impl Ui {
             return;
         }
         match self.panel {
-            Panel::Calendar | Panel::Disks | Panel::Menu(_) | Panel::Clip | Panel::Wall | Panel::Wifi | Panel::Audio | Panel::Monitor => {
+            Panel::Calendar | Panel::Disks | Panel::Menu(_) | Panel::Clip | Panel::Wall | Panel::Wifi | Panel::Audio | Panel::Monitor | Panel::Bluetooth => {
                 self.collapse_at = Some(now + Duration::from_millis(self.cfg.collapse_ms))
             }
             Panel::Tip => self.collapse_at = Some(now + Duration::from_millis(200)),
@@ -1659,7 +1693,7 @@ impl Ui {
 
     fn action_for(cmd: &str) -> Option<Action> {
         match cmd {
-            "" | "calendar" | "menu" | "clipboard" | "wallpaper" | "wifi" | "audio" | "monitor" => None,
+            "" | "calendar" | "menu" | "clipboard" | "wallpaper" | "wifi" | "audio" | "monitor" | "bluetooth" => None,
             "eject-all" => Some(Action::DiskEjectAll),
             "inhibit-toggle" => Some(Action::InhibitToggle),
             "layout-toggle" => Some(Action::LayoutToggle),
@@ -1704,6 +1738,10 @@ impl Ui {
             }
             "monitor" => {
                 self.set_panel(Panel::Monitor);
+                None
+            }
+            "bluetooth" => {
+                self.set_panel(Panel::Bluetooth);
                 None
             }
             other => match self.menu_index(other) {
@@ -1898,6 +1936,52 @@ impl Ui {
                     out.push(Action::Monitor(crate::monitor::MonitorCmd::SetNight(enable)));
                 }
             }
+            Hit::BtToggle => {
+                if button == BTN_LEFT {
+                    let on = !self.bluetooth.powered;
+                    self.bluetooth.powered = on;
+                    out.push(Action::Bluetooth(crate::bluetooth::BtCmd::SetPowered(on)));
+                }
+            }
+            Hit::BtDiscoverable => {
+                if button == BTN_LEFT {
+                    let on = !self.bluetooth.discoverable;
+                    self.bluetooth.discoverable = on;
+                    out.push(Action::Bluetooth(crate::bluetooth::BtCmd::SetDiscoverable(on)));
+                }
+            }
+            Hit::BtRefresh => {
+                if button == BTN_LEFT {
+                    out.push(Action::Bluetooth(crate::bluetooth::BtCmd::Load { scan: true }));
+                }
+            }
+            Hit::BtEditor => {
+                if button == BTN_LEFT && !self.cfg.bluetooth.editor_command.is_empty() {
+                    out.push(Action::Run(self.cfg.bluetooth.editor_command.clone()));
+                    self.set_panel(Panel::None);
+                    self.collapse_at = None;
+                }
+            }
+            Hit::BtRow(i) => {
+                if let Some(d) = self.bluetooth.devices.get(i).cloned() {
+                    if button == BTN_RIGHT {
+                        // zabudnúť vždy, ak je v zozname (aj nespárované z discovery)
+                        out.push(Action::Bluetooth(crate::bluetooth::BtCmd::Forget(d.path)));
+                    } else if button == BTN_MIDDLE {
+                        out.push(Action::Bluetooth(crate::bluetooth::BtCmd::SetTrusted {
+                            path: d.path,
+                            trusted: !d.trusted,
+                        }));
+                    } else if button == BTN_LEFT {
+                        if d.connected {
+                            out.push(Action::Bluetooth(crate::bluetooth::BtCmd::Disconnect(d.path)));
+                        } else {
+                            // Connect sám sparuje, ak treba (náhrada blueman)
+                            out.push(Action::Bluetooth(crate::bluetooth::BtCmd::Connect(d.path)));
+                        }
+                    }
+                }
+            }
             Hit::WifiEditor => {
                 if button == BTN_LEFT {
                     out.push(Action::Run(self.cfg.wifi.editor_command.clone()));
@@ -2036,6 +2120,13 @@ impl Ui {
             self.wifi_acc -= rows * WIFI_SCROLL_UNIT;
             let max_start = self.wifi.aps.len().saturating_sub(self.cfg.wifi.rows) as f32;
             self.wifi_scroll = (self.wifi_scroll as f32 + rows).clamp(0.0, max_start) as usize;
+        }
+        if self.panel == Panel::Bluetooth && self.hover.is_some() {
+            self.bluetooth_acc += value;
+            let rows = (self.bluetooth_acc / WIFI_SCROLL_UNIT).trunc();
+            self.bluetooth_acc -= rows * WIFI_SCROLL_UNIT;
+            let max_start = self.bluetooth.devices.len().saturating_sub(self.cfg.bluetooth.rows) as f32;
+            self.bluetooth_scroll = (self.bluetooth_scroll as f32 + rows).clamp(0.0, max_start) as usize;
         }
         if self.panel == Panel::Wall && self.hover.is_some() && self.wall_menu {
             self.wall_acc += value;
@@ -2265,6 +2356,7 @@ impl Ui {
                 Panel::Wifi => self.build_wifi(&mut frame, text, pill, ct),
                 Panel::Audio => self.build_audio(&mut frame, text, pill, ct),
                 Panel::Monitor => self.build_monitor(&mut frame, text, pill, ct),
+                Panel::Bluetooth => self.build_bluetooth(&mut frame, text, pill, ct),
                 _ => self.build_calendar(&mut frame, text, pill, pill.y, ct),
             }
         }
@@ -2286,7 +2378,7 @@ impl Ui {
                         text.layout_to(&mut frame.content, l, px2, pill.x + self.s(16.0), cy + (asc - desc) * 0.5, col);
                     }
                 }
-                Panel::None | Panel::Calendar | Panel::Disks | Panel::Menu(_) | Panel::Clip | Panel::Wall | Panel::Wifi | Panel::Audio | Panel::Monitor => {}
+                Panel::None | Panel::Calendar | Panel::Disks | Panel::Menu(_) | Panel::Clip | Panel::Wall | Panel::Wifi | Panel::Audio | Panel::Monitor | Panel::Bluetooth => {}
             }
         }
         frame
@@ -2707,6 +2799,328 @@ impl Ui {
             let m = Self::ellipsize(text, m, px2, w_in - 2.0 * inset);
             let cy = pill.y + pill.h - pad - WIFI_FOOT * s * 0.5;
             text.layout_to(&mut frame.content, &m, px2, x0 + inset, cy + (a2 - d2) * 0.5, fade(t.fg, 0.65 * pa));
+        }
+    }
+
+    fn build_bluetooth(&mut self, frame: &mut Frame, text: &mut Text, pill: Rect, pa: f32) {
+        let s = self.scale;
+        let t = self.theme;
+        let f = self.cfg.bluetooth.font_size;
+        let px = f * s;
+        let (asc, desc) = text.line_metrics(px);
+        let pad = WIFI_PAD * s;
+        let head = WIFI_HEAD * s;
+        let row_h = (f + WIFI_ROW_EXTRA) * s;
+        let x0 = pill.x + pad;
+        let w_in = pill.w - 2.0 * pad;
+        let inset = 12.0 * s;
+        let hy = pill.y + pad;
+        let hcy = hy + head * 0.5 - 6.0 * s;
+        let base = |cy: f32| cy + (asc - desc) * 0.5;
+
+        // hlavička: prepínač + obnoviť + voliteľný editor
+        let tw = 40.0 * s;
+        let th = 22.0 * s;
+        let tog = Rect::new(x0 + inset * 0.5, hcy - th * 0.5, tw, th);
+        let ref_sz = px * 1.7;
+        let rbtn = Rect::new(tog.x + tog.w + 6.0 * s, hcy - ref_sz * 0.5, ref_sz, ref_sz);
+
+        let mut ed = Rect::new(0.0, 0.0, 0.0, 0.0);
+        if !self.cfg.bluetooth.editor_command.is_empty() {
+            let ed_label = format!("\u{f0493}  {}", self.cfg.bluetooth.editor_label);
+            let ed_w = text.measure(&ed_label, px) + 2.0 * inset;
+            let ed_h = ref_sz * 1.1;
+            ed = Rect::new(pill.x + pill.w - pad - ed_w, hcy - ed_h * 0.5, ed_w, ed_h);
+            self.hits.push((ed, Hit::BtEditor));
+            let hov = self.hover == Some(Hit::BtEditor);
+            let bg = if hov { fade(t.menu_selected, pa) } else { fade(t.fg, 0.12 * pa) };
+            frame.content.push(Item::Rect { r: ed, radius: ed.h * 0.5, soft: 0.8, color: bg });
+            text.layout_to(
+                &mut frame.content,
+                &ed_label,
+                px,
+                ed.x + inset,
+                base(hcy),
+                fade(if hov { t.menu_selected_text } else { t.fg }, pa),
+            );
+        }
+
+        if self.bluetooth.available {
+            self.hits.push((tog, Hit::BtToggle));
+            let on = self.bluetooth.powered;
+            let track = if on { t.accent } else { t.fg };
+            frame.content.push(Item::Rect {
+                r: tog,
+                radius: th * 0.5,
+                soft: 0.8,
+                color: fade(track, (if on { 1.0 } else { 0.3 }) * pa),
+            });
+            let kn = th - 6.0 * s;
+            let kx = if on {
+                tog.x + tog.w - 3.0 * s - kn
+            } else {
+                tog.x + 3.0 * s
+            };
+            frame.content.push(Item::Rect {
+                r: Rect::new(kx, tog.y + 3.0 * s, kn, kn),
+                radius: kn * 0.5,
+                soft: 0.8,
+                color: fade(if on { t.on_accent } else { t.fg }, pa),
+            });
+
+            if on {
+                self.hits.push((rbtn, Hit::BtRefresh));
+                let hov = self.hover == Some(Hit::BtRefresh);
+                if hov {
+                    frame.content.push(Item::Rect {
+                        r: rbtn,
+                        radius: 8.0 * s,
+                        soft: 0.8,
+                        color: fade(t.menu_selected, pa),
+                    });
+                }
+                let gw = text.measure("\u{f0450}", px);
+                text.layout_to(
+                    &mut frame.content,
+                    "\u{f0450}",
+                    px,
+                    rbtn.x + (rbtn.w - gw) * 0.5,
+                    base(hcy),
+                    fade(if hov { t.menu_selected_text } else { t.fg }, pa),
+                );
+
+                // viditeľnosť (discoverable) – aby ťa našli nové zariadenia
+                let dlab = if self.bluetooth.discoverable { "Viditeľný" } else { "Skrytý" };
+                let dw = text.measure(dlab, px * 0.85) + 16.0 * s;
+                let dh = ref_sz * 1.0;
+                let dbtn = Rect::new(rbtn.x + rbtn.w + 8.0 * s, hcy - dh * 0.5, dw, dh);
+                self.hits.push((dbtn, Hit::BtDiscoverable));
+                let dhov = self.hover == Some(Hit::BtDiscoverable);
+                let dbg = if self.bluetooth.discoverable {
+                    fade(t.accent, 0.35 * pa)
+                } else if dhov {
+                    fade(t.menu_selected, pa)
+                } else {
+                    fade(t.fg, 0.12 * pa)
+                };
+                frame.content.push(Item::Rect {
+                    r: dbtn,
+                    radius: dh * 0.5,
+                    soft: 0.8,
+                    color: dbg,
+                });
+                let (a2, d2) = text.line_metrics(px * 0.85);
+                let lw = text.measure(dlab, px * 0.85);
+                text.layout_to(
+                    &mut frame.content,
+                    dlab,
+                    px * 0.85,
+                    dbtn.x + (dbtn.w - lw) * 0.5,
+                    hcy + (a2 - d2) * 0.5,
+                    fade(if self.bluetooth.discoverable { t.on_accent } else if dhov { t.menu_selected_text } else { t.fg }, pa),
+                );
+            }
+        }
+
+        // stred: stav
+        let (mid, mid_col) = if !self.bluetooth.note.is_empty() {
+            (self.bluetooth.note.clone(), 0.9)
+        } else if !self.bluetooth.error.is_empty() {
+            (self.bluetooth.error.clone(), 0.7)
+        } else if !self.bluetooth_loaded {
+            ("Načítavam…".into(), 0.7)
+        } else if !self.bluetooth.available {
+            ("Adaptér nenájdený".into(), 0.7)
+        } else if !self.bluetooth.powered {
+            ("Bluetooth vypnutý".into(), 0.7)
+        } else if self.bluetooth.discovering {
+            ("Hľadám zariadenia…".into(), 0.85)
+        } else {
+            let n = self.bluetooth.devices.iter().filter(|d| d.connected).count();
+            if n == 0 {
+                ("Žiadne pripojené · ↻ hľadať".into(), 0.7)
+            } else if n == 1 {
+                let name = self
+                    .bluetooth
+                    .devices
+                    .iter()
+                    .find(|d| d.connected)
+                    .map(|d| d.name.as_str())
+                    .unwrap_or("");
+                (name.to_string(), 1.0)
+            } else {
+                (format!("{n} pripojené"), 1.0)
+            }
+        };
+        // ľavý okraj textu za tlačidlami (refresh + discoverable)
+        let left = if self.bluetooth.powered {
+            rbtn.x + rbtn.w + 8.0 * s + 90.0 * s
+        } else {
+            rbtn.x + rbtn.w + 10.0 * s
+        };
+        let right = if ed.w > 0.0 { ed.x - 10.0 * s } else { x0 + w_in };
+        if right > left {
+            let mid = Self::ellipsize(text, &mid, px, right - left);
+            let mw = text.measure(&mid, px);
+            text.layout_to(
+                &mut frame.content,
+                &mid,
+                px,
+                left + (right - left - mw) * 0.5,
+                base(hcy),
+                fade(t.fg, mid_col * pa),
+            );
+        }
+
+        // zoznam
+        let top = pill.y + pad + head;
+        let n = self.bluetooth.devices.len();
+        let rows = n.min(self.cfg.bluetooth.rows).max(1);
+        if !self.bluetooth.available || !self.bluetooth.powered || n == 0 {
+            let msg = if !self.bluetooth.error.is_empty() {
+                self.bluetooth.error.clone()
+            } else if !self.bluetooth_loaded {
+                "Načítavam…".into()
+            } else if !self.bluetooth.available {
+                "Bluetooth adaptér sa nenašiel".into()
+            } else if !self.bluetooth.powered {
+                "Bluetooth je vypnutý".into()
+            } else {
+                "Žiadne zariadenia – skús obnoviť".into()
+            };
+            let msg = Self::ellipsize(text, &msg, px, w_in - 2.0 * inset);
+            let mw = text.measure(&msg, px);
+            text.layout_to(
+                &mut frame.content,
+                &msg,
+                px,
+                x0 + (w_in - mw) * 0.5,
+                base(top + row_h * 0.5),
+                fade(t.fg, 0.7 * pa),
+            );
+        } else {
+            let scrollable = n > rows;
+            let sb = if scrollable { WIFI_SCROLLBAR * s } else { 0.0 };
+            let start = self.bluetooth_scroll.min(n.saturating_sub(rows));
+            let cell_w = w_in - sb;
+            for k in 0..rows.min(n) {
+                let i = start + k;
+                let d = &self.bluetooth.devices[i];
+                let y = top + k as f32 * row_h;
+                let cell = Rect::new(x0, y, cell_w, row_h);
+                self.hits.push((cell, Hit::BtRow(i)));
+                let hov = self.hover == Some(Hit::BtRow(i));
+                if hov {
+                    frame.content.push(Item::Rect {
+                        r: cell,
+                        radius: 10.0 * s,
+                        soft: 0.8,
+                        color: fade(t.menu_selected, pa),
+                    });
+                } else if d.connected {
+                    frame.content.push(Item::Rect {
+                        r: cell,
+                        radius: 10.0 * s,
+                        soft: 0.8,
+                        color: fade(t.accent, 0.18 * pa),
+                    });
+                }
+                let fg = if hov {
+                    t.menu_selected_text
+                } else if d.connected {
+                    t.accent
+                } else {
+                    t.fg
+                };
+                let cy = cell.y + row_h * 0.5;
+                let glyph = crate::bluetooth::device_glyph(d);
+                let gw = text.measure(glyph, px);
+                text.layout_to(&mut frame.content, glyph, px, cell.x + inset, base(cy), fade(fg, pa));
+                let mut right = cell.x + cell.w - inset;
+                if d.connected {
+                    let mark = "\u{f012c}";
+                    let mw = text.measure(mark, px);
+                    right -= mw;
+                    text.layout_to(&mut frame.content, mark, px, right, base(cy), fade(fg, pa));
+                    right -= 8.0 * s;
+                }
+                if let Some(bat) = d.battery {
+                    let bt = format!("{bat}%");
+                    let bw = text.measure(&bt, px * 0.85);
+                    right -= bw;
+                    let (a2, d2) = text.line_metrics(px * 0.85);
+                    text.layout_to(
+                        &mut frame.content,
+                        &bt,
+                        px * 0.85,
+                        right,
+                        cy + (a2 - d2) * 0.5,
+                        fade(fg, 0.75 * pa),
+                    );
+                    right -= 8.0 * s;
+                }
+                let name = Self::ellipsize(text, &d.name, px, right - (cell.x + inset + gw + 8.0 * s));
+                text.layout_to(
+                    &mut frame.content,
+                    &name,
+                    px,
+                    cell.x + inset + gw + 8.0 * s,
+                    base(cy),
+                    fade(fg, pa),
+                );
+            }
+            if scrollable {
+                let track_h = rows as f32 * row_h;
+                let thumb_h = (track_h * rows as f32 / n as f32).max(16.0 * s).min(track_h);
+                let frac = start as f32 / (n - rows) as f32;
+                let w = 4.0 * s;
+                let x = pill.x + pill.w - pad - (WIFI_SCROLLBAR * s - w) * 0.5 - w;
+                let y = top + (track_h - thumb_h) * frac;
+                frame.content.push(Item::Rect {
+                    r: Rect::new(x, y, w, thumb_h),
+                    radius: w * 0.5,
+                    soft: 0.8,
+                    color: fade(t.fg, 0.35 * pa),
+                });
+            }
+        }
+
+        // päta
+        let hint = if !self.bluetooth.note.is_empty() {
+            Some(self.bluetooth.note.as_str())
+        } else if !self.bluetooth.powered {
+            Some("Zapni Bluetooth prepínačom vľavo")
+        } else if self.hover == Some(Hit::BtRefresh) {
+            Some("Hľadať nové zariadenia (sken)")
+        } else if self.hover == Some(Hit::BtDiscoverable) {
+            Some("Viditeľný = iné zariadenia ťa nájdu")
+        } else {
+            match self.hover {
+                Some(Hit::BtRow(i)) => self.bluetooth.devices.get(i).map(|d| {
+                    if d.connected {
+                        "Klik – odpojiť · stred – trust · pravý – zabudnúť"
+                    } else if d.paired {
+                        "Klik – pripojiť · stred – trust · pravý – zabudnúť"
+                    } else {
+                        "Klik – spárovať a pripojiť · pravý – odstrániť"
+                    }
+                }),
+                _ => Some("Klik = spárovať/pripojiť · ↻ = hľadať nové"),
+            }
+        };
+        if let Some(m) = hint {
+            let px2 = px * 0.85;
+            let (a2, d2) = text.line_metrics(px2);
+            let m = Self::ellipsize(text, m, px2, w_in - 2.0 * inset);
+            let cy = pill.y + pill.h - pad - WIFI_FOOT * s * 0.5;
+            text.layout_to(
+                &mut frame.content,
+                &m,
+                px2,
+                x0 + inset,
+                cy + (a2 - d2) * 0.5,
+                fade(t.fg, 0.65 * pa),
+            );
         }
     }
 

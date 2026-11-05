@@ -97,6 +97,8 @@ pub enum Msg {
     AudioDev(crate::audio::AudioState),
     /// stav monitora (jas, kontrast, preset, vstup, nočný režim)
     Monitor(crate::monitor::MonitorState),
+    /// stav Bluetooth (BlueZ)
+    Bluetooth(crate::bluetooth::BtState),
     Notif(Notification),
     NotifClose(u32),
     Net(NetInfo),
