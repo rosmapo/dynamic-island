@@ -179,6 +179,8 @@ pub struct Config {
     pub wifi: crate::wifi::WifiCfg,
     /// panel audio – kľúče `panel_*` v `[audio]`
     pub audio_panel: crate::audio::AudioCfg,
+    /// panel monitor – `[monitor]`
+    pub monitor: crate::monitor::MonitorCfg,
     pub auto: AutoCfg,
 
     pub notif_enabled: bool,
@@ -557,6 +559,7 @@ impl Config {
             wall: crate::wallpaper::WallCfg::from_table(&t.sub("wallpaper")),
             wifi: crate::wifi::WifiCfg::from_table(&t.sub("wifi")),
             audio_panel: crate::audio::AudioCfg::from_table(&audio),
+            monitor: crate::monitor::MonitorCfg::from_table(&t.sub("monitor")),
             auto: AutoCfg {
                 enabled: auto.bool_or("enabled", true),
                 bar_height: auto.f64_or("bar_height", 40.0),

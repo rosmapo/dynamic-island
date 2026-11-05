@@ -43,6 +43,7 @@ pub enum Action {
     WallTheme(Option<(String, String)>),
     Audio(crate::audio::AudioCmd),
     Wifi(crate::wifi::WifiCmd),
+    Monitor(crate::monitor::MonitorCmd),
     /// vložiť schránku do poľa hesla
     WifiPaste,
 }
@@ -57,6 +58,7 @@ enum Panel {
     Wall,
     Wifi,
     Audio,
+    Monitor,
     Tip,
 }
 
@@ -79,6 +81,14 @@ enum Hit {
     WifiToggle,
     WifiRefresh,
     WifiEditor,
+    /// posuvník jasu (false) / kontrastu (true)
+    MonSlider(bool),
+    /// tlačidlo teploty farieb
+    MonPreset(usize),
+    /// tlačidlo vstupu
+    MonInput(usize),
+    /// prepínač nočného režimu
+    MonNight,
     Panel,
 }
 
@@ -145,24 +155,24 @@ const DISK_BOTTOM: f32 = 12.0;
 // panel schránky (logické px)
 /// po koľkých sekundách bez stlačenia klávesu sa zadávanie hesla zruší
 const WIFI_PW_IDLE_SECS: u64 = 45;
-const WIFI_PAD: f32 = 10.0;
-const WIFI_HEAD: f32 = 40.0;
-const WIFI_ROW_EXTRA: f32 = 16.0; // výška riadku = písmo + toto
-const WIFI_FOOT: f32 = 26.0;
+const WIFI_PAD: f32 = 14.0;
+const WIFI_HEAD: f32 = 44.0;
+const WIFI_ROW_EXTRA: f32 = 20.0; // výška riadku = písmo + toto
+const WIFI_FOOT: f32 = 30.0;
 const WIFI_SCROLLBAR: f32 = 8.0;
 const WIFI_SCROLL_UNIT: f32 = 10.0;
-const AUDIO_PAD: f32 = 10.0;
-const AUDIO_ROW_EXTRA: f32 = 16.0;
-const AUDIO_LABEL: f32 = 22.0;
-const AUDIO_GAP: f32 = 10.0;
+const AUDIO_PAD: f32 = 14.0;
+const AUDIO_ROW_EXTRA: f32 = 20.0;
+const AUDIO_LABEL: f32 = 26.0;
+const AUDIO_GAP: f32 = 16.0;
 const AUDIO_SCROLL_UNIT: f32 = 10.0;
-const WALL_HEAD: f32 = 40.0;
-const WALL_PAD: f32 = 10.0;
-const WALL_GAP: f32 = 8.0;
+const WALL_HEAD: f32 = 44.0;
+const WALL_PAD: f32 = 14.0;
+const WALL_GAP: f32 = 12.0;
 const WALL_SCROLLBAR: f32 = 8.0;
 const WALL_SCROLL_UNIT: f32 = 10.0;
-const CLIP_PAD: f32 = 10.0;
-const CLIP_ROW_EXTRA: f32 = 14.0; // výška riadku = písmo + toto
+const CLIP_PAD: f32 = 12.0;
+const CLIP_ROW_EXTRA: f32 = 16.0; // výška riadku = písmo + toto
 const CLIP_SCROLLBAR: f32 = 8.0;
 /// jednotka osi kolieska zodpovedajúca jednému riadku
 const CLIP_SCROLL_UNIT: f32 = 10.0;
@@ -239,6 +249,15 @@ pub struct Ui {
     wifi_pw: Option<WifiPw>,
     /// poistka: zadávanie hesla sa po nečinnosti samo zruší (uvoľní klávesnicu)
     wifi_pw_until: Option<Instant>,
+    /// modul monitor: jas/kontrast/preset/vstup/nočný režim
+    monitor: crate::monitor::MonitorState,
+    monitor_loaded: bool,
+    /// ťahaný posuvník: false = jas, true = kontrast
+    monitor_drag: Option<bool>,
+    monitor_sent: Instant,
+    monitor_unsent: bool,
+    /// dráhy posuvníkov z posledného kreslenia [jas, kontrast]
+    monitor_rects: [Rect; 2],
     /// akcie, ktoré vznikli mimo `click` (otvorenie panela) – `click` ich vráti volajúcemu
     queued: Vec<Action>,
 
@@ -450,6 +469,12 @@ impl Ui {
             wifi_acc: 0.0,
             wifi_pw: None,
             wifi_pw_until: None,
+            monitor: Default::default(),
+            monitor_loaded: false,
+            monitor_drag: None,
+            monitor_sent: Instant::now(),
+            monitor_unsent: false,
+            monitor_rects: [Rect::new(0.0, 0.0, 0.0, 0.0); 2],
             queued: Vec::new(),
             ptr: None,
             hover: None,
@@ -543,6 +568,30 @@ impl Ui {
                     self.audio = st;
                 }
                 self.audio_loaded = true;
+            }
+            Msg::Monitor(st) => {
+                if self.monitor_drag.is_none() {
+                    self.monitor = st;
+                } else {
+                    // počas ťahania aktualizuj len to, čo nie je ťahané
+                    let night = st.night;
+                    let preset = st.preset;
+                    let input = st.input;
+                    let error = st.error;
+                    let loaded = st.loaded;
+                    if self.monitor_drag != Some(false) {
+                        self.monitor.brightness = st.brightness;
+                    }
+                    if self.monitor_drag != Some(true) {
+                        self.monitor.contrast = st.contrast;
+                    }
+                    self.monitor.night = night;
+                    self.monitor.preset = preset;
+                    self.monitor.input = input;
+                    self.monitor.error = error;
+                    self.monitor.loaded = loaded;
+                }
+                self.monitor_loaded = true;
             }
             Msg::Audio { muted, volume } => {
                 if self.audio_drag.is_none() {
@@ -949,6 +998,21 @@ impl Ui {
                 let h = 2.0 * AUDIO_PAD + sec(self.audio.sinks.len()) + AUDIO_GAP + sec(self.audio.sources.len());
                 (c.width * self.scale, h * self.scale)
             }
+            Panel::Monitor => {
+                let c = &self.cfg.monitor;
+                let f = c.font_size;
+                // 2 posuvníky + 2 rady tlačidiel (preset, input) + nočný režim
+                let row = f + 20.0;
+                let label = 22.0;
+                let gap = 12.0;
+                let h = 2.0 * 14.0
+                    + label + row          // jas
+                    + gap + label + row    // kontrast
+                    + gap + label + row    // teplota
+                    + gap + label + row    // vstup
+                    + gap + row;           // nočný režim
+                (c.width * self.scale, h * self.scale)
+            }
             Panel::Wifi => {
                 let c = &self.cfg.wifi;
                 let f = c.font_size;
@@ -1110,9 +1174,15 @@ impl Ui {
         if p != Panel::Audio {
             self.audio_drag = None;
         }
+        if p != Panel::Monitor {
+            self.monitor_drag = None;
+        }
         if p == Panel::Audio {
             self.audio_acc = 0.0;
             self.queued.push(Action::Audio(crate::audio::AudioCmd::Load));
+        }
+        if p == Panel::Monitor {
+            self.queued.push(Action::Monitor(crate::monitor::MonitorCmd::Load));
         }
         if p == Panel::Wifi {
             self.wifi_pw = None;
@@ -1141,7 +1211,7 @@ impl Ui {
                 self.panel_w.set(0.0);
                 self.panel_a.set(0.0);
             }
-            Panel::Calendar | Panel::Disks | Panel::Menu(_) | Panel::Clip | Panel::Wall | Panel::Wifi | Panel::Audio => {
+            Panel::Calendar | Panel::Disks | Panel::Menu(_) | Panel::Clip | Panel::Wall | Panel::Wifi | Panel::Audio | Panel::Monitor => {
                 if p == Panel::Calendar {
                     self.rebuild_cal();
                 }
@@ -1180,7 +1250,7 @@ impl Ui {
     }
 
     fn is_big(p: Panel) -> bool {
-        matches!(p, Panel::Calendar | Panel::Disks | Panel::Menu(_) | Panel::Clip | Panel::Wall | Panel::Wifi | Panel::Audio)
+        matches!(p, Panel::Calendar | Panel::Disks | Panel::Menu(_) | Panel::Clip | Panel::Wall | Panel::Wifi | Panel::Audio | Panel::Monitor)
     }
 
     fn toggle_audio(&mut self) {
@@ -1244,6 +1314,51 @@ impl Ui {
         }
     }
 
+    fn monitor_set_value(&mut self, contrast: bool, pct: u32, force: bool) {
+        let pct = pct.min(100);
+        let cur = if contrast { self.monitor.contrast } else { self.monitor.brightness };
+        let changed = cur != pct;
+        if contrast {
+            self.monitor.contrast = pct;
+        } else {
+            self.monitor.brightness = pct;
+        }
+        self.monitor_unsent |= changed;
+        let now = Instant::now();
+        if self.monitor_unsent && (force || now.duration_since(self.monitor_sent) >= Duration::from_millis(80)) {
+            self.monitor_unsent = false;
+            self.monitor_sent = now;
+            if contrast {
+                self.queued.push(Action::Monitor(crate::monitor::MonitorCmd::Contrast(pct)));
+            } else {
+                self.queued.push(Action::Monitor(crate::monitor::MonitorCmd::Brightness(pct)));
+            }
+        }
+    }
+
+    fn monitor_drag_to(&mut self, contrast: bool, x: f32, force: bool) {
+        let r = self.monitor_rects[contrast as usize];
+        if r.w <= 1.0 {
+            return;
+        }
+        let pct = (((x - r.x) / r.w).clamp(0.0, 1.0) * 100.0).round() as u32;
+        self.monitor_set_value(contrast, pct, force);
+    }
+
+    fn monitor_flush(&mut self, contrast: bool) {
+        if !self.monitor_unsent {
+            return;
+        }
+        let pct = if contrast { self.monitor.contrast } else { self.monitor.brightness };
+        self.monitor_unsent = false;
+        self.monitor_sent = Instant::now();
+        if contrast {
+            self.queued.push(Action::Monitor(crate::monitor::MonitorCmd::Contrast(pct)));
+        } else {
+            self.queued.push(Action::Monitor(crate::monitor::MonitorCmd::Brightness(pct)));
+        }
+    }
+
     /// Uvoľnenie tlačidla myši (koniec ťahania posuvníka).
     pub fn release(&mut self, button: u32, now: Instant) {
         if button != BTN_LEFT {
@@ -1251,6 +1366,13 @@ impl Ui {
         }
         if let Some(src) = self.audio_drag.take() {
             self.audio_flush(src);
+            let outside = self.ptr.map(|(x, y)| self.hit_at(x, y).is_none()).unwrap_or(true);
+            if outside {
+                self.collapse_at = Some(now + Duration::from_millis(self.cfg.collapse_ms));
+            }
+        }
+        if let Some(contrast) = self.monitor_drag.take() {
+            self.monitor_flush(contrast);
             let outside = self.ptr.map(|(x, y)| self.hit_at(x, y).is_none()).unwrap_or(true);
             if outside {
                 self.collapse_at = Some(now + Duration::from_millis(self.cfg.collapse_ms));
@@ -1475,6 +1597,10 @@ impl Ui {
             self.audio_drag_to(src, x, false);
             return;
         }
+        if let Some(contrast) = self.monitor_drag {
+            self.monitor_drag_to(contrast, x, false);
+            return;
+        }
         let h = self.hit_at(x, y);
         // odklad zruší až vstup myši do panela, a to až po dobehnutí animácie jeho veľkosti
         // (počas nej ešte pohyb zasahuje starý rozmer ostrovčeka)
@@ -1519,11 +1645,11 @@ impl Ui {
             return;
         }
         // počas písania hesla panel nezatvárame (zavrie ho Esc / odoslanie)
-        if self.wants_keyboard() || self.audio_drag.is_some() {
+        if self.wants_keyboard() || self.audio_drag.is_some() || self.monitor_drag.is_some() {
             return;
         }
         match self.panel {
-            Panel::Calendar | Panel::Disks | Panel::Menu(_) | Panel::Clip | Panel::Wall | Panel::Wifi | Panel::Audio => {
+            Panel::Calendar | Panel::Disks | Panel::Menu(_) | Panel::Clip | Panel::Wall | Panel::Wifi | Panel::Audio | Panel::Monitor => {
                 self.collapse_at = Some(now + Duration::from_millis(self.cfg.collapse_ms))
             }
             Panel::Tip => self.collapse_at = Some(now + Duration::from_millis(200)),
@@ -1533,7 +1659,7 @@ impl Ui {
 
     fn action_for(cmd: &str) -> Option<Action> {
         match cmd {
-            "" | "calendar" | "menu" | "clipboard" | "wallpaper" | "wifi" | "audio" => None,
+            "" | "calendar" | "menu" | "clipboard" | "wallpaper" | "wifi" | "audio" | "monitor" => None,
             "eject-all" => Some(Action::DiskEjectAll),
             "inhibit-toggle" => Some(Action::InhibitToggle),
             "layout-toggle" => Some(Action::LayoutToggle),
@@ -1574,6 +1700,10 @@ impl Ui {
             }
             "audio" => {
                 self.set_panel(Panel::Audio);
+                None
+            }
+            "monitor" => {
+                self.set_panel(Panel::Monitor);
                 None
             }
             other => match self.menu_index(other) {
@@ -1741,6 +1871,31 @@ impl Ui {
                 if button == BTN_LEFT {
                     self.audio_drag = Some(src);
                     self.audio_drag_to(src, x, true);
+                }
+            }
+            Hit::MonSlider(contrast) => {
+                if button == BTN_LEFT {
+                    self.monitor_drag = Some(contrast);
+                    self.monitor_drag_to(contrast, x, true);
+                }
+            }
+            Hit::MonPreset(i) => {
+                if button == BTN_LEFT {
+                    self.monitor.preset = Some(i);
+                    out.push(Action::Monitor(crate::monitor::MonitorCmd::Preset(i)));
+                }
+            }
+            Hit::MonInput(i) => {
+                if button == BTN_LEFT {
+                    self.monitor.input = Some(i);
+                    out.push(Action::Monitor(crate::monitor::MonitorCmd::Input(i)));
+                }
+            }
+            Hit::MonNight => {
+                if button == BTN_LEFT {
+                    let enable = !self.monitor.night;
+                    self.monitor.night = enable;
+                    out.push(Action::Monitor(crate::monitor::MonitorCmd::SetNight(enable)));
                 }
             }
             Hit::WifiEditor => {
@@ -2109,6 +2264,7 @@ impl Ui {
                 Panel::Wall => self.build_wall(&mut frame, text, pill, ct),
                 Panel::Wifi => self.build_wifi(&mut frame, text, pill, ct),
                 Panel::Audio => self.build_audio(&mut frame, text, pill, ct),
+                Panel::Monitor => self.build_monitor(&mut frame, text, pill, ct),
                 _ => self.build_calendar(&mut frame, text, pill, pill.y, ct),
             }
         }
@@ -2130,7 +2286,7 @@ impl Ui {
                         text.layout_to(&mut frame.content, l, px2, pill.x + self.s(16.0), cy + (asc - desc) * 0.5, col);
                     }
                 }
-                Panel::None | Panel::Calendar | Panel::Disks | Panel::Menu(_) | Panel::Clip | Panel::Wall | Panel::Wifi | Panel::Audio => {}
+                Panel::None | Panel::Calendar | Panel::Disks | Panel::Menu(_) | Panel::Clip | Panel::Wall | Panel::Wifi | Panel::Audio | Panel::Monitor => {}
             }
         }
         frame
@@ -2348,9 +2504,10 @@ impl Ui {
         let row_h = (f + WIFI_ROW_EXTRA) * s;
         let x0 = pill.x + pad;
         let w_in = pill.w - 2.0 * pad;
-        let inset = 10.0 * s;
+        let inset = 12.0 * s;
         let hy = pill.y + pad;
-        let hcy = hy + head * 0.5;
+        // mierne vyššie ako geometrický stred – opticky vycentruje prepínač / text / tlačidlá
+        let hcy = hy + head * 0.5 - 6.0 * s;
         let base = |cy: f32| cy + (asc - desc) * 0.5;
 
         // ---- zadávanie hesla
@@ -2394,7 +2551,8 @@ impl Ui {
         let rbtn = Rect::new(tog.x + tog.w + 6.0 * s, hcy - ref_sz * 0.5, ref_sz, ref_sz);
         let ed_label = format!("\u{f0493}  {}", self.cfg.wifi.editor_label);
         let ed_w = text.measure(&ed_label, px) + 2.0 * inset;
-        let ed = Rect::new(pill.x + pill.w - pad - ed_w, hcy - ref_sz * 0.55, ed_w, ref_sz * 1.1);
+        let ed_h = ref_sz * 1.1;
+        let ed = Rect::new(pill.x + pill.w - pad - ed_w, hcy - ed_h * 0.5, ed_w, ed_h);
         if !self.cfg.wifi.editor_command.is_empty() {
             self.hits.push((ed, Hit::WifiEditor));
             let hov = self.hover == Some(Hit::WifiEditor);
@@ -2563,7 +2721,7 @@ impl Ui {
         let base = |cy: f32| cy + (asc - desc) * 0.5;
         let pad = AUDIO_PAD * s;
         let row_h = (f + AUDIO_ROW_EXTRA) * s;
-        let inset = 10.0 * s;
+        let inset = 12.0 * s;
         let x0 = pill.x + pad;
         let w_in = pill.w - 2.0 * pad;
         let max_pct = self.audio_max() as f32;
@@ -2663,6 +2821,316 @@ impl Ui {
         }
     }
 
+    fn build_monitor(&mut self, frame: &mut Frame, text: &mut Text, pill: Rect, pa: f32) {
+        let s = self.scale;
+        let t = self.theme;
+        let c = &self.cfg.monitor;
+        let f = c.font_size;
+        let px = f * s;
+        let px_small = px * 0.8;
+        let (asc, desc) = text.line_metrics(px);
+        let (a3, d3) = text.line_metrics(px_small);
+        let base = |cy: f32| cy + (asc - desc) * 0.5;
+        let pad = 14.0 * s;
+        let row_h = (f + 20.0) * s;
+        let label_h = 22.0 * s;
+        let gap = 12.0 * s;
+        let inset = 12.0 * s;
+        let x0 = pill.x + pad;
+        let w_in = pill.w - 2.0 * pad;
+        let mut y = pill.y + pad;
+
+        if !self.monitor.error.is_empty() {
+            let msg = Self::ellipsize(text, &self.monitor.error, px, w_in);
+            text.layout_to(
+                &mut frame.content,
+                &msg,
+                px,
+                x0 + inset,
+                base(y + row_h * 0.5),
+                fade(t.alert, pa),
+            );
+            return;
+        }
+
+        if !self.monitor_loaded {
+            text.layout_to(
+                &mut frame.content,
+                "Načítavam…",
+                px,
+                x0 + inset,
+                base(y + row_h * 0.5),
+                fade(t.fg, 0.6 * pa),
+            );
+            return;
+        }
+
+        // --- helper: sekcia s popiskom
+        let mut section_label = |out: &mut Vec<Item>, text: &mut Text, y: &mut f32, label: &str| {
+            text.layout_to(
+                out,
+                label,
+                px_small,
+                x0 + inset,
+                *y + label_h * 0.5 + (a3 - d3) * 0.5,
+                fade(t.fg, 0.6 * pa),
+            );
+            *y += label_h;
+        };
+
+        // --- jas
+        section_label(&mut frame.content, text, &mut y, "Jas");
+        {
+            let cy = y + row_h * 0.5;
+            let pct = self.monitor.brightness;
+            let pct_w = text.measure("100%", px);
+            let track_x = x0 + inset;
+            let track = Rect::new(
+                track_x,
+                cy - 3.0 * s,
+                (w_in - 2.0 * inset - pct_w - 10.0 * s).max(20.0 * s),
+                6.0 * s,
+            );
+            self.monitor_rects[0] = track;
+            self.hits.push((
+                Rect::new(track.x - 4.0 * s, y, track.w + 8.0 * s, row_h),
+                Hit::MonSlider(false),
+            ));
+            let fill_w = track.w * (pct as f32 / 100.0);
+            frame.content.push(Item::Rect {
+                r: track,
+                radius: 3.0 * s,
+                soft: 0.8,
+                color: fade(t.fg, 0.18 * pa),
+            });
+            if fill_w > 0.5 {
+                frame.content.push(Item::Rect {
+                    r: Rect::new(track.x, track.y, fill_w, track.h),
+                    radius: 3.0 * s,
+                    soft: 0.8,
+                    color: fade(t.accent, pa),
+                });
+            }
+            // gulička
+            let kx = track.x + fill_w - 5.0 * s;
+            frame.content.push(Item::Rect {
+                r: Rect::new(kx.max(track.x), cy - 7.0 * s, 10.0 * s, 14.0 * s),
+                radius: 5.0 * s,
+                soft: 0.8,
+                color: fade(t.fg, pa),
+            });
+            let ptxt = format!("{pct}%");
+            let pw = text.measure(&ptxt, px);
+            text.layout_to(
+                &mut frame.content,
+                &ptxt,
+                px,
+                x0 + w_in - pw,
+                base(cy),
+                fade(t.fg, pa),
+            );
+            y += row_h;
+        }
+
+        y += gap;
+
+        // --- kontrast
+        section_label(&mut frame.content, text, &mut y, "Kontrast");
+        {
+            let cy = y + row_h * 0.5;
+            let pct = self.monitor.contrast;
+            let pct_w = text.measure("100%", px);
+            let track_x = x0 + inset;
+            let track = Rect::new(
+                track_x,
+                cy - 3.0 * s,
+                (w_in - 2.0 * inset - pct_w - 10.0 * s).max(20.0 * s),
+                6.0 * s,
+            );
+            self.monitor_rects[1] = track;
+            self.hits.push((
+                Rect::new(track.x - 4.0 * s, y, track.w + 8.0 * s, row_h),
+                Hit::MonSlider(true),
+            ));
+            let fill_w = track.w * (pct as f32 / 100.0);
+            frame.content.push(Item::Rect {
+                r: track,
+                radius: 3.0 * s,
+                soft: 0.8,
+                color: fade(t.fg, 0.18 * pa),
+            });
+            if fill_w > 0.5 {
+                frame.content.push(Item::Rect {
+                    r: Rect::new(track.x, track.y, fill_w, track.h),
+                    radius: 3.0 * s,
+                    soft: 0.8,
+                    color: fade(t.accent, pa),
+                });
+            }
+            let kx = track.x + fill_w - 5.0 * s;
+            frame.content.push(Item::Rect {
+                r: Rect::new(kx.max(track.x), cy - 7.0 * s, 10.0 * s, 14.0 * s),
+                radius: 5.0 * s,
+                soft: 0.8,
+                color: fade(t.fg, pa),
+            });
+            let ptxt = format!("{pct}%");
+            let pw = text.measure(&ptxt, px);
+            text.layout_to(
+                &mut frame.content,
+                &ptxt,
+                px,
+                x0 + w_in - pw,
+                base(cy),
+                fade(t.fg, pa),
+            );
+            y += row_h;
+        }
+
+        y += gap;
+
+        // --- teplota farieb
+        section_label(&mut frame.content, text, &mut y, "Teplota farieb");
+        {
+            let n = c.preset_labels.len().max(1) as f32;
+            let btn_gap = 8.0 * s;
+            let btn_w = ((w_in - 2.0 * inset - (n - 1.0) * btn_gap) / n).max(40.0 * s);
+            let bh = (row_h * 0.85).min(32.0 * s);
+            let by = y + (row_h - bh) * 0.5;
+            for (i, label) in c.preset_labels.iter().enumerate() {
+                let bx = x0 + inset + i as f32 * (btn_w + btn_gap);
+                let r = Rect::new(bx, by, btn_w, bh);
+                self.hits.push((r, Hit::MonPreset(i)));
+                let selected = self.monitor.preset == Some(i);
+                let hov = self.hover == Some(Hit::MonPreset(i));
+                let bg = if selected {
+                    fade(t.accent, 0.35 * pa)
+                } else if hov {
+                    fade(t.menu_selected, pa)
+                } else {
+                    fade(t.fg, 0.12 * pa)
+                };
+                frame.content.push(Item::Rect {
+                    r,
+                    radius: bh * 0.5,
+                    soft: 0.8,
+                    color: bg,
+                });
+                let fg = if selected {
+                    t.on_accent
+                } else if hov {
+                    t.menu_selected_text
+                } else {
+                    t.fg
+                };
+                let lab = Self::ellipsize(text, label, px_small, btn_w - 10.0 * s);
+                let lw = text.measure(&lab, px_small);
+                text.layout_to(
+                    &mut frame.content,
+                    &lab,
+                    px_small,
+                    r.x + (r.w - lw) * 0.5,
+                    by + bh * 0.5 + (a3 - d3) * 0.5,
+                    fade(fg, pa),
+                );
+            }
+            y += row_h;
+        }
+
+        y += gap;
+
+        // --- vstup
+        section_label(&mut frame.content, text, &mut y, "Vstup");
+        {
+            let n = c.input_labels.len().max(1) as f32;
+            let btn_gap = 8.0 * s;
+            let btn_w = ((w_in - 2.0 * inset - (n - 1.0) * btn_gap) / n).max(40.0 * s);
+            let bh = (row_h * 0.85).min(32.0 * s);
+            let by = y + (row_h - bh) * 0.5;
+            for (i, label) in c.input_labels.iter().enumerate() {
+                let bx = x0 + inset + i as f32 * (btn_w + btn_gap);
+                let r = Rect::new(bx, by, btn_w, bh);
+                self.hits.push((r, Hit::MonInput(i)));
+                let selected = self.monitor.input == Some(i);
+                let hov = self.hover == Some(Hit::MonInput(i));
+                let bg = if selected {
+                    fade(t.accent, 0.35 * pa)
+                } else if hov {
+                    fade(t.menu_selected, pa)
+                } else {
+                    fade(t.fg, 0.12 * pa)
+                };
+                frame.content.push(Item::Rect {
+                    r,
+                    radius: bh * 0.5,
+                    soft: 0.8,
+                    color: bg,
+                });
+                let fg = if selected {
+                    t.on_accent
+                } else if hov {
+                    t.menu_selected_text
+                } else {
+                    t.fg
+                };
+                let lab = Self::ellipsize(text, label, px_small, btn_w - 10.0 * s);
+                let lw = text.measure(&lab, px_small);
+                text.layout_to(
+                    &mut frame.content,
+                    &lab,
+                    px_small,
+                    r.x + (r.w - lw) * 0.5,
+                    by + bh * 0.5 + (a3 - d3) * 0.5,
+                    fade(fg, pa),
+                );
+            }
+            y += row_h;
+        }
+
+        y += gap;
+
+        // --- nočný režim
+        {
+            let cy = y + row_h * 0.5;
+            let label = "Nočný režim (4500 K)";
+            text.layout_to(
+                &mut frame.content,
+                label,
+                px,
+                x0 + inset,
+                base(cy),
+                fade(t.fg, pa),
+            );
+            // switch vpravo
+            let tw = 44.0 * s;
+            let th = 24.0 * s;
+            let tx = x0 + w_in - tw;
+            let ty = cy - th * 0.5;
+            let tog = Rect::new(tx, ty, tw, th);
+            self.hits.push((tog, Hit::MonNight));
+            let on = self.monitor.night;
+            let track = if on { t.accent } else { t.fg };
+            frame.content.push(Item::Rect {
+                r: tog,
+                radius: th * 0.5,
+                soft: 0.8,
+                color: fade(track, (if on { 1.0 } else { 0.3 }) * pa),
+            });
+            let kn = th - 6.0 * s;
+            let kx = if on {
+                tog.x + tog.w - 3.0 * s - kn
+            } else {
+                tog.x + 3.0 * s
+            };
+            frame.content.push(Item::Rect {
+                r: Rect::new(kx, tog.y + 3.0 * s, kn, kn),
+                radius: kn * 0.5,
+                soft: 0.8,
+                color: fade(if on { t.on_accent } else { t.fg }, pa),
+            });
+        }
+    }
+
     fn build_wall(&mut self, frame: &mut Frame, text: &mut Text, pill: Rect, pa: f32) {
         let s = self.scale;
         let t = self.theme;
@@ -2673,7 +3141,7 @@ impl Ui {
         let px = self.px_font();
         let (asc, desc) = text.line_metrics(px);
         let base = |cy: f32| cy + (asc - desc) * 0.5;
-        let inset = 10.0 * s;
+        let inset = 12.0 * s;
         let x0 = pill.x + pad;
         let w_in = pill.w - 2.0 * pad;
 

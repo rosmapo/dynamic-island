@@ -95,6 +95,8 @@ pub enum Msg {
     WifiPaste(String),
     /// zoznam audio zariadení a predvolené zariadenia
     AudioDev(crate::audio::AudioState),
+    /// stav monitora (jas, kontrast, preset, vstup, nočný režim)
+    Monitor(crate::monitor::MonitorState),
     Notif(Notification),
     NotifClose(u32),
     Net(NetInfo),

@@ -12,6 +12,7 @@ mod gl;
 mod history;
 mod icons;
 mod json;
+mod monitor;
 mod notify;
 mod providers;
 mod render;

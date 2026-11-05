@@ -85,6 +85,7 @@ fn run_action(a: Action, cfg: &Config, disk_tx: &Option<Tx<DiskCmd>>, tx: &Tx<Ms
         Action::ClipCopy(line) => spawn_with_stdin(&cfg.clip_copy, line),
         Action::Audio(cmd) => crate::audio::run(cmd, cfg.vol_limit, tx.clone()),
         Action::Wifi(cmd) => crate::wifi::run(cmd, tx.clone()),
+        Action::Monitor(cmd) => crate::monitor::run(cmd, cfg.monitor.clone(), tx.clone()),
         Action::WifiPaste => crate::wifi::paste(tx.clone()),
         Action::WallLoad => crate::wallpaper::load(cfg.wall.clone(), tx.clone()),
         Action::WallApply { path, background_only } => crate::wallpaper::apply(cfg.wall.clone(), path, background_only, tx.clone()),
