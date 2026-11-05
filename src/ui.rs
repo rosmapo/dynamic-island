@@ -38,7 +38,9 @@ pub enum Action {
     /// načítať zoznam obrázkov a náhľady modulu wallpaper
     WallLoad,
     /// nastaviť pozadie skriptom (`wallpaper -v CESTA`)
-    WallApply(String),
+    WallApply { path: String, background_only: bool },
+    /// nastaviť tému (názov, cesta) alebo návrat do režimu „wallpaper“ (`None`)
+    WallTheme(Option<(String, String)>),
     Wifi(crate::wifi::WifiCmd),
     /// vložiť schránku do poľa hesla
     WifiPaste,
@@ -65,6 +67,9 @@ enum Hit {
     MenuItem(usize),
     ClipItem(usize),
     WallItem(usize),
+    WallRollout,
+    WallButton(usize),
+    WallTheme(usize),
     WifiRow(usize),
     WifiToggle,
     WifiRefresh,
@@ -141,6 +146,7 @@ const WIFI_ROW_EXTRA: f32 = 16.0; // výška riadku = písmo + toto
 const WIFI_FOOT: f32 = 26.0;
 const WIFI_SCROLLBAR: f32 = 8.0;
 const WIFI_SCROLL_UNIT: f32 = 10.0;
+const WALL_HEAD: f32 = 40.0;
 const WALL_PAD: f32 = 10.0;
 const WALL_GAP: f32 = 8.0;
 const WALL_SCROLLBAR: f32 = 8.0;
@@ -201,6 +207,11 @@ pub struct Ui {
     wall_current: String,
     wall_scroll: usize,
     wall_acc: f32,
+    /// témy (názov, cesta), aktuálna téma (prázdna = „wallpaper“), rozbalená ponuka tém a jej skrolovanie
+    wall_themes: Vec<(String, String)>,
+    wall_theme: String,
+    wall_menu: bool,
+    wall_menu_scroll: usize,
     /// modul Wi-Fi: stav, správa vo päte, skrolovanie, rozpísané heslo
     wifi: crate::wifi::WifiState,
     wifi_loaded: bool,
@@ -403,6 +414,10 @@ impl Ui {
             wall_current: String::new(),
             wall_scroll: 0,
             wall_acc: 0.0,
+            wall_themes: Vec::new(),
+            wall_theme: String::new(),
+            wall_menu: false,
+            wall_menu_scroll: 0,
             wifi: Default::default(),
             wifi_loaded: false,
             wifi_note: String::new(),
@@ -470,6 +485,11 @@ impl Ui {
                 self.wall_scroll = self.wall_scroll.min(max_start);
             }
             Msg::WallCurrent(path) => self.wall_current = path,
+            Msg::WallThemes(list, selected) => {
+                self.wall_themes = list;
+                self.wall_theme = selected;
+            }
+            Msg::WallTheme(name) => self.wall_theme = name,
             Msg::Wifi(s) => {
                 self.wifi = s;
                 self.wifi_loaded = true;
@@ -900,7 +920,7 @@ impl Ui {
                 let sb = if self.wall_row_count() > c.rows { WALL_SCROLLBAR } else { 0.0 };
                 let w = 2.0 * WALL_PAD + c.columns as f32 * tw + (c.columns - 1) as f32 * WALL_GAP + sb;
                 let n = self.wall_rows_shown() as f32;
-                let h = 2.0 * WALL_PAD + n * th + (n - 1.0) * WALL_GAP;
+                let h = 2.0 * WALL_PAD + WALL_HEAD + WALL_GAP + n * th + (n - 1.0) * WALL_GAP;
                 (w * self.scale, h * self.scale)
             }
             Panel::Clip => {
@@ -1053,6 +1073,8 @@ impl Ui {
             // zoznam sa pri každom otvorení načíta znova (nové obrázky, dorobené náhľady)
             self.wall_scroll = 0;
             self.wall_acc = 0.0;
+            self.wall_menu = false;
+            self.wall_menu_scroll = 0;
             self.queued.push(Action::WallLoad);
         }
         if p == Panel::Clip {
@@ -1589,7 +1611,37 @@ impl Ui {
             Hit::WallItem(i) => {
                 if button == BTN_LEFT {
                     if let Some(e) = self.wall.get(i) {
-                        out.push(Action::WallApply(e.path.clone()));
+                        // pri vybranej téme sa mení len pozadie (bez matugenu), v režime „wallpaper“ aj farby
+                        out.push(Action::WallApply { path: e.path.clone(), background_only: !self.wall_theme.is_empty() });
+                    }
+                    self.set_panel(Panel::None);
+                    self.collapse_at = None;
+                }
+            }
+            Hit::WallRollout => {
+                if button == BTN_LEFT {
+                    self.wall_menu = !self.wall_menu;
+                    self.wall_menu_scroll = 0;
+                }
+            }
+            Hit::WallTheme(i) => {
+                if button == BTN_LEFT {
+                    self.wall_menu = false;
+                    if i == 0 {
+                        // pseudotéma: len prepne režim (zmaže zapamätanú tému), farby sa zmenia pri ďalšom nastavení pozadia
+                        self.wall_theme.clear();
+                        out.push(Action::WallTheme(None));
+                    } else if let Some((name, path)) = self.wall_themes.get(i - 1).cloned() {
+                        out.push(Action::WallTheme(Some((name, path))));
+                    }
+                }
+            }
+            Hit::WallButton(i) => {
+                if button == BTN_LEFT {
+                    if let Some(b) = self.cfg.wall.buttons.get(i) {
+                        if !b.command.is_empty() {
+                            out.push(Action::Run(b.command.clone()));
+                        }
                     }
                     self.set_panel(Panel::None);
                     self.collapse_at = None;
@@ -1642,7 +1694,13 @@ impl Ui {
             let max_start = self.wifi.aps.len().saturating_sub(self.cfg.wifi.rows) as f32;
             self.wifi_scroll = (self.wifi_scroll as f32 + rows).clamp(0.0, max_start) as usize;
         }
-        if self.panel == Panel::Wall && self.hover.is_some() {
+        if self.panel == Panel::Wall && self.hover.is_some() && self.wall_menu {
+            self.wall_acc += value;
+            let steps = (self.wall_acc / WALL_SCROLL_UNIT).trunc();
+            self.wall_acc -= steps * WALL_SCROLL_UNIT;
+            let max_start = (self.wall_themes.len() + 1).saturating_sub(1) as f32;
+            self.wall_menu_scroll = (self.wall_menu_scroll as f32 + steps).clamp(0.0, max_start) as usize;
+        } else if self.panel == Panel::Wall && self.hover.is_some() {
             self.wall_acc += value;
             let rows = (self.wall_acc / WALL_SCROLL_UNIT).trunc();
             self.wall_acc -= rows * WALL_SCROLL_UNIT;
@@ -2312,19 +2370,94 @@ impl Ui {
         let (tw, th, gap, pad) = (tw * s, th * s, WALL_GAP * s, WALL_PAD * s);
         let cols = self.cfg.wall.columns;
         let n = self.wall.len();
+        let px = self.px_font();
+        let (asc, desc) = text.line_metrics(px);
+        let base = |cy: f32| cy + (asc - desc) * 0.5;
+        let inset = 10.0 * s;
+        let x0 = pill.x + pad;
+        let w_in = pill.w - 2.0 * pad;
+
+        // ---- hlavička: tlačidlá + rollout s témou
+        let head = WALL_HEAD * s;
+        let hcy = pill.y + pad + head * 0.5;
+        let bh = (px * 1.9).min(head);
+        let rows = self.wall_rows_shown();
+        let (rx, rw, bxs) = crate::wallpaper::header_layout(x0, w_in, self.cfg.wall.theme_width * s, self.cfg.wall.buttons.len(), self.cfg.wall.button_max_width.map(|w| w * s), gap);
+        for (i, (bx, bw)) in bxs.iter().enumerate() {
+            let r = Rect::new(*bx, hcy - bh * 0.5, *bw, bh);
+            self.hits.push((r, Hit::WallButton(i)));
+            let hov = self.hover == Some(Hit::WallButton(i));
+            frame.content.push(Item::Rect { r, radius: bh * 0.5, soft: 0.8, color: if hov { fade(t.menu_selected, pa) } else { fade(t.fg, 0.12 * pa) } });
+            let label = Self::ellipsize(text, &self.cfg.wall.buttons[i].label, px, bw - 2.0 * inset);
+            let lw = text.measure(&label, px);
+            text.layout_to(&mut frame.content, &label, px, r.x + (r.w - lw) * 0.5, base(hcy), fade(if hov { t.menu_selected_text } else { t.fg }, pa));
+        }
+        let rr = Rect::new(rx, hcy - bh * 0.5, rw, bh);
+        self.hits.push((rr, Hit::WallRollout));
+        let rhov = self.hover == Some(Hit::WallRollout);
+        let rbg = if rhov || self.wall_menu { fade(t.accent, 0.25 * pa) } else { fade(t.fg, 0.12 * pa) };
+        frame.content.push(Item::Rect { r: rr, radius: bh * 0.5, soft: 0.8, color: rbg });
+        let chev = if self.wall_menu { "\u{f0143}" } else { "\u{f0140}" };
+        let cw = text.measure(chev, px);
+        text.layout_to(&mut frame.content, chev, px, rr.x + rr.w - inset - cw, base(hcy), fade(t.fg, pa));
+        let cur = if self.wall_theme.is_empty() { "wallpaper" } else { self.wall_theme.as_str() };
+        let cur = Self::ellipsize(text, cur, px, rw - 3.0 * inset - cw);
+        text.layout_to(&mut frame.content, &cur, px, rr.x + inset, base(hcy), fade(t.fg, pa));
+
+        // ---- oblasť pod hlavičkou: zoznam tém (rozbalený rollout) alebo mriežka náhľadov
+        let top = pill.y + pad + head + gap;
+        let area_h = rows as f32 * th + (rows - 1) as f32 * gap;
+
+        if self.wall_menu {
+            let row_h = px * 1.9;
+            let vis = ((area_h / row_h).floor() as usize).max(1);
+            let total = self.wall_themes.len() + 1; // + pseudotéma „wallpaper“
+            let start = self.wall_menu_scroll.min(total.saturating_sub(vis));
+            let sb = if total > vis { WALL_SCROLLBAR * s } else { 0.0 };
+            for k in 0..vis.min(total) {
+                let i = start + k;
+                let name = if i == 0 { "wallpaper" } else { self.wall_themes[i - 1].0.as_str() };
+                let sel = if i == 0 { self.wall_theme.is_empty() } else { self.wall_theme == name };
+                let cell = Rect::new(x0, top + k as f32 * row_h, w_in - sb, row_h);
+                self.hits.push((cell, Hit::WallTheme(i)));
+                let hov = self.hover == Some(Hit::WallTheme(i));
+                let fg = if hov {
+                    frame.content.push(Item::Rect { r: cell, radius: 10.0 * s, soft: 0.8, color: fade(t.menu_selected, pa) });
+                    t.menu_selected_text
+                } else if sel {
+                    frame.content.push(Item::Rect { r: cell, radius: 10.0 * s, soft: 0.8, color: fade(t.accent, 0.18 * pa) });
+                    t.accent
+                } else {
+                    t.fg
+                };
+                let mark = if sel { "\u{f012c}" } else { "" };
+                let mw = if sel { text.measure(mark, px) } else { 0.0 };
+                if sel {
+                    text.layout_to(&mut frame.content, mark, px, cell.x + cell.w - inset - mw, base(cell.y + row_h * 0.5), fade(fg, pa));
+                }
+                let label = Self::ellipsize(text, name, px, cell.w - 3.0 * inset - mw);
+                text.layout_to(&mut frame.content, &label, px, cell.x + inset, base(cell.y + row_h * 0.5), fade(fg, pa));
+            }
+            if total > vis {
+                let track_h = vis as f32 * row_h;
+                let thumb_h = (track_h * vis as f32 / total as f32).max(16.0 * s).min(track_h);
+                let frac = start as f32 / (total - vis) as f32;
+                let w = 4.0 * s;
+                let x = x0 + w_in - sb + (sb - w) * 0.5;
+                frame.content.push(Item::Rect { r: Rect::new(x, top + (track_h - thumb_h) * frac, w, thumb_h), radius: w * 0.5, soft: 0.8, color: fade(t.fg, 0.35 * pa) });
+            }
+            return;
+        }
 
         if n == 0 {
-            let px = self.px_font();
-            let (asc, desc) = text.line_metrics(px);
             let msg = if self.wall_loaded { "Žiadne obrázky" } else { "Načítavam…" };
             let mw = text.measure(msg, px);
-            let cy = pill.y + pill.h * 0.5;
-            text.layout_to(&mut frame.content, msg, px, pill.x + (pill.w - mw) * 0.5, cy + (asc - desc) * 0.5, fade(t.fg, 0.7 * pa));
+            let cy = top + area_h * 0.5;
+            text.layout_to(&mut frame.content, msg, px, pill.x + (pill.w - mw) * 0.5, base(cy), fade(t.fg, 0.7 * pa));
             return;
         }
 
         let total_rows = self.wall_row_count();
-        let rows = self.wall_rows_shown();
         let scrollable = total_rows > rows;
         let start = self.wall_scroll.min(total_rows - rows);
 
@@ -2334,7 +2467,7 @@ impl Ui {
                 if i >= n {
                     break;
                 }
-                let cell = Rect::new(pill.x + pad + c as f32 * (tw + gap), pill.y + pad + r as f32 * (th + gap), tw, th);
+                let cell = Rect::new(x0 + c as f32 * (tw + gap), top + r as f32 * (th + gap), tw, th);
                 self.hits.push((cell, Hit::WallItem(i)));
                 let e = &self.wall[i];
                 let hov = self.hover == Some(Hit::WallItem(i));
@@ -2360,7 +2493,7 @@ impl Ui {
             let frac = start as f32 / (total_rows - rows) as f32;
             let w = 4.0 * s;
             let x = pill.x + pill.w - pad - (WALL_SCROLLBAR * s - w) * 0.5 - w;
-            let y = pill.y + pad + (track_h - thumb_h) * frac;
+            let y = top + (track_h - thumb_h) * frac;
             frame.content.push(Item::Rect { r: Rect::new(x, y, w, thumb_h), radius: w * 0.5, soft: 0.8, color: fade(t.fg, 0.35 * pa) });
         }
     }

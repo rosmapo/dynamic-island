@@ -1,0 +1,385 @@
+#!/usr/bin/env python3
+"""
+Jednoduchý CLI správca tapiet pre Wayfire + awww.
+Použitie:
+wallpaper -r          nastaví náhodnú tapetu
+wallpaper -p          obnoví poslednú tapetu (po štarte)
+wallpaper -v CESTA    nastaví tapetu z daného obrázka (a farby z nej)
+wallpaper -w CESTA    nastaví len tapetu (bez matugenu, téma sa nemení)
+wallpaper -t CESTA    nastaví tému z JSON súboru (iba farby)
+"""
+# ============================================================================
+# KONFIGURÁCIA
+# ============================================================================
+WALLPAPER_DIR = "~/.config/wayfire/media/wallpaper"
+STATE_DIR = "~/.cache/wallpaper-chooser"
+RUNTIME_DIR = None
+MATUGEN = "~/.local/bin/matugen"
+AWWW_DAEMON = "awww-daemon"
+AWWW = "awww"
+DAEMON_TIMEOUT = 10.0
+DAEMON_POLL_INTERVAL = 0.1
+AWWW_RESIZE = "crop"
+
+TRANSITION_TYPE = "center"
+TRANSITION_DURATION = 1.0
+TRANSITION_STEP = 255
+TRANSITION_ANGLE = 45
+TRANSITION_POS = "0.3,0.7"
+TRANSITION_WAVE = "20,20"
+AWWW_EXTRA_ARGS = []
+
+MATUGEN_ARGS = ["image", "{path}", "--prefer", "darkness"]
+IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".bmp", ".gif", ".webp"}
+ERROR_NOTIFICATION = True
+
+# ============================================================================
+# IMPLEMENTÁCIA
+# ============================================================================
+import fcntl
+import os
+import random
+import shutil
+import subprocess
+import sys
+import tempfile
+import time
+from pathlib import Path
+
+STATE_PATH = Path(STATE_DIR).expanduser()
+CURRENT_FILE = STATE_PATH / "current"
+APPLIED_THEME_FILE = STATE_PATH / "applied-theme"
+
+
+def expand(path):
+    return Path(path).expanduser()
+
+
+def notify_error(message):
+    if not ERROR_NOTIFICATION:
+        return
+    exe = shutil.which("notify-send")
+    if not exe:
+        return
+    try:
+        subprocess.run(
+            [
+                exe, "-u", "critical", "-a", "wallpaper",
+                "-i", "dialog-error", "Pozadie: chyba", message,
+            ],
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            timeout=10,
+            check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        pass
+
+
+def fail(message):
+    print(message, file=sys.stderr)
+    notify_error(message)
+    return 1
+
+
+def acquire_lock(wait=False):
+    runtime = expand(RUNTIME_DIR) if RUNTIME_DIR else Path(
+        os.environ.get("XDG_RUNTIME_DIR") or tempfile.gettempdir()
+    )
+    runtime.mkdir(parents=True, exist_ok=True)
+    lock = open(runtime / "wallpaper-cli.lock", "w")
+    try:
+        operation = fcntl.LOCK_EX if wait else fcntl.LOCK_EX | fcntl.LOCK_NB
+        fcntl.flock(lock, operation)
+    except BlockingIOError:
+        lock.close()
+        if not wait:
+            print("Iná zmena pozadia ešte prebieha.", file=sys.stderr)
+            return None
+    return lock
+
+
+def read_current():
+    try:
+        value = CURRENT_FILE.read_text(encoding="utf-8").strip()
+    except OSError:
+        return None
+    return Path(value).expanduser() if value else None
+
+
+def write_current(image):
+    STATE_PATH.mkdir(parents=True, exist_ok=True)
+    temporary = CURRENT_FILE.with_name(CURRENT_FILE.name + ".tmp")
+    temporary.write_text(str(image), encoding="utf-8")
+    os.replace(temporary, CURRENT_FILE)
+
+
+def write_applied_theme(stem):
+    """Zapamätá názov (stem) naposledy nastavenej témy.
+    None = vymazať (napr. keď sa farby generujú z obrázka)."""
+    try:
+        if stem is None:
+            APPLIED_THEME_FILE.unlink(missing_ok=True)
+        else:
+            STATE_PATH.mkdir(parents=True, exist_ok=True)
+            APPLIED_THEME_FILE.write_text(stem, encoding="utf-8")
+    except OSError:
+        pass
+
+
+def matugen_executable():
+    configured = expand(MATUGEN)
+    if configured.is_file():
+        return str(configured)
+    return shutil.which("matugen")
+
+
+def run_matugen(image):
+    exe = matugen_executable()
+    if not exe:
+        return fail("Pozadie je nastavené, ale matugen sa nenašiel.")
+    args = [str(arg).replace("{path}", str(image)) for arg in MATUGEN_ARGS]
+    try:
+        result = subprocess.run(
+            [exe, *args],
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.PIPE,
+            text=True,
+            timeout=120,
+            check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired) as error:
+        return fail(f"Matugen zlyhal: {error}")
+    if result.returncode:
+        return fail(f"Matugen zlyhal: {result.stderr.strip()[:300]}")
+    # Po nastavení farieb z obrázka už nie je aktívna žiadna "pevná" téma.
+    write_applied_theme(None)
+    return 0
+
+
+def apply_theme(theme_path):
+    """Nastaví tému cez `matugen json <theme_path>`. Tapeta sa nemení."""
+    exe = matugen_executable()
+    if not exe:
+        return fail("matugen sa nenašiel.")
+    try:
+        result = subprocess.run(
+            [exe, "json", str(theme_path)],
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.PIPE,
+            text=True,
+            timeout=120,
+            check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired) as error:
+        return fail(f"Matugen zlyhal: {error}")
+    if result.returncode:
+        return fail(f"Matugen zlyhal: {result.stderr.strip()[:300]}")
+    write_applied_theme(Path(theme_path).stem)
+    return 0
+
+
+def awww_running():
+    try:
+        result = subprocess.run(
+            [AWWW, "query"],
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            timeout=5,
+            check=False,
+        )
+        return result.returncode == 0
+    except (OSError, subprocess.TimeoutExpired):
+        return False
+
+
+def ensure_awww():
+    if awww_running():
+        return True, False
+    try:
+        subprocess.Popen(
+            [AWWW_DAEMON, "--no-cache"],
+            start_new_session=True,
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+    except OSError:
+        return False, False
+    deadline = time.monotonic() + DAEMON_TIMEOUT
+    while time.monotonic() < deadline:
+        time.sleep(DAEMON_POLL_INTERVAL)
+        if awww_running():
+            return True, True
+    return False, False
+
+
+def transition_args():
+    args = [
+        "--transition-type", str(TRANSITION_TYPE),
+        "--transition-duration", str(TRANSITION_DURATION),
+        "--transition-angle", str(TRANSITION_ANGLE),
+        "--transition-pos", str(TRANSITION_POS),
+        "--transition-wave", str(TRANSITION_WAVE),
+    ]
+    if TRANSITION_STEP is not None:
+        args += ["--transition-step", str(TRANSITION_STEP)]
+    return args
+
+
+def apply_wallpaper(image, remember=True, transition=True):
+    ready, daemon_started = ensure_awww()
+    if not ready:
+        raise RuntimeError(
+            "awww-daemon sa nespustil alebo neodpovedá. "
+            "Skontroluj, či sú awww a awww-daemon nainštalované."
+        )
+    if daemon_started:
+        transition = False
+    args = [AWWW, "img", str(image), "--resize", AWWW_RESIZE]
+    args += transition_args() if transition else ["--transition-type", "none"]
+    args += AWWW_EXTRA_ARGS
+    result = subprocess.run(
+        args,
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.PIPE,
+        text=True,
+        check=False,
+    )
+    if result.returncode:
+        raise RuntimeError(f"awww zlyhal: {result.stderr.strip()}")
+    if remember:
+        write_current(image)
+
+
+def available_wallpapers():
+    directory = expand(WALLPAPER_DIR)
+    if not directory.is_dir():
+        raise RuntimeError(f"Adresár s tapetami neexistuje: {directory}")
+    return sorted(
+        path for path in directory.iterdir()
+        if path.is_file() and path.suffix.lower() in IMAGE_EXTENSIONS
+    )
+
+
+def random_wallpaper():
+    images = available_wallpapers()
+    if not images:
+        raise RuntimeError(f"V adresári {expand(WALLPAPER_DIR)} nie sú tapety.")
+    current = read_current()
+    choices = [image for image in images if image != current] or images
+    return random.choice(choices)
+
+
+def command_random():
+    lock = acquire_lock()
+    if lock is None:
+        return 0
+    image = random_wallpaper()
+    apply_wallpaper(image)
+    print(f"Pozadie: {image}")
+    return run_matugen(image)
+
+
+def command_permanent():
+    lock = acquire_lock()
+    if lock is None:
+        return 0
+    image = read_current()
+    if image is None or not image.is_file():
+        print("Uložená tapeta chýba, vyberám náhodnú.", file=sys.stderr)
+        image = random_wallpaper()
+        apply_wallpaper(image)
+        print(f"Pozadie: {image}")
+        # pri nastavenej téme (existuje applied-theme) sa farby z náhradnej tapety negenerujú
+        if APPLIED_THEME_FILE.exists():
+            return 0
+        return run_matugen(image)
+    apply_wallpaper(image, transition=False)
+    print(f"Pozadie: {image}")
+    return 0
+
+
+def command_preview(path):
+    if not path:
+        return fail("Chýba cesta k obrázku: wallpaper -v CESTA")
+    image = expand(path).resolve()
+    if not image.is_file():
+        return fail(f"Obrázok neexistuje: {image}")
+    lock = acquire_lock(wait=True)
+    if lock is None:
+        return 1
+    apply_wallpaper(image, remember=False)
+    print(f"Pozadie: {image}")
+    return run_matugen(image)
+
+
+def command_background(path):
+    """wallpaper -w CESTA – nastaví len tapetu, farby ani tému nemení."""
+    if not path:
+        return fail("Chýba cesta k obrázku: wallpaper -w CESTA")
+    image = expand(path).resolve()
+    if not image.is_file():
+        return fail(f"Obrázok neexistuje: {image}")
+    lock = acquire_lock(wait=True)
+    if lock is None:
+        return 1
+    apply_wallpaper(image, remember=False)
+    print(f"Pozadie: {image}")
+    return 0
+
+
+def command_theme(path):
+    """wallpaper -t CESTA – nastaví tému z JSON súboru (iba farby)."""
+    if not path:
+        return fail("Chýba cesta k téme: wallpaper -t CESTA")
+    theme = expand(path).resolve()
+    if not theme.is_file():
+        return fail(f"Téma neexistuje: {theme}")
+    if theme.suffix.lower() != ".json":
+        return fail(f"Téma musí byť JSON súbor: {theme}")
+    lock = acquire_lock(wait=True)
+    if lock is None:
+        return 1
+    print(f"Téma: {theme}")
+    return apply_theme(theme)
+
+
+USAGE = """Použitie:
+wallpaper -r          nastaví náhodnú tapetu
+wallpaper -p          obnoví poslednú tapetu (po štarte)
+wallpaper -v CESTA    nastaví tapetu z obrázka (a farby z nej)
+wallpaper -w CESTA    nastaví len tapetu (bez matugenu, téma sa nemení)
+wallpaper -t CESTA    nastaví tému z JSON súboru (iba farby, tapeta sa nemení)
+wallpaper -h          zobrazí túto pomoc
+"""
+
+
+def main():
+    args = sys.argv[1:]
+    if not args or args in (["-h"], ["--help"]):
+        print(USAGE)
+        return 0
+    try:
+        if args[0] in ("-r", "--random") and len(args) == 1:
+            return command_random()
+        if args[0] in ("-p", "--permanent") and len(args) == 1:
+            return command_permanent()
+        if args[0] in ("-v", "--preview") and len(args) == 2:
+            return command_preview(args[1])
+        if args[0] in ("-w", "--background") and len(args) == 2:
+            return command_background(args[1])
+        if args[0] in ("-t", "--theme") and len(args) == 2:
+            return command_theme(args[1])
+        return fail("Neplatné argumenty.\n" + USAGE)
+    except (OSError, RuntimeError) as error:
+        return fail(str(error))
+
+
+if __name__ == "__main__":
+    sys.exit(main())

@@ -25,8 +25,22 @@ pub struct WallCfg {
     pub thumb_w: f32,
     /// skript, ktorý nastaví pozadie: `command -v CESTA`
     pub command: String,
-    /// stav (`current`) a náhľady (`thumbs/`)
+    /// stav (`current`, `applied-theme`) a náhľady (`thumbs/`)
     pub cache_dir: String,
+    /// adresár s témami (`*.json` pre `command -t`)
+    pub themes_dir: String,
+    /// šírka rozbaľovacej ponuky tém (px)
+    pub theme_width: f32,
+    /// tlačidlá v hlavičke (`buttonN_label` / `buttonN_command`; bez labelu sa tlačidlo nezobrazí)
+    pub buttons: Vec<WallButton>,
+    /// najväčšia šírka tlačidla (px); bez nej si tlačidlá rozdelia celý priestor
+    pub button_max_width: Option<f32>,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct WallButton {
+    pub label: String,
+    pub command: String,
 }
 
 impl WallCfg {
@@ -38,6 +52,15 @@ impl WallCfg {
             thumb_w: t.f64_or("thumb_width", 160.0).clamp(60.0, 600.0) as f32,
             command: t.str_or("command", "~/.config/wayfire/scripts/wallpaper"),
             cache_dir: t.str_or("cache_dir", "~/.cache/wallpaper-chooser"),
+            themes_dir: t.str_or("themes_directory", "~/.config/matugen/themes"),
+            theme_width: t.f64_or("theme_width", 170.0).clamp(80.0, 600.0) as f32,
+            buttons: (1..=16)
+                .filter_map(|i| {
+                    let label = t.str_or(&format!("button{i}_label"), "");
+                    (!label.trim().is_empty()).then(|| WallButton { label, command: t.str_or(&format!("button{i}_command"), "") })
+                })
+                .collect(),
+            button_max_width: Some(t.f64_or("button_max_width", 0.0)).filter(|w| *w > 0.0).map(|w| w.clamp(40.0, 1000.0) as f32),
         }
     }
 
@@ -45,6 +68,59 @@ impl WallCfg {
     pub fn thumb_size(&self) -> (f32, f32) {
         (self.thumb_w, (self.thumb_w * 9.0 / 16.0).round())
     }
+}
+
+/// Rozloženie hlavičky v rozsahu `x0..x0+w`: (x rollout ponuky, šírka rollout, [(x, šírka)] tlačidiel).
+/// Pri párnom počte tlačidiel (aj 0) je rollout v strede a tlačidlá sú rozdelené na polovice vľavo a vpravo,
+/// pri nepárnom je rollout vpravo a všetky tlačidlá vľavo. Tlačidlá sú rovnako široké; s `max_btn` sa radia
+/// zľava v svojej oblasti, bez neho vyplnia celú oblasť.
+pub fn header_layout(x0: f32, w: f32, rollout_w: f32, n: usize, max_btn: Option<f32>, gap: f32) -> (f32, f32, Vec<(f32, f32)>) {
+    let rw = rollout_w.min(w);
+    let centered = n % 2 == 0;
+    let rx = if centered { x0 + (w - rw) * 0.5 } else { x0 + w - rw };
+    let (left_cnt, right_cnt) = if centered { (n / 2, n / 2) } else { (n, 0) };
+    let mut v = Vec::new();
+    let mut place = |start: f32, end: f32, cnt: usize| {
+        if cnt == 0 {
+            return;
+        }
+        let avail = ((end - start).max(0.0) - (cnt as f32 - 1.0) * gap).max(0.0);
+        let mut bw = avail / cnt as f32;
+        if let Some(m) = max_btn {
+            bw = bw.min(m);
+        }
+        for k in 0..cnt {
+            v.push((start + k as f32 * (bw + gap), bw));
+        }
+    };
+    place(x0, rx - gap, left_cnt);
+    place(rx + rw + gap, x0 + w, right_cnt);
+    (rx, rw, v)
+}
+
+/// Témy z adresára: (názov bez `.json`, cesta), zoradené podľa názvu.
+pub fn list_themes(dir: &Path) -> Vec<(String, String)> {
+    let mut v: Vec<(String, String)> = match std::fs::read_dir(dir) {
+        Ok(rd) => rd
+            .filter_map(|e| e.ok())
+            .map(|e| e.path())
+            .filter(|p| p.is_file() && p.extension().and_then(|e| e.to_str()).map(|e| e.eq_ignore_ascii_case("json")).unwrap_or(false))
+            .filter_map(|p| Some((p.file_stem()?.to_string_lossy().into_owned(), p.to_string_lossy().into_owned())))
+            .collect(),
+        Err(_) => Vec::new(),
+    };
+    v.sort_by_key(|(n, _)| n.to_lowercase());
+    v
+}
+
+/// Názov aktuálne nastavenej témy zo súboru `applied-theme` (prázdny = režim „wallpaper“).
+pub fn read_applied_theme(cfg: &WallCfg) -> String {
+    std::fs::read_to_string(Path::new(&expand(&cfg.cache_dir)).join("applied-theme")).map(|s| s.trim().to_string()).unwrap_or_default()
+}
+
+/// Návrat do režimu „wallpaper“: zmaže zapamätanú tému (farby sa zmenia až pri ďalšom nastavení pozadia).
+pub fn clear_theme(cfg: &WallCfg) {
+    let _ = std::fs::remove_file(Path::new(&expand(&cfg.cache_dir)).join("applied-theme"));
 }
 
 /// Jeden obrázok v mriežke.
@@ -146,6 +222,7 @@ pub fn load(cfg: WallCfg, tx: Tx<Msg>) {
             .collect();
         let todo: Vec<usize> = (0..entries.len()).filter(|&i| !entries[i].ready).collect();
         let paths: Vec<(String, String)> = entries.iter().map(|e| (e.path.clone(), e.thumb.clone())).collect();
+        tx.send(Msg::WallThemes(list_themes(Path::new(&expand(&cfg.themes_dir))), read_applied_theme(&cfg)));
         tx.send(Msg::Wall(entries, read_current(&cfg)));
         for i in todo {
             let (src, dst) = &paths[i];
@@ -171,12 +248,13 @@ fn write_current(cfg: &WallCfg, path: &str) {
     }
 }
 
-/// Spustí `command -v CESTA` (notifikácie o chybách posiela skript); po úspechu zapíše `current`
-/// a pošle `Msg::WallCurrent`. Beží vo vlastnom vlákne, zmeny sa serializujú.
-pub fn apply(cfg: WallCfg, path: String, tx: Tx<Msg>) {
+/// Nastaví pozadie: `command -v CESTA` (pozadie + farby z obrázka) alebo `command -w CESTA` (`background_only`,
+/// pri vybranej téme). Notifikácie o chybách posiela skript; po úspechu sa zapíše `current` a príde `Msg::WallCurrent`.
+/// Beží vo vlastnom vlákne, zmeny sa serializujú.
+pub fn apply(cfg: WallCfg, path: String, background_only: bool, tx: Tx<Msg>) {
     std::thread::spawn(move || {
         let _g = APPLY_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-        let st = Command::new(expand(&cfg.command)).arg("-v").arg(&path).stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null()).status();
+        let st = Command::new(expand(&cfg.command)).arg(if background_only { "-w" } else { "-v" }).arg(&path).stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null()).status();
         match st {
             Ok(s) if s.success() => {
                 write_current(&cfg, &path);
@@ -188,10 +266,69 @@ pub fn apply(cfg: WallCfg, path: String, tx: Tx<Msg>) {
     });
 }
 
+/// Nastaví tému: `command -t CESTA` (skript zapíše `applied-theme`); po úspechu príde `Msg::WallTheme(názov)`.
+pub fn set_theme(cfg: WallCfg, name: String, path: String, tx: Tx<Msg>) {
+    std::thread::spawn(move || {
+        let _g = APPLY_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let st = Command::new(expand(&cfg.command)).arg("-t").arg(&path).stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null()).status();
+        match st {
+            Ok(s) if s.success() => tx.send(Msg::WallTheme(name)),
+            Ok(s) => notify_error(&format!("{} -t skončil s kódom {:?}", cfg.command, s.code())),
+            Err(e) => notify_error(&format!("{} sa nepodarilo spustiť: {e}", cfg.command)),
+        }
+    });
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::toml;
+
+    #[test]
+    fn header_layouts() {
+        // 0 tlačidiel: rollout v strede
+        let (rx, rw, b) = header_layout(0.0, 600.0, 200.0, 0, None, 10.0);
+        assert_eq!((rx, rw, b.len()), (200.0, 200.0, 0));
+        // 4 tlačidlá: 2 vľavo, rollout v strede, 2 vpravo; rovnaká šírka
+        let (rx, _, b) = header_layout(0.0, 600.0, 200.0, 4, None, 10.0);
+        assert_eq!(rx, 200.0);
+        assert_eq!(b.len(), 4);
+        assert!(b.iter().all(|(_, w)| (*w - 90.0).abs() < 0.01));
+        assert!((b[0].0 - 0.0).abs() < 0.01 && (b[1].0 - 100.0).abs() < 0.01 && (b[2].0 - 410.0).abs() < 0.01);
+        // 3 tlačidlá: rollout vpravo, všetky vľavo
+        let (rx, _, b) = header_layout(0.0, 600.0, 200.0, 3, None, 10.0);
+        assert_eq!(rx, 400.0);
+        assert_eq!(b.len(), 3);
+        assert!((b[0].1 - (390.0 - 20.0) / 3.0).abs() < 0.01);
+        // max šírka: tlačidlá sa radia zľava
+        let (_, _, b) = header_layout(0.0, 600.0, 200.0, 3, Some(60.0), 10.0);
+        assert!(b.iter().all(|(_, w)| *w == 60.0));
+        assert_eq!(b[1].0, 70.0);
+    }
+
+    #[test]
+    fn buttons_and_themes_config() {
+        let t = toml::parse("button1_label=\"GTK\"\nbutton1_command=\"nwg-look\"\nbutton3_label=\"Qt6\"\nbutton3_command=\"qt6ct\"\nbutton_max_width=120\n").unwrap();
+        let c = WallCfg::from_table(&t);
+        assert_eq!(c.buttons.len(), 2);
+        assert_eq!((c.buttons[1].label.as_str(), c.buttons[1].command.as_str()), ("Qt6", "qt6ct"));
+        assert_eq!(c.button_max_width, Some(120.0));
+        let d = WallCfg::from_table(&Table::new());
+        assert!(d.buttons.is_empty() && d.button_max_width.is_none());
+        assert_eq!(d.themes_dir, "~/.config/matugen/themes");
+    }
+
+    #[test]
+    fn themes_listing() {
+        let dir = std::env::temp_dir().join(format!("di-wall-themes-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        for n in ["Zima.json", "amber.json", "x.txt"] {
+            std::fs::write(dir.join(n), b"{}").unwrap();
+        }
+        let v = list_themes(&dir);
+        assert_eq!(v.iter().map(|(n, _)| n.as_str()).collect::<Vec<_>>(), ["amber", "Zima"]);
+        std::fs::remove_dir_all(&dir).ok();
+    }
 
     #[test]
     fn config_defaults() {

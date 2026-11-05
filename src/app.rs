@@ -86,7 +86,9 @@ fn run_action(a: Action, cfg: &Config, disk_tx: &Option<Tx<DiskCmd>>, tx: &Tx<Ms
         Action::Wifi(cmd) => crate::wifi::run(cmd, tx.clone()),
         Action::WifiPaste => crate::wifi::paste(tx.clone()),
         Action::WallLoad => crate::wallpaper::load(cfg.wall.clone(), tx.clone()),
-        Action::WallApply(path) => crate::wallpaper::apply(cfg.wall.clone(), path, tx.clone()),
+        Action::WallApply { path, background_only } => crate::wallpaper::apply(cfg.wall.clone(), path, background_only, tx.clone()),
+        Action::WallTheme(Some((name, path))) => crate::wallpaper::set_theme(cfg.wall.clone(), name, path, tx.clone()),
+        Action::WallTheme(None) => crate::wallpaper::clear_theme(&cfg.wall),
         Action::DiskEject(b) => {
             if let Some(t) = disk_tx {
                 t.send(DiskCmd::Eject(b));

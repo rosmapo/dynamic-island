@@ -83,6 +83,10 @@ pub enum Msg {
     WallThumb(usize, String),
     /// pozadie bolo úspešne nastavené (cesta)
     WallCurrent(String),
+    /// témy z adresára (názov, cesta) a názov aktuálne nastavenej (prázdny = režim „wallpaper“)
+    WallThemes(Vec<(String, String)>, String),
+    /// téma bola úspešne nastavená (názov)
+    WallTheme(String),
     /// stav Wi-Fi z NetworkManagera
     Wifi(crate::wifi::WifiState),
     /// stavová / chybová správa Wi-Fi panela (prázdna = vymazať)
