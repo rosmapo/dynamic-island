@@ -347,7 +347,7 @@ fn execute(c: &mut Conn, cmd: BtCmd, scan_ms: u64, tx: &Tx<Msg>) -> io::Result<(
                 .filter(|s| !s.is_empty())
                 .unwrap_or_else(|| "zariadenie".into());
             if !device_paired(c, &path) {
-                send_note(tx, c, &format!("Páram {name}…"));
+                send_note(tx, c, &format!("Párujem {name}…"));
                 if let Err(e) = c.call(BZ, &path, IF_DEVICE, "Pair", "", Vec::new()) {
                     return Err(other(&format!("párovanie zlyhalo: {e}")));
                 }
@@ -369,7 +369,7 @@ fn execute(c: &mut Conn, cmd: BtCmd, scan_ms: u64, tx: &Tx<Msg>) -> io::Result<(
         }
         BtCmd::Pair(path) => {
             ensure_agent();
-            send_note(tx, c, "Páram…");
+            send_note(tx, c, "Párujem…");
             c.call(BZ, &path, IF_DEVICE, "Pair", "", Vec::new())?;
             let _ = props_set_bool(c, &path, IF_DEVICE, "Trusted", true);
             std::thread::sleep(Duration::from_millis(400));

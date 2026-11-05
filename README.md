@@ -133,6 +133,12 @@ menu s `command = "module:clipboard"`. Zobrazí náhľady položiek (najnovšie 
 schránky a panel zavrie. Ak je položiek viac ako `rows`, panel sa skroluje kolieskom myši (vpravo je posuvník);
 zatvára sa odchodom myši ako kalendár. História sa musí plniť ako doteraz (`wl-paste --watch cliphist store`).
 
+**Vyhľadávanie ako v rofi** – bez vyhľadávacieho políčka: kým je panel otvorený, má ostrovček klávesnicu a písanie
+priamo filtruje zoznam (bez ohľadu na veľkosť písmen; viac slov oddelených medzerou musí sedieť naraz). Po písaní je
+vybratá prvá zhoda. Klávesy: **Enter** skopíruje vybranú položku, **↑/↓** (aj Tab, PgUp/PgDn, Home/End) menia výber,
+**Backspace** maže posledný znak, **Ctrl+U** zmaže celý filter, **Esc** panel zavrie. Kým je filter rozpísaný, panel sa
+odchodom myši nezatvorí. Ak filter nič nenájde, panel to napíše aj s hľadaným textom.
+
 ```toml
 [clipboard]
 font_size = 15      # veľkosť písma (px)

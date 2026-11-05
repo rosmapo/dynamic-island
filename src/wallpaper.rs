@@ -72,15 +72,15 @@ impl WallCfg {
 
 /// Rozloženie hlavičky v rozsahu `x0..x0+w`: (x rollout ponuky, šírka rollout, [(x, šírka)] tlačidiel).
 /// Pri párnom počte tlačidiel (aj 0) je rollout v strede a tlačidlá sú rozdelené na polovice vľavo a vpravo,
-/// pri nepárnom je rollout vpravo a všetky tlačidlá vľavo. Tlačidlá sú rovnako široké; s `max_btn` sa radia
-/// zľava v svojej oblasti, bez neho vyplnia celú oblasť.
+/// pri nepárnom je rollout vpravo a všetky tlačidlá vľavo. Tlačidlá sú rovnako široké; bez `max_btn` vyplnia
+/// celú svoju oblasť, s ním sa ľavá skupina radí od ľavého okraja a pravá je zarovnaná k pravému okraju.
 pub fn header_layout(x0: f32, w: f32, rollout_w: f32, n: usize, max_btn: Option<f32>, gap: f32) -> (f32, f32, Vec<(f32, f32)>) {
     let rw = rollout_w.min(w);
     let centered = n % 2 == 0;
     let rx = if centered { x0 + (w - rw) * 0.5 } else { x0 + w - rw };
     let (left_cnt, right_cnt) = if centered { (n / 2, n / 2) } else { (n, 0) };
     let mut v = Vec::new();
-    let mut place = |start: f32, end: f32, cnt: usize| {
+    let mut place = |start: f32, end: f32, cnt: usize, to_right: bool| {
         if cnt == 0 {
             return;
         }
@@ -89,12 +89,14 @@ pub fn header_layout(x0: f32, w: f32, rollout_w: f32, n: usize, max_btn: Option<
         if let Some(m) = max_btn {
             bw = bw.min(m);
         }
+        let total = cnt as f32 * bw + (cnt as f32 - 1.0) * gap;
+        let first = if to_right { end - total } else { start };
         for k in 0..cnt {
-            v.push((start + k as f32 * (bw + gap), bw));
+            v.push((first + k as f32 * (bw + gap), bw));
         }
     };
-    place(x0, rx - gap, left_cnt);
-    place(rx + rw + gap, x0 + w, right_cnt);
+    place(x0, rx - gap, left_cnt, false);
+    place(rx + rw + gap, x0 + w, right_cnt, true);
     (rx, rw, v)
 }
 
@@ -304,6 +306,13 @@ mod tests {
         let (_, _, b) = header_layout(0.0, 600.0, 200.0, 3, Some(60.0), 10.0);
         assert!(b.iter().all(|(_, w)| *w == 60.0));
         assert_eq!(b[1].0, 70.0);
+        // párny počet s max šírkou: ľavá skupina od ľavého okraja, pravá zarovnaná k pravému okraju (nie k rollout)
+        let (rx, rw, b) = header_layout(0.0, 600.0, 200.0, 4, Some(60.0), 10.0);
+        assert_eq!((rx, rw), (200.0, 200.0));
+        assert!(b.iter().all(|(_, w)| *w == 60.0));
+        assert_eq!((b[0].0, b[1].0), (0.0, 70.0));
+        assert_eq!((b[2].0, b[3].0), (470.0, 540.0));
+        assert_eq!(b[3].0 + b[3].1, 600.0);
     }
 
     #[test]

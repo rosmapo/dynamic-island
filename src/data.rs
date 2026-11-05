@@ -72,6 +72,24 @@ pub fn parse_clip_list(out: &str, max: usize) -> Vec<ClipEntry> {
         .collect()
 }
 
+/// Indexy položiek, ktoré vyhovujú filtru (ako v rofi): slová oddelené medzerou sa hľadajú ako podreťazce
+/// bez ohľadu na veľkosť písmen a všetky musia sedieť. Prázdny filter vráti všetky položky v pôvodnom poradí.
+pub fn clip_filter(entries: &[ClipEntry], query: &str) -> Vec<usize> {
+    let words: Vec<String> = query.split_whitespace().map(|w| w.to_lowercase()).collect();
+    entries
+        .iter()
+        .enumerate()
+        .filter(|(_, e)| {
+            if words.is_empty() {
+                return true;
+            }
+            let hay = e.text.to_lowercase();
+            words.iter().all(|w| hay.contains(w.as_str()))
+        })
+        .map(|(i, _)| i)
+        .collect()
+}
+
 #[derive(Debug)]
 pub enum Msg {
     Disks(Vec<DiskInfo>),
@@ -178,6 +196,18 @@ mod tests {
         assert_eq!(v[0], ClipEntry { raw: "12\thello   world".into(), text: "hello world".into() });
         assert_eq!(v[1].text, "[[ binary data 1 KiB png 10x10 ]]");
         assert_eq!(parse_clip_list("", 5), vec![]);
+    }
+    #[test]
+    fn clip_filtering() {
+        let e = |t: &str| ClipEntry { raw: format!("1\t{t}"), text: t.into() };
+        let v = vec![e("Hello World"), e("foo bar"), e("world of FOO"), e("ružová")];
+        assert_eq!(clip_filter(&v, ""), vec![0, 1, 2, 3]);
+        assert_eq!(clip_filter(&v, "   "), vec![0, 1, 2, 3]);
+        assert_eq!(clip_filter(&v, "WORLD"), vec![0, 2]);
+        assert_eq!(clip_filter(&v, "world foo"), vec![2]);
+        assert_eq!(clip_filter(&v, "foo  world"), vec![2]);
+        assert_eq!(clip_filter(&v, "ruž"), vec![3]);
+        assert_eq!(clip_filter(&v, "nič"), Vec::<usize>::new());
     }
     #[test]
     fn unescape() {

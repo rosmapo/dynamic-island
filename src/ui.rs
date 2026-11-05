@@ -228,6 +228,11 @@ pub struct Ui {
     clip_loaded: bool,
     clip_scroll: usize,
     clip_acc: f32,
+    /// filter písaný na klávesnici (bez políčka), indexy do `clip` vyhovujúce filtru a vybraná pozícia v nich
+    /// (`None` = klávesnicou nič nevybrané, zvýrazňuje sa len riadok pod myšou)
+    clip_query: String,
+    clip_view: Vec<usize>,
+    clip_sel: Option<usize>,
     /// modul wallpaper: obrázky, aktuálne pozadie, prvý viditeľný riadok mriežky, nazbieraný posun kolieska
     wall: Vec<crate::wallpaper::WallEntry>,
     wall_loaded: bool,
@@ -458,6 +463,9 @@ impl Ui {
             clip_loaded: false,
             clip_scroll: 0,
             clip_acc: 0.0,
+            clip_query: String::new(),
+            clip_view: Vec::new(),
+            clip_sel: None,
             wall: Vec::new(),
             wall_loaded: false,
             wall_current: String::new(),
@@ -540,8 +548,7 @@ impl Ui {
             Msg::Clip(v) => {
                 self.clip = v;
                 self.clip_loaded = true;
-                let max_start = self.clip.len().saturating_sub(self.cfg.clip_rows);
-                self.clip_scroll = self.clip_scroll.min(max_start);
+                self.clip_refilter();
             }
             Msg::Wall(v, current) => {
                 self.wall = v;
@@ -1237,6 +1244,9 @@ impl Ui {
             // pri každom otvorení znova načítať históriu (staré položky ostanú viditeľné, kým nepríde nová)
             self.clip_scroll = 0;
             self.clip_acc = 0.0;
+            self.clip_query.clear();
+            self.clip_sel = None;
+            self.clip_refilter();
             self.queued.push(Action::ClipLoad);
         }
         match p {
@@ -1435,18 +1445,122 @@ impl Ui {
         }
     }
 
-    /// Klávesnicu potrebujeme len pri zadávaní hesla.
-    pub fn wants_keyboard(&self) -> bool {
+    /// Prebieha zadávanie hesla Wi-Fi.
+    fn typing_password(&self) -> bool {
         self.panel == Panel::Wifi && self.wifi_pw.is_some()
     }
 
-    /// Klávesnicu sa nepodarilo použiť (chýba mapa kláves) – zadávanie hesla sa zruší.
+    /// Klávesnicu potrebujeme pri zadávaní hesla a pri otvorenom paneli schránky (filter).
+    pub fn wants_keyboard(&self) -> bool {
+        self.typing_password() || self.panel == Panel::Clip
+    }
+
+    /// Klávesnicu sa nepodarilo použiť (chýba mapa kláves) – zadávanie hesla sa zruší
+    /// (panel schránky funguje ďalej, len bez filtrovania písaním).
     pub fn keyboard_unavailable(&mut self) {
-        self.wifi_pw = None;
-        self.wifi_note = "Klávesnica nie je dostupná (pozri stderr)".into();
+        if self.typing_password() {
+            self.wifi_pw = None;
+            self.wifi_note = "Klávesnica nie je dostupná (pozri stderr)".into();
+        }
+    }
+
+    /// Prepočíta zoznam položiek schránky podľa filtra; výber a posun ostanú v platnom rozsahu.
+    fn clip_refilter(&mut self) {
+        self.clip_view = clip_filter(&self.clip, &self.clip_query);
+        let n = self.clip_view.len();
+        self.clip_sel = self.clip_sel.filter(|_| n > 0).map(|p| p.min(n - 1));
+        self.clip_scroll = self.clip_scroll.min(n.saturating_sub(self.cfg.clip_rows));
+    }
+
+    /// Po zmene filtra: späť na začiatok, vybraná je najlepšia (prvá) zhoda – Enter ju skopíruje.
+    fn clip_query_changed(&mut self) {
+        self.clip_scroll = 0;
+        self.clip_acc = 0.0;
+        self.clip_sel = None;
+        self.clip_refilter();
+        if !self.clip_view.is_empty() {
+            self.clip_sel = Some(0);
+        }
+        // pri písaní panel nezatvárame, ani keď myš odišla
+        self.collapse_at = None;
+    }
+
+    /// Posunie výber o `delta` riadkov a zoznam posunie tak, aby bol vybraný riadok viditeľný.
+    fn clip_move_sel(&mut self, delta: isize) {
+        let n = self.clip_view.len();
+        if n == 0 {
+            return;
+        }
+        // bez výberu sa ráta od „riadku pred prvým“, takže ↓ vyberie prvú položku
+        let base = match self.clip_sel {
+            Some(p) => p as isize,
+            None if delta > 0 => -1,
+            None => 0,
+        };
+        let p = (base + delta).clamp(0, n as isize - 1) as usize;
+        self.clip_sel = Some(p);
+        let rows = self.cfg.clip_rows;
+        if p < self.clip_scroll {
+            self.clip_scroll = p;
+        } else if p >= self.clip_scroll + rows {
+            self.clip_scroll = p + 1 - rows;
+        }
+        self.collapse_at = None;
+    }
+
+    /// Klávesy v otvorenom paneli schránky: písmená filtrujú, ↑/↓ menia výber, Enter skopíruje, Esc zavrie.
+    fn clip_key(&mut self, k: &crate::wl::KeyEvent) -> Vec<Action> {
+        let mut out = Vec::new();
+        match k.sym {
+            0xff1b => {
+                // Escape
+                self.set_panel(Panel::None);
+                self.collapse_at = None;
+            }
+            0xff0d | 0xff8d => {
+                // Enter: vybraná položka (po písaní prvá zhoda)
+                let pick = self.clip_sel.and_then(|p| self.clip_view.get(p)).and_then(|&i| self.clip.get(i));
+                if let Some(e) = pick {
+                    out.push(Action::ClipCopy(e.raw.clone()));
+                    self.set_panel(Panel::None);
+                    self.collapse_at = None;
+                }
+            }
+            0xff08 => {
+                // Backspace
+                if self.clip_query.pop().is_some() {
+                    self.clip_query_changed();
+                }
+            }
+            0xff52 => self.clip_move_sel(-1),
+            0xff54 | 0xff09 => self.clip_move_sel(1), // ↓, Tab
+            0xff55 => self.clip_move_sel(-(self.cfg.clip_rows as isize)),
+            0xff56 => self.clip_move_sel(self.cfg.clip_rows as isize),
+            0xff50 => self.clip_move_sel(isize::MIN / 2), // Home
+            0xff57 => self.clip_move_sel(isize::MAX / 2), // End
+            0x75 | 0x55 if k.ctrl => {
+                // Ctrl+U: zmazať filter
+                if !self.clip_query.is_empty() {
+                    self.clip_query.clear();
+                    self.clip_query_changed();
+                }
+            }
+            _ if !k.ctrl => {
+                let before = self.clip_query.len();
+                self.clip_query.extend(k.text.chars().filter(|c| !c.is_control()));
+                if self.clip_query.len() != before {
+                    self.clip_query_changed();
+                }
+            }
+            _ => {}
+        }
+        out
     }
 
     pub fn key(&mut self, k: &crate::wl::KeyEvent) -> Vec<Action> {
+        if self.panel == Panel::Clip {
+            return self.clip_key(k);
+        }
         self.wifi_pw_until = Some(Instant::now() + Duration::from_secs(WIFI_PW_IDLE_SECS));
         let mut out = Vec::new();
         let Some(pw) = &mut self.wifi_pw else { return out };
@@ -1495,7 +1609,7 @@ impl Ui {
 
     /// Počet riadkov panela schránky, ktoré sú práve vidieť.
     fn clip_rows(&self) -> usize {
-        self.cfg.clip_rows.min(self.clip.len()).max(1)
+        self.cfg.clip_rows.min(self.clip_view.len()).max(1)
     }
 
     fn toggle_clip(&mut self) {
@@ -1645,6 +1759,10 @@ impl Ui {
             return;
         }
         self.hover = h;
+        if matches!(h, Some(Hit::ClipItem(_))) {
+            // myš prebrala zvýrazňovanie – klávesnicový výber sa zruší, kým sa znova nepoužije
+            self.clip_sel = None;
+        }
         match h {
             Some(Hit::Item(i)) => {
                 self.collapse_at = None;
@@ -1678,8 +1796,8 @@ impl Ui {
         if self.grace.is_some() {
             return;
         }
-        // počas písania hesla panel nezatvárame (zavrie ho Esc / odoslanie)
-        if self.wants_keyboard() || self.audio_drag.is_some() || self.monitor_drag.is_some() {
+        // počas písania hesla panel nezatvárame (zavrie ho Esc / odoslanie); rovnako pri rozpísanom filtri schránky
+        if self.typing_password() || (self.panel == Panel::Clip && !self.clip_query.is_empty()) || self.audio_drag.is_some() || self.monitor_drag.is_some() {
             return;
         }
         match self.panel {
@@ -2146,7 +2264,7 @@ impl Ui {
             self.clip_acc += value;
             let rows = (self.clip_acc / CLIP_SCROLL_UNIT).trunc();
             self.clip_acc -= rows * CLIP_SCROLL_UNIT;
-            let max_start = self.clip.len().saturating_sub(self.cfg.clip_rows) as f32;
+            let max_start = self.clip_view.len().saturating_sub(self.cfg.clip_rows) as f32;
             self.clip_scroll = (self.clip_scroll as f32 + rows).clamp(0.0, max_start) as usize;
         }
     }
@@ -2540,13 +2658,21 @@ impl Ui {
         let (asc, desc) = text.line_metrics(px);
         let pad = CLIP_PAD * s;
         let row_h = (self.cfg.clip_font + CLIP_ROW_EXTRA) * s;
-        let n = self.clip.len();
+        let n = self.clip_view.len();
 
         if n == 0 {
-            let msg = if self.clip_loaded { "Schránka je prázdna" } else { "Načítavam…" };
-            let tw = text.measure(msg, px);
+            let msg = if !self.clip.is_empty() {
+                // filter nič nenašiel (písaný text sa nikde inde nezobrazuje, tak aspoň tu)
+                format!("Nič nenájdené pre „{}“", self.clip_query.trim())
+            } else if self.clip_loaded {
+                "Schránka je prázdna".to_string()
+            } else {
+                "Načítavam…".to_string()
+            };
+            let msg = Self::ellipsize(text, &msg, px, pill.w - 2.0 * pad);
+            let tw = text.measure(&msg, px);
             let cy = pill.y + pill.h * 0.5;
-            text.layout_to(&mut frame.content, msg, px, pill.x + (pill.w - tw) * 0.5, cy + (asc - desc) * 0.5, fade(t.fg, 0.7 * pa));
+            text.layout_to(&mut frame.content, &msg, px, pill.x + (pill.w - tw) * 0.5, cy + (asc - desc) * 0.5, fade(t.fg, 0.7 * pa));
             return;
         }
 
@@ -2558,11 +2684,16 @@ impl Ui {
         let cell_w = pill.w - 2.0 * pad - sb;
 
         for k in 0..rows {
-            let i = start + k;
+            let pos = start + k;
+            let i = self.clip_view[pos];
             let y = pill.y + pad + k as f32 * row_h;
             let cell = Rect::new(pill.x + pad, y, cell_w, row_h);
             self.hits.push((cell, Hit::ClipItem(i)));
-            let hov = self.hover == Some(Hit::ClipItem(i));
+            // zvýraznený je riadok vybraný klávesnicou, a ak nie je žiadny vybraný, riadok pod myšou
+            let hov = match self.clip_sel {
+                Some(p) => p == pos,
+                None => self.hover == Some(Hit::ClipItem(i)),
+            };
             let fg = if hov {
                 frame.content.push(Item::Rect { r: cell, radius: 10.0 * s, soft: 0.8, color: fade(t.menu_selected, pa) });
                 fade(t.menu_selected_text, pa)
