@@ -32,8 +32,8 @@ menu_selected_text = "@surface"   # text vybranej položky
 format = "%A  %d. %B,  %H:%M"
 locale = "sk_SK.UTF-8"
 on_click = "calendar"                        # kalendár sa rozbalí priamo v ostrovčeku
-on_click_right = "~/.config/wayfire/scripts/wallpaper -r"
-# on_click_middle = "dashboard"   
+on_click_middle = "~/.config/wayfire/scripts/wallpaper -r"
+on_click_right = "hardware"   
 
 [network]
 interface = "wlan0"
@@ -47,12 +47,28 @@ tooltip_wifi = ""
 # tooltip_ethernet = "Rozhranie: {ifname}\nIP adresa: {ip}\nBrána: {gateway}"
 # tooltip_disconnected = "Nepripojené"
 
+[hardware]
+tabs_position = "left"   # left | right | top | bottom
+tab_size = 44            # strana tlačidla záložky (px)
+icon_size = 22           # veľkosť ikony (px)
+width = 500            # celková šírka okna vrátane lišty; bez nej podľa aktívnej záložky
+# height = 420           # celková výška okna vrátane lišty; bez nej podľa najvyššej záložky
+# poradie a výber záložiek; ikona je Nerd Font glyf (chýbajúca = predvolená)
+tab1 = "audio"
+tab2 = "wifi"
+tab3 = "bluetooth"
+tab4 = "monitor"
+tab1_icon = ""
+tab2_icon = ""
+tab3_icon = ""
+tab4_icon = ""
+
 [wifi]
 font_size = 16
 rows = 8
 width = 500
 editor_command = "nm-connection-editor"
-editor_label = "Pripojenia   "		# Prázdny editor_command tlačidlo skryje.
+editor_label = ""		# Prázdny editor_command tlačidlo skryje.
 
 [vpn]
 interfaces = ["tun*"]
@@ -210,9 +226,16 @@ timeout = 600
 on_idle = "systemctl suspend"
 # on_resume = ""
 
+##### [[custom]]
+##### name = "ram"
+##### exec = "awk '/MemTotal/{t=$2} /MemAvailable/{a=$2} END{printf \"\uf2db %.1f GB\", (t-a)/1048576}' /proc/meminfo"
+##### interval = 5
+##### json = false
+##### tooltip = "Použitá pamäť"
+
 # [[custom]]
 # name = "sett"
-# text = ""
+# text = ""		# 
 # on_click = "settings"
 # on_click_right = "backup"
 
@@ -230,11 +253,11 @@ on_idle = "systemctl suspend"
 name = "sysmenu"
 # title = "Systémové nástroje a nastavenia"              # prázdne = bez nadpisu
 icon_columns = 5           # ikony
-text_columns = 3           # labely
-icon_size = 60
+text_columns = 2           # labely
+icon_size = 52
 text_size = 18
-cell_width = 140
-gap = 10
+cell_width = 170
+gap = 1
 padding = 12
 separator_thickness = 2
 separator_length = 0.6
@@ -256,41 +279,66 @@ icon = "timeshift.png"
 command = "timeshift-launcher"
 [[menu.item]]
 separator = true
-### Settings ###
+### Dashboard ###
 [[menu.item]]
-label = "Wayfire"
-command = "wcm"
+label = "CPU: {} %"
+exec = "~/.config/dynamic-island/scripts/cpu.sh"
+interval = 2
 [[menu.item]]
-label = "Gestures"
-command = "wstroke-config"
+label = "RAM: {} %"
+exec = "~/.config/dynamic-island/scripts/ram.sh"
+interval = 2
+
 [[menu.item]]
-label = "Firewall"
-command = "rungufw.sh"
+label = "↓ {}"
+exec = "~/.config/dynamic-island/scripts/net.sh down"
+interval = 2
 [[menu.item]]
-label = "Audio"
-command = "module:audio"
-[[menu.item]]
-label = "Bluetooth"
-command = "module:bluetooth"
-[[menu.item]]
-label = "Monitor"
-command = "module:monitor"
-[[menu.item]]
-label = "Wifi"
-command = "module:wifi"
-[[menu.item]]
-label = "MX Master"
-command = "solaar"
-[[menu.item]]
-label = "S.M.A.R.T"
-command = "QDiskInfo"
+label = "↑ {}"
+exec = "~/.config/dynamic-island/scripts/net.sh up"
+interval = 2
 [[menu.item]]
 separator = true
+
 [[menu.item]]
-label = "Themes"
-command = "module:wallpaper"
+label = "Root: {}"
+exec = "~/.config/dynamic-island/scripts/disk.sh /"   # uprav na svoj pripojný bod
+[[menu.item]]
+label = "Data: {}"
+exec = "~/.config/dynamic-island/scripts/disk.sh /media/mm/Data"   # uprav na svoj pripojný bod
+[[menu.item]]
+label = "{} %"
+exec = "~/.config/dynamic-island/scripts/disk2.sh /"   # uprav na svoj pripojný bod
+[[menu.item]]
+label = "{} %"
+exec = "~/.config/dynamic-island/scripts/disk2.sh /media/mm/Data"   # uprav na svoj pripojný bod
+[[menu.item]]
+label = "Efi: {}"
+exec = "~/.config/dynamic-island/scripts/disk.sh /boot/efi"
+[[menu.item]]
+label = "Backup: {}"
+exec = "~/.config/dynamic-island/scripts/disk.sh /media/mm/backup"   # uprav na svoj pripojný bod
+[[menu.item]]
+label = "{} %"
+exec = "~/.config/dynamic-island/scripts/disk2.sh /boot/efi"
+[[menu.item]]
+label = "{} %"
+exec = "~/.config/dynamic-island/scripts/disk2.sh /media/mm/backup"   # uprav na svoj pripojný bod
+
 [[menu.item]]
 separator = true
+
+#[[menu.item]]
+#label = "Teplota: {}"
+#exec = "~/.config/dynamic-island/scripts/temp.sh"
+#interval = 5
+[[menu.item]]
+label = "Kôš: {}"
+exec = "~/.config/dynamic-island/scripts/trash.sh"
+command = "/home/mm/.local/bin/trash"                               # voliteľné: klik otvorí kôš
+[[menu.item]]
+separator = true
+
 ### System Tools ###
 [[menu.item]]
 icon = "axagon.png"

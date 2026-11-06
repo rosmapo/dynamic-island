@@ -56,6 +56,10 @@ pub struct MenuItemCfg {
     pub icon: String,
     pub label: String,
     pub command: String,
+    /// Príkaz (alebo skript), ktorého prvý riadok výstupu sa zobrazí v položke (pozri `data::menu_item_text`).
+    pub exec: String,
+    /// Obnovovanie `exec` počas otvoreného menu v sekundách; 0 = spustí sa len raz pri otvorení menu.
+    pub interval: f64,
     /// Vlastný riadok s oddelovačom; `icon`/`label`/`command` sa ignorujú.
     pub separator: bool,
 }
@@ -82,6 +86,10 @@ pub struct MenuCfg {
     pub separator_thickness: f32,
     /// Dĺžka separátora ako podiel šírky obsahu (0.0–1.0).
     pub separator_length: f32,
+    /// Menu sa zobrazí až po načítaní všetkých položiek s `exec` (alebo po `wait_ms`); inak hneď s prázdnymi hodnotami.
+    pub wait_exec: bool,
+    /// Najdlhšie čakanie pri `wait_exec` (ms); potom sa menu zobrazí aj bez dokončených výstupov.
+    pub wait_ms: u64,
     pub items: Vec<MenuItemCfg>,
 }
 
@@ -183,6 +191,8 @@ pub struct Config {
     pub monitor: crate::monitor::MonitorCfg,
     /// panel bluetooth – `[bluetooth]`
     pub bluetooth: crate::bluetooth::BtCfg,
+    /// kontajner so záložkami audio / bluetooth / wifi / monitor – `[hardware]`
+    pub hw: crate::hardware::HwCfg,
     pub auto: AutoCfg,
 
     pub notif_enabled: bool,
@@ -331,11 +341,12 @@ impl Config {
                                 let icon = it.str_or("icon", "");
                                 let label = it.str_or("label", "");
                                 let command = it.str_or("command", "");
-                                if command.is_empty() && icon.is_empty() && label.is_empty() {
+                                let exec = it.str_or("exec", "");
+                                if command.is_empty() && icon.is_empty() && label.is_empty() && exec.is_empty() {
                                     continue;
                                 }
-                                // Buď icon, alebo label — nie oboje.
-                                let (icon, label) = if !icon.is_empty() {
+                                // Buď icon, alebo label — nie oboje; položka s `exec` je vždy textová (label = šablóna).
+                                let (icon, label) = if !icon.is_empty() && exec.is_empty() {
                                     (icon, String::new())
                                 } else {
                                     (String::new(), label)
@@ -344,6 +355,8 @@ impl Config {
                                     icon,
                                     label,
                                     command,
+                                    exec,
+                                    interval: it.f64_or("interval", 0.0).max(0.0),
                                     separator: false,
                                 });
                             }
@@ -357,7 +370,7 @@ impl Config {
                             // bez type: odvodiť podľa obsahu
                             let has_sep = items.iter().any(|it| it.separator);
                             let has_icon = items.iter().any(|it| !it.icon.is_empty());
-                            let has_label = items.iter().any(|it| !it.label.is_empty());
+                            let has_label = items.iter().any(|it| !it.label.is_empty() || !it.exec.is_empty());
                             if has_sep || (has_icon && has_label) {
                                 MenuKind::Hybrid
                             } else if has_label {
@@ -405,6 +418,8 @@ impl Config {
                         padding: m.f64_or("padding", 12.0).max(0.0) as f32,
                         separator_thickness: m.f64_or("separator_thickness", 1.5).max(0.5) as f32,
                         separator_length: m.f64_or("separator_length", 0.6).clamp(0.1, 1.0) as f32,
+                        wait_exec: m.bool_or("wait_exec", false),
+                        wait_ms: m.f64_or("wait_timeout_ms", 1500.0).clamp(100.0, 30_000.0) as u64,
                         items,
                     });
                 }
@@ -563,6 +578,7 @@ impl Config {
             audio_panel: crate::audio::AudioCfg::from_table(&audio),
             monitor: crate::monitor::MonitorCfg::from_table(&t.sub("monitor")),
             bluetooth: crate::bluetooth::BtCfg::from_table(&t.sub("bluetooth")),
+            hw: crate::hardware::HwCfg::from_table(&t.sub("hardware")),
             auto: AutoCfg {
                 enabled: auto.bool_or("enabled", true),
                 bar_height: auto.f64_or("bar_height", 40.0),

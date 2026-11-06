@@ -90,8 +90,33 @@ pub fn clip_filter(entries: &[ClipEntry], query: &str) -> Vec<usize> {
         .collect()
 }
 
+/// Z výstupu príkazu položky menu vyberie prvý neprázdny riadok (bez okrajových medzier a riadiacich znakov).
+pub fn menu_exec_line(raw: &str) -> String {
+    raw.lines()
+        .map(|l| l.chars().filter(|c| !c.is_control()).collect::<String>())
+        .map(|l| l.trim().to_string())
+        .find(|l| !l.is_empty())
+        .unwrap_or_default()
+}
+
+/// Text položky menu s `exec`. `out` = výstup príkazu (`None` = ešte nie je načítaný).
+/// Ak `label` obsahuje `{}`, je to šablóna a `{}` nahradí výstup (kým nie je načítaný, je prázdny, takže rozloženie
+/// ostane stabilné: `CPU: {} %` → `CPU:   %`). Inak sa do načítania zobrazuje `label` a potom samotný výstup.
+pub fn menu_item_text(label: &str, out: Option<&str>) -> String {
+    if label.contains("{}") {
+        label.replace("{}", out.unwrap_or(""))
+    } else {
+        match out {
+            Some(o) => o.to_string(),
+            None => label.to_string(),
+        }
+    }
+}
+
 #[derive(Debug)]
 pub enum Msg {
+    /// výstup príkazu `exec` položky menu: (generácia otvorenia menu, index položky, prvý riadok výstupu)
+    MenuExec(u64, usize, String),
     Disks(Vec<DiskInfo>),
     /// história schránky (najnovšie prvé)
     Clip(Vec<ClipEntry>),
@@ -196,6 +221,21 @@ mod tests {
         assert_eq!(v[0], ClipEntry { raw: "12\thello   world".into(), text: "hello world".into() });
         assert_eq!(v[1].text, "[[ binary data 1 KiB png 10x10 ]]");
         assert_eq!(parse_clip_list("", 5), vec![]);
+    }
+    #[test]
+    fn menu_exec_texts() {
+        assert_eq!(menu_exec_line("\n  \n  23 %  \nzvyšok\n"), "23 %");
+        assert_eq!(menu_exec_line("a\x1b[0mb"), "a[0mb");
+        assert_eq!(menu_exec_line(""), "");
+        assert_eq!(menu_exec_line("   \n\t\n"), "");
+        // šablóna: kým výstup nie je, `{}` je prázdne
+        assert_eq!(menu_item_text("CPU: {} %", None), "CPU:  %");
+        assert_eq!(menu_item_text("CPU: {} %", Some("23")), "CPU: 23 %");
+        // bez šablóny: label ako zástupný text, potom výstup
+        assert_eq!(menu_item_text("Kôš", None), "Kôš");
+        assert_eq!(menu_item_text("Kôš", Some("3 položky")), "3 položky");
+        assert_eq!(menu_item_text("", None), "");
+        assert_eq!(menu_item_text("Kôš", Some("")), "");
     }
     #[test]
     fn clip_filtering() {

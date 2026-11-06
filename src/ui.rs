@@ -47,6 +47,8 @@ pub enum Action {
     Bluetooth(crate::bluetooth::BtCmd),
     /// vložiť schránku do poľa hesla
     WifiPaste,
+    /// spustiť `exec` položky menu; výstup príde ako `Msg::MenuExec` (generácia = ktoré otvorenie menu)
+    MenuExec { gen: u64, idx: usize, cmd: String },
 }
 
 #[derive(Clone, Copy, PartialEq, Debug)]
@@ -96,6 +98,8 @@ enum Hit {
     BtDiscoverable,
     BtRefresh,
     BtEditor,
+    /// záložka kontajnera `hardware`
+    HwTab(usize),
     Panel,
 }
 
@@ -159,6 +163,11 @@ const DISK_HEAD: f32 = 40.0;
 const DISK_ROW: f32 = 46.0;
 const DISK_BOTTOM: f32 = 12.0;
 
+// kontajner hardware (logické px)
+const HW_BAR_PAD: f32 = 10.0; // okraj lišty okolo záložiek
+const HW_BAR_INSET: f32 = 6.0; // odsadenie podkladu lišty od okraja okna
+const HW_TAB_GAP: f32 = 6.0;
+
 // panel schránky (logické px)
 /// po koľkých sekundách bez stlačenia klávesu sa zadávanie hesla zruší
 const WIFI_PW_IDLE_SECS: u64 = 45;
@@ -197,6 +206,12 @@ pub struct Ui {
     panel: Panel,       // cieľový panel
     panel_shown: Panel, // panel, ktorý sa práve kreslí (kým sa zatvára)
     big: Panel,         // veľký panel nahrádzajúci ostrovček (kalendár / disky)
+    /// kontajner `hardware`: `big` je panel aktívnej záložky (`hw_tab`), okolo neho sa kreslí lišta;
+    /// rozmery okna sa menia pružinami, aby sa prepnutie záložky animovalo
+    hw: bool,
+    hw_tab: usize,
+    hw_w: Spring,
+    hw_h: Spring,
     panel_h: Spring,
     panel_w: Spring,
     panel_a: Spring,
@@ -224,6 +239,15 @@ pub struct Ui {
     notif_h: Spring,
     events: Vec<NotifEvent>,
     /// história schránky (najnovšie prvé), prvý viditeľný riadok, nazbieraný posun kolieska
+    /// položky menu s `exec`: výstupy (podľa indexu položky) otvoreného menu `menu_mi`; `None` = ešte nenačítané.
+    /// Nič sa neukladá medzi otvoreniami – pri každom otvorení sa začína prázdne.
+    menu_mi: usize,
+    menu_gen: u64,
+    menu_out: Vec<Option<String>>,
+    /// kedy sa má `exec` položky s `interval` > 0 spustiť znova (nastaví sa až po dobehnutí predošlého behu)
+    menu_due: Vec<Option<Instant>>,
+    /// `wait_exec`: menu `.0` sa otvorí, keď sú položky načítané alebo najneskôr v čase `.1`
+    menu_wait: Option<(usize, Instant)>,
     clip: Vec<ClipEntry>,
     clip_loaded: bool,
     clip_scroll: usize,
@@ -434,6 +458,10 @@ impl Ui {
             panel: Panel::None,
             panel_shown: Panel::None,
             big: Panel::Calendar,
+            hw: false,
+            hw_tab: 0,
+            hw_w: Spring::with(0.0, 240.0, 26.0),
+            hw_h: Spring::with(0.0, 240.0, 26.0),
             panel_h: Spring::with(0.0, 240.0, 26.0),
             panel_w: Spring::with(0.0, 240.0, 26.0),
             panel_a: Spring::with(0.0, 420.0, 42.0),
@@ -466,6 +494,11 @@ impl Ui {
             clip_query: String::new(),
             clip_view: Vec::new(),
             clip_sel: None,
+            menu_mi: 0,
+            menu_gen: 0,
+            menu_out: Vec::new(),
+            menu_due: Vec::new(),
+            menu_wait: None,
             wall: Vec::new(),
             wall_loaded: false,
             wall_current: String::new(),
@@ -543,6 +576,22 @@ impl Ui {
                 self.data.disks = d;
                 if self.data.disks.is_empty() && self.panel == Panel::Disks {
                     self.set_panel(Panel::None);
+                }
+            }
+            Msg::MenuExec(gen, idx, out) => {
+                // výstup z predošlého otvorenia menu sa ignoruje
+                if gen == self.menu_gen && idx < self.menu_out.len() {
+                    self.menu_out[idx] = Some(out);
+                    let interval = self.cfg.menus.get(self.menu_mi).and_then(|m| m.items.get(idx)).map_or(0.0, |it| it.interval);
+                    if interval > 0.0 {
+                        self.menu_due[idx] = Some(now + Duration::from_secs_f64(interval));
+                    }
+                    if let Some((mi, _)) = self.menu_wait {
+                        if mi == self.menu_mi && self.menu_ready() {
+                            self.set_panel(Panel::Menu(mi));
+                            self.start_grace(now);
+                        }
+                    }
                 }
             }
             Msg::Clip(v) => {
@@ -820,7 +869,13 @@ impl Ui {
         }
         let r_target = if self.panel != Panel::None || !self.notifs.is_empty() { self.cfg.radius_expanded } else { self.cfg.radius };
         self.radius.set(r_target);
-        for sp in [&mut self.panel_h, &mut self.panel_w, &mut self.panel_a, &mut self.radius, &mut self.hud_t, &mut self.hide, &mut self.notif_t, &mut self.notif_w, &mut self.notif_h, &mut self.cal_t] {
+        if self.hw_view() {
+            // okno kontajnera plynulo dobieha rozmer aktívnej záložky (aj pri zmene počtu zariadení)
+            let (w, h) = self.hw_target();
+            self.hw_w.set(w);
+            self.hw_h.set(h);
+        }
+        for sp in [&mut self.panel_h, &mut self.panel_w, &mut self.panel_a, &mut self.radius, &mut self.hud_t, &mut self.hide, &mut self.notif_t, &mut self.notif_w, &mut self.notif_h, &mut self.cal_t, &mut self.hw_w, &mut self.hw_h] {
             sp.step(dt);
             busy |= !sp.settled();
         }
@@ -1013,8 +1068,17 @@ impl Ui {
         self.cal_names = (0..7).map(|d| sys::strftime_str("%a", &sys::make_tm(2024, 0, 1 + d)).chars().take(2).collect()).collect();
     }
 
+    /// Veľkosť veľkého panela: pri kontajneri `hardware` okno s lištou, inak samotný panel.
     fn cal_size(&self) -> (f32, f32) {
-        match self.big {
+        if self.hw_view() {
+            return (self.hw_w.x, self.hw_h.x);
+        }
+        self.panel_dims(self.big)
+    }
+
+    /// Prirodzená veľkosť panela `p` (fyzické px).
+    fn panel_dims(&self, p: Panel) -> (f32, f32) {
+        match p {
             Panel::Disks => {
                 let n = self.data.disks.len().max(1) as f32;
                 (DISK_W * self.scale, (DISK_HEAD + n * DISK_ROW + DISK_BOTTOM) * self.scale)
@@ -1109,7 +1173,7 @@ impl Ui {
             match menu.kind {
                 MenuKind::Text => {
                     // text menu: všetky položky ako labely (label, alebo icon ako nerd-font glyf)
-                    if it.label.is_empty() && it.icon.is_empty() {
+                    if it.label.is_empty() && it.icon.is_empty() && it.exec.is_empty() {
                         continue;
                     }
                     labels.push(i);
@@ -1133,7 +1197,7 @@ impl Ui {
                         if icons.len() >= icon_cols {
                             flush_icons(&mut icons, &mut rows);
                         }
-                    } else if !it.label.is_empty() {
+                    } else if !it.label.is_empty() || !it.exec.is_empty() {
                         flush_icons(&mut icons, &mut rows);
                         labels.push(i);
                         if labels.len() >= text_cols {
@@ -1149,7 +1213,7 @@ impl Ui {
         if let Some(max_rows) = menu.rows {
             let only_icons = menu.kind == MenuKind::Icons
                 || (menu.kind == MenuKind::Hybrid
-                    && menu.items.iter().all(|it| it.separator || !it.icon.is_empty() || it.label.is_empty()));
+                    && menu.items.iter().all(|it| it.separator || !it.icon.is_empty() || (it.label.is_empty() && it.exec.is_empty())));
             if only_icons {
                 rows.truncate(max_rows);
             }
@@ -1196,9 +1260,14 @@ impl Ui {
     }
 
     fn set_panel(&mut self, p: Panel) {
+        // zmena panela ruší čakanie na výstupy menu (`wait_exec`)
+        self.menu_wait = None;
         self.panel = p;
         if p == Panel::None {
             self.grace = None;
+        } else {
+            // iný panel otvorený samostatne = už nie je v kontajneri (zatvorenie ho ponechá kvôli animácii)
+            self.hw = false;
         }
         if Self::is_big(p) {
             self.big = p;
@@ -1295,6 +1364,87 @@ impl Ui {
 
     fn is_big(p: Panel) -> bool {
         matches!(p, Panel::Calendar | Panel::Disks | Panel::Menu(_) | Panel::Clip | Panel::Wall | Panel::Wifi | Panel::Audio | Panel::Monitor | Panel::Bluetooth)
+    }
+
+    // ------------------------------------------- kontajner hardware
+
+    /// Panel, ktorý patrí modulu záložky (`audio` | `bluetooth` | `wifi` | `monitor`).
+    fn module_panel(name: &str) -> Option<Panel> {
+        match name {
+            "audio" => Some(Panel::Audio),
+            "bluetooth" => Some(Panel::Bluetooth),
+            "wifi" => Some(Panel::Wifi),
+            "monitor" => Some(Panel::Monitor),
+            _ => None,
+        }
+    }
+
+    /// Panel môže byť obsahom kontajnera `hardware`.
+    fn is_hw_inner(p: Panel) -> bool {
+        matches!(p, Panel::Audio | Panel::Bluetooth | Panel::Wifi | Panel::Monitor)
+    }
+
+    /// Veľký panel sa práve kreslí v kontajneri `hardware` (aj počas jeho zatvárania).
+    fn hw_view(&self) -> bool {
+        self.hw && Self::is_hw_inner(self.big)
+    }
+
+    /// Príkaz `hardware` (posledná záložka) alebo `hardware:MODUL` (konkrétna záložka): `Some(modul)` / `Some(None)`.
+    fn hardware_cmd(cmd: &str) -> Option<Option<&str>> {
+        let cmd = cmd.trim();
+        if cmd == "hardware" {
+            Some(None)
+        } else {
+            cmd.strip_prefix("hardware:").map(|m| Some(m.trim()))
+        }
+    }
+
+    fn hw_tab_index(&self, module: &str) -> Option<usize> {
+        self.cfg.hw.tabs.iter().position(|t| t.module == module)
+    }
+
+    /// Cieľová veľkosť okna kontajnera pre aktívnu záložku (fyzické px): výška podľa najvyššej záložky
+    /// (okno pri prepínaní nepodskakuje), šírka podľa aktívnej; `width` / `height` z configu to prebijú.
+    fn hw_target(&self) -> (f32, f32) {
+        let c = &self.cfg.hw;
+        let s = self.scale;
+        let inner_h = c.tabs.iter().filter_map(|t| Self::module_panel(&t.module)).map(|p| self.panel_dims(p).1).fold(0.0f32, f32::max);
+        let inner_w = self.panel_dims(self.big).0;
+        let tab = c.tab_size * s;
+        let bar_t = crate::hardware::bar_thickness(tab, HW_BAR_PAD * s);
+        let bar_l = crate::hardware::bar_length(c.tabs.len(), tab, HW_TAB_GAP * s, HW_BAR_PAD * s);
+        crate::hardware::window_size(c.pos, (inner_w, inner_h), bar_t, bar_l, c.width.map(|w| w * s), c.height.map(|h| h * s))
+    }
+
+    /// Otvorí kontajner `hardware` na záložke `tab` (`None` = naposledy použitá) alebo prepne záložku.
+    fn open_hardware(&mut self, tab: Option<usize>) {
+        let n = self.cfg.hw.tabs.len();
+        if n == 0 {
+            return;
+        }
+        let idx = tab.unwrap_or(self.hw_tab).min(n - 1);
+        let Some(p) = Self::module_panel(&self.cfg.hw.tabs[idx].module) else { return };
+        let fresh = !(self.hw && Self::is_hw_inner(self.panel));
+        // vyčistí príznak kontajnera a inicializuje panel záložky (načítanie, posun, rozpísané heslo…)
+        self.set_panel(p);
+        self.hw = true;
+        self.hw_tab = idx;
+        if fresh {
+            // pri otvorení okno nezačína od nuly – rozmer vyrastá z ostrovčeka ako pri iných paneloch
+            let (w, h) = self.hw_target();
+            self.hw_w.snap(w);
+            self.hw_h.snap(h);
+        }
+    }
+
+    /// Prepínač: otvorený kontajner (na tej istej záložke) zavrie, inak ho otvorí / prepne záložku.
+    fn toggle_hardware(&mut self, tab: Option<usize>) {
+        let open = self.hw && Self::is_hw_inner(self.panel);
+        if open && tab.map_or(true, |t| t == self.hw_tab) {
+            self.set_panel(Panel::None);
+        } else {
+            self.open_hardware(tab);
+        }
     }
 
     fn toggle_audio(&mut self) {
@@ -1642,8 +1792,70 @@ impl Ui {
     fn toggle_menu(&mut self, idx: usize) {
         if self.panel == Panel::Menu(idx) {
             self.set_panel(Panel::None);
+        } else if self.menu_wait.map_or(false, |w| w.0 == idx) {
+            // druhý klik počas čakania na výstupy (`wait_exec`) otváranie zruší
+            self.menu_wait = None;
         } else if idx < self.cfg.menus.len() {
-            self.set_panel(Panel::Menu(idx));
+            self.open_menu(idx);
+        }
+    }
+
+    /// Otvorí menu `mi`: spustí `exec` jeho položiek (výstupy sa začínajú prázdne, nič sa neukladá medzi otvoreniami)
+    /// a zobrazí ho hneď, alebo pri `wait_exec` až po načítaní výstupov (najneskôr po `wait_timeout_ms`).
+    fn open_menu(&mut self, mi: usize) {
+        let Some(m) = self.cfg.menus.get(mi) else { return };
+        let jobs: Vec<(usize, String)> = m.items.iter().enumerate().filter(|(_, it)| !it.exec.is_empty()).map(|(i, it)| (i, it.exec.clone())).collect();
+        let (n, wait, wait_ms) = (m.items.len(), m.wait_exec, m.wait_ms);
+        self.menu_gen = self.menu_gen.wrapping_add(1);
+        self.menu_mi = mi;
+        self.menu_out = vec![None; n];
+        self.menu_due = vec![None; n];
+        let wait = wait && !jobs.is_empty();
+        for (idx, cmd) in jobs {
+            self.queued.push(Action::MenuExec { gen: self.menu_gen, idx, cmd });
+        }
+        if wait {
+            // aktuálny panel ostáva, kým výstupy nedobehnú; akákoľvek zmena panela čakanie zruší
+            self.menu_wait = Some((mi, Instant::now() + Duration::from_millis(wait_ms)));
+        } else {
+            self.set_panel(Panel::Menu(mi));
+        }
+    }
+
+    /// Všetky položky s `exec` otvoreného menu majú načítaný výstup.
+    fn menu_ready(&self) -> bool {
+        let Some(m) = self.cfg.menus.get(self.menu_mi) else { return true };
+        m.items.iter().enumerate().all(|(i, it)| it.exec.is_empty() || self.menu_out.get(i).map_or(false, |o| o.is_some()))
+    }
+
+    /// Zobrazený text textovej položky menu (pri `exec` podľa výstupu, inak `label` / `icon`).
+    fn menu_item_label(&self, mi: usize, i: usize, it: &crate::config::MenuItemCfg) -> String {
+        if it.exec.is_empty() {
+            return if !it.label.is_empty() { it.label.clone() } else { it.icon.clone() };
+        }
+        let out = if mi == self.menu_mi { self.menu_out.get(i).and_then(|o| o.as_deref()) } else { None };
+        menu_item_text(&it.label, out)
+    }
+
+    /// Znovu spustí `exec` položiek s `interval` > 0, kým je menu otvorené a predošlý beh dobehol.
+    fn menu_refresh(&mut self, now: Instant) {
+        let Panel::Menu(mi) = self.panel else { return };
+        if mi != self.menu_mi {
+            return;
+        }
+        let jobs: Vec<(usize, String)> = match self.cfg.menus.get(mi) {
+            Some(m) => m
+                .items
+                .iter()
+                .enumerate()
+                .filter(|(i, it)| it.interval > 0.0 && !it.exec.is_empty() && self.menu_due.get(*i).copied().flatten().map_or(false, |t| now >= t))
+                .map(|(i, it)| (i, it.exec.clone()))
+                .collect(),
+            None => return,
+        };
+        for (idx, cmd) in jobs {
+            self.menu_due[idx] = None;
+            self.queued.push(Action::MenuExec { gen: self.menu_gen, idx, cmd });
         }
     }
 
@@ -1703,6 +1915,15 @@ impl Ui {
                 }
             }
         }
+        // `wait_exec`: výstupy nedobehli včas – menu sa otvorí s tým, čo je
+        if let Some((mi, t)) = self.menu_wait {
+            if now >= t {
+                self.set_panel(Panel::Menu(mi));
+                self.start_grace(now);
+                changed = true;
+            }
+        }
+        self.menu_refresh(now);
         changed
     }
 
@@ -1721,7 +1942,20 @@ impl Ui {
     }
 
     pub fn next_deadline(&self) -> Option<Instant> {
-        [self.hud_until, self.collapse_at, self.wifi_pw.as_ref().and(self.wifi_pw_until), self.tip_pending.map(|t| t.1), self.notifs.iter().filter_map(|n| n.expires).min()].into_iter().flatten().min()
+        // najbližšie obnovenie položky menu s `interval` (len kým je to menu otvorené)
+        let menu_due = if self.panel == Panel::Menu(self.menu_mi) { self.menu_due.iter().flatten().min().copied() } else { None };
+        [
+            self.hud_until,
+            self.collapse_at,
+            self.wifi_pw.as_ref().and(self.wifi_pw_until),
+            self.tip_pending.map(|t| t.1),
+            self.notifs.iter().filter_map(|n| n.expires).min(),
+            self.menu_wait.map(|w| w.1),
+            menu_due,
+        ]
+        .into_iter()
+        .flatten()
+        .min()
     }
 
     // ------------------------------------------------------- ukazovateľ
@@ -1812,6 +2046,7 @@ impl Ui {
     fn action_for(cmd: &str) -> Option<Action> {
         match cmd {
             "" | "calendar" | "menu" | "clipboard" | "wallpaper" | "wifi" | "audio" | "monitor" | "bluetooth" => None,
+            c if Self::hardware_cmd(c).is_some() => None,
             "eject-all" => Some(Action::DiskEjectAll),
             "inhibit-toggle" => Some(Action::InhibitToggle),
             "layout-toggle" => Some(Action::LayoutToggle),
@@ -1862,9 +2097,15 @@ impl Ui {
                 self.set_panel(Panel::Bluetooth);
                 None
             }
+            // `hardware` = kontajner so záložkami (posledná záložka), `hardware:wifi` = rovno konkrétna záložka
+            other if Self::hardware_cmd(other).is_some() => {
+                let tab = Self::hardware_cmd(other).flatten().and_then(|m| self.hw_tab_index(m));
+                self.open_hardware(tab);
+                None
+            }
             other => match self.menu_index(other) {
                 Some(mi) => {
-                    self.set_panel(Panel::Menu(mi));
+                    self.open_menu(mi);
                     None
                 }
                 None => Self::action_for(other).filter(|a| !matches!(a, Action::Run(_))),
@@ -1961,6 +2202,12 @@ impl Ui {
                     self.toggle_wall();
                     self.collapse_at = None;
                     self.start_grace(now);
+                } else if let Some(arg) = Self::hardware_cmd(&cmd) {
+                    self.tip_pending = None;
+                    let tab = arg.and_then(|m| self.hw_tab_index(m));
+                    self.toggle_hardware(tab);
+                    self.collapse_at = None;
+                    self.start_grace(now);
                 } else if let Some(mi) = self.menu_index(&cmd) {
                     self.tip_pending = None;
                     self.toggle_menu(mi);
@@ -1993,6 +2240,11 @@ impl Ui {
                     }
                     self.set_panel(Panel::None);
                     self.collapse_at = None;
+                }
+            }
+            Hit::HwTab(i) => {
+                if button == BTN_LEFT && i != self.hw_tab {
+                    self.open_hardware(Some(i));
                 }
             }
             Hit::WifiToggle => {
@@ -2466,15 +2718,17 @@ impl Ui {
         // ---- kalendár / disky / menu (nahrádza obsah ostrovčeka)
         if ct > 0.01 {
             self.hits.push((pill, Hit::Panel));
+            // v kontajneri `hardware` sa panel kreslí do zvyšku okna vedľa lišty so záložkami
+            let content = if self.hw_view() { self.build_hw_bar(&mut frame, text, pill, ct) } else { pill };
             match self.big {
-                Panel::Disks => self.build_disks(&mut frame, text, pill, ct),
-                Panel::Menu(mi) => self.build_menu(&mut frame, text, pill, mi, ct),
-                Panel::Clip => self.build_clip(&mut frame, text, pill, ct),
-                Panel::Wall => self.build_wall(&mut frame, text, pill, ct),
-                Panel::Wifi => self.build_wifi(&mut frame, text, pill, ct),
-                Panel::Audio => self.build_audio(&mut frame, text, pill, ct),
-                Panel::Monitor => self.build_monitor(&mut frame, text, pill, ct),
-                Panel::Bluetooth => self.build_bluetooth(&mut frame, text, pill, ct),
+                Panel::Disks => self.build_disks(&mut frame, text, content, ct),
+                Panel::Menu(mi) => self.build_menu(&mut frame, text, content, mi, ct),
+                Panel::Clip => self.build_clip(&mut frame, text, content, ct),
+                Panel::Wall => self.build_wall(&mut frame, text, content, ct),
+                Panel::Wifi => self.build_wifi(&mut frame, text, content, ct),
+                Panel::Audio => self.build_audio(&mut frame, text, content, ct),
+                Panel::Monitor => self.build_monitor(&mut frame, text, content, ct),
+                Panel::Bluetooth => self.build_bluetooth(&mut frame, text, content, ct),
                 _ => self.build_calendar(&mut frame, text, pill, pill.y, ct),
             }
         }
@@ -2500,6 +2754,45 @@ impl Ui {
             }
         }
         frame
+    }
+
+    /// Lišta so záložkami kontajnera `hardware`; vráti obdĺžnik pre obsah (zvyšok okna).
+    fn build_hw_bar(&mut self, frame: &mut Frame, text: &mut Text, pill: Rect, pa: f32) -> Rect {
+        use crate::hardware as hw;
+        let s = self.scale;
+        let t = self.theme;
+        let c = &self.cfg.hw;
+        let (pos, n, tab, active) = (c.pos, c.tabs.len(), c.tab_size * s, self.hw_tab);
+        let icon_px = c.icon_size * s;
+        let icons: Vec<String> = c.tabs.iter().map(|x| x.icon.clone()).collect();
+        let bar_t = hw::bar_thickness(tab, HW_BAR_PAD * s);
+        let ((bx, by, bw, bh), (cx, cy, cw, ch)) = hw::split(pos, (pill.x, pill.y, pill.w, pill.h), bar_t);
+
+        // podklad lišty
+        let inset = HW_BAR_INSET * s;
+        let back = Rect::new(bx + inset, by + inset, (bw - 2.0 * inset).max(0.0), (bh - 2.0 * inset).max(0.0));
+        frame.content.push(Item::Rect { r: back, radius: (tab * 0.5).min(back.w * 0.5).min(back.h * 0.5), soft: 0.8, color: fade(t.fg, 0.07 * pa) });
+
+        let (asc, desc) = text.line_metrics(icon_px);
+        for (i, (rx, ry, rw, rh)) in hw::tab_rects(pos, (bx, by, bw, bh), n, tab, HW_TAB_GAP * s, HW_BAR_PAD * s).into_iter().enumerate() {
+            let r = Rect::new(rx, ry, rw, rh);
+            self.hits.push((r, Hit::HwTab(i)));
+            let on = i == active;
+            let hov = self.hover == Some(Hit::HwTab(i));
+            let fg = if on {
+                frame.content.push(Item::Rect { r, radius: rh * 0.32, soft: 0.8, color: fade(t.menu_selected, pa) });
+                t.menu_selected_text
+            } else {
+                if hov {
+                    frame.content.push(Item::Rect { r, radius: rh * 0.32, soft: 0.8, color: fade(t.accent, 0.25 * pa) });
+                }
+                t.fg
+            };
+            let icon = &icons[i];
+            let iw = text.measure(icon, icon_px);
+            text.layout_to(&mut frame.content, icon, icon_px, r.x + (r.w - iw) * 0.5, r.y + r.h * 0.5 + (asc - desc) * 0.5, fade(fg, pa));
+        }
+        Rect::new(cx, cy, cw, ch)
     }
 
     fn build_menu(&mut self, frame: &mut Frame, text: &mut Text, pill: Rect, mi: usize, pa: f32) {
@@ -2558,8 +2851,12 @@ impl Ui {
                     for (c, &i) in indices.iter().enumerate() {
                         let x = row_left + c as f32 * (icon_cell + gap);
                         let cell = Rect::new(x, y, icon_cell, icon_cell);
-                        let hov = self.hover == Some(Hit::MenuItem(i));
-                        self.hits.push((cell, Hit::MenuItem(i)));
+                        // položka bez `command` je len na zobrazenie: bez hoveru a bez reakcie na klik
+                        let clickable = menu.items.get(i).map_or(false, |it| !it.command.is_empty());
+                        let hov = clickable && self.hover == Some(Hit::MenuItem(i));
+                        if clickable {
+                            self.hits.push((cell, Hit::MenuItem(i)));
+                        }
                         if hov {
                             frame.content.push(Item::Rect {
                                 r: cell,
@@ -2595,8 +2892,12 @@ impl Ui {
                     for (c, &i) in indices.iter().enumerate() {
                         let x = row_left + c as f32 * (label_cell_w + gap);
                         let cell = Rect::new(x, y, label_cell_w, label_h);
-                        let hov = self.hover == Some(Hit::MenuItem(i));
-                        self.hits.push((cell, Hit::MenuItem(i)));
+                        // položka bez `command` je len na zobrazenie: bez hoveru a bez reakcie na klik
+                        let clickable = menu.items.get(i).map_or(false, |it| !it.command.is_empty());
+                        let hov = clickable && self.hover == Some(Hit::MenuItem(i));
+                        if clickable {
+                            self.hits.push((cell, Hit::MenuItem(i)));
+                        }
                         let (bg_col, fg_col) = if hov {
                             (fade(t.menu_selected, pa), fade(t.menu_selected_text, pa))
                         } else {
@@ -2611,14 +2912,10 @@ impl Ui {
                             });
                         }
                         if let Some(it) = menu.items.get(i) {
-                            let label = if !it.label.is_empty() {
-                                it.label.as_str()
-                            } else {
-                                it.icon.as_str()
-                            };
+                            let label = self.menu_item_label(mi, i, it);
                             if !label.is_empty() {
                                 let maxw = label_cell_w - 12.0 * s;
-                                let shown = Self::ellipsize(text, label, text_px, maxw);
+                                let shown = Self::ellipsize(text, &label, text_px, maxw);
                                 let tw = text.measure(&shown, text_px);
                                 let cx = x + (label_cell_w - tw) * 0.5;
                                 let cy = y + label_h * 0.5;

@@ -68,8 +68,66 @@ fn spawn_with_stdin(cmd: &str, input: String) {
     }
 }
 
+/// Najdlhší čas, ktorý má príkaz `exec` položky menu na dokončenie; potom sa ukončí a výstup ostane prázdny.
+const MENU_EXEC_TIMEOUT: Duration = Duration::from_secs(5);
+
+/// Spustí `cmd` cez `sh -c` a vráti jeho štandardný výstup (blokuje, volať z vlákna). Pri prekročení `timeout`
+/// príkaz ukončí a vráti prázdny reťazec.
+fn run_capture(cmd: &str, timeout: Duration) -> String {
+    use std::io::Read;
+    let mut c = Command::new("sh");
+    c.arg("-c").arg(cmd).stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::null());
+    unsafe {
+        c.pre_exec(|| {
+            sys::die_with_parent();
+            Ok(())
+        });
+    }
+    let Ok(mut child) = c.spawn() else { return String::new() };
+    let Some(mut out) = child.stdout.take() else { return String::new() };
+    // čítanie v samostatnom vlákne po kúskoch: potomok, ktorý by držal rúru otvorenú, nás nezablokuje
+    // a už prečítaný výstup nestratíme
+    let (rtx, rrx) = std::sync::mpsc::channel::<Vec<u8>>();
+    std::thread::spawn(move || {
+        let mut buf = [0u8; 4096];
+        while let Ok(n) = out.read(&mut buf) {
+            if n == 0 || rtx.send(buf[..n].to_vec()).is_err() {
+                break;
+            }
+        }
+    });
+    let start = Instant::now();
+    let finished = loop {
+        match child.try_wait() {
+            Ok(Some(_)) => break true,
+            Ok(None) if start.elapsed() < timeout => std::thread::sleep(Duration::from_millis(15)),
+            _ => break false,
+        }
+    };
+    if !finished {
+        let _ = child.kill();
+        let _ = child.wait();
+        return String::new();
+    }
+    // príkaz skončil: pozbierať, čo prišlo (koniec rúry alebo najviac 300 ms čakania na potomkov)
+    let mut all = Vec::new();
+    let until = Instant::now() + Duration::from_millis(300);
+    while let Ok(chunk) = rrx.recv_timeout(until.saturating_duration_since(Instant::now())) {
+        all.extend_from_slice(&chunk);
+    }
+    String::from_utf8_lossy(&all).into_owned()
+}
+
 fn run_action(a: Action, cfg: &Config, disk_tx: &Option<Tx<DiskCmd>>, tx: &Tx<Msg>) {
     match a {
+        Action::MenuExec { gen, idx, cmd } => {
+            // výstup príde na pozadí ako `Msg::MenuExec`; hlavná slučka medzitým nečaká
+            let tx = tx.clone();
+            std::thread::spawn(move || {
+                let raw = run_capture(&cmd, MENU_EXEC_TIMEOUT);
+                tx.send(Msg::MenuExec(gen, idx, crate::data::menu_exec_line(&raw)));
+            });
+        }
         Action::ClipLoad => {
             // história sa načíta na pozadí, hlavná slučka dostane `Msg::Clip`
             let (cmd, max, tx) = (cfg.clip_list.clone(), cfg.clip_max, tx.clone());
@@ -214,6 +272,10 @@ pub fn run(cfg: Config) -> Result<(), String> {
         }
         if ui.tick(now) {
             dirty = true;
+        }
+        // akcie vzniknuté časovačom (obnovenie položiek menu s `interval`)
+        for a in ui.take_queued() {
+            run_action(a, &cfg, &disk_tx, &tx);
         }
 
         // koľko môžeme spať

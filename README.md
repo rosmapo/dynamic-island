@@ -151,6 +151,29 @@ max_items = 200     # najviac koľko najnovších položiek sa načíta
 
 Vybraná (hover) položka používa farby `menu_selected` / `menu_selected_text` z `[colors]` (pozri nižšie).
 
+## Hardware (záložky)
+
+Kontajner, ktorý obalí štyri panely – audio, bluetooth, wifi a monitor – lištou so záložkami. Panely sú tie isté ako pri
+samostatnom otvorení (`on_click = "wifi"` a pod. fungujú ďalej), kontajner len pridá lištu s ikonami a prepínanie bez
+zatvárania. Otvára sa akciou `hardware` (naposledy použitá záložka) alebo `hardware:audio` / `hardware:bluetooth` /
+`hardware:wifi` / `hardware:monitor` (konkrétna záložka) – ako `on_click*` ľubovoľného modulu, alebo v menu cez
+`module:hardware`. Opakovaný klik na tú istú záložku kontajner zavrie.
+
+    [hardware]
+    tabs_position = "left"   # left | right | top | bottom
+    tab_size = 44
+    icon_size = 22
+    # width = 560            # celková šírka vrátane lišty; bez nej sa šírka mení podľa aktívnej záložky
+    # height = 420           # celková výška vrátane lišty; bez nej podľa najvyššej záložky (okno pri prepínaní neskáče)
+    tab1 = "audio"
+    tab1_icon = ""     # Nerd Font glyf; bez nej predvolená
+    tab2 = "wifi"            # poradie a výber záložiek (`tab1` … `tab8`)
+
+Panel záložky je zarovnaný hore, pätička (ovládacie tlačidlá) dole; ak je okno vyššie než obsah, medzi nimi ostane
+voľné miesto. Ikony sa berú z `icon_family`. Predvolené sú `f057e` (audio), `f00af` (bluetooth), `f0928` (wifi) a
+`f0379` (monitor); ak máš nainštalovanú len podmnožinu Nerd Fontu (napr. `SymbolsNerdFontMono-Mini.ttf` z `config/fonty`),
+glyfy `f00af` a `f0379` v nej nie sú a ikona sa nezobrazí – doplň ich do podmnožiny, alebo nastav vlastné `tabN_icon`.
+
 ## Wi-Fi
 
 Panel nad **NetworkManagerom** (D-Bus, systémová zbernica). Otvorí sa `on_click = "wifi"` na ľubovoľnom module
@@ -241,6 +264,50 @@ text = "󰍜"
 on_click = "apps"
 ```
 
+### Položky s `exec` (textový dashboard)
+
+Položka textového menu môže namiesto pevného textu zobrazovať **prvý neprázdny riadok výstupu** príkazu alebo skriptu
+(`exec`). Text sa kreslí ako `label` (rovnaké `text_size`, `cell_width`, `text_columns`, vycentrovaný), takže z menu sa dá
+poskladať jednoduchý dashboard.
+
+- **`label` ako šablóna:** ak obsahuje `{}`, nahradí sa výstupom (`label = "CPU: {} %"`). Kým výstup nie je načítaný, je `{}`
+  prázdne, takže rozloženie ostane rovnaké (`CPU:   %`). Bez `{}` sa do načítania zobrazí `label` a potom samotný výstup.
+- **`interval`** (sekundy): `0` (predvolené) = príkaz sa spustí raz pri otvorení menu; `> 0` = obnovuje sa, kým je menu
+  otvorené (nový beh sa spustí až po dobehnutí predošlého, takže sa nenakopia).
+- **Nič sa neukladá medzi otvoreniami**: pri každom otvorení menu sa hodnoty začínajú prázdne, aby sa nezobrazila
+  zastaraná hodnota z minula.
+- **`wait_exec`** (voľba menu, predvolene `false`): `false` = menu sa zobrazí hneď a hodnoty sa doplnia, keď dobehnú;
+  `true` = menu sa zobrazí až po načítaní všetkých položiek s `exec`, najneskôr po `wait_timeout_ms` (predvolene 1500).
+  Počas čakania ostrovček nič nezobrazuje; ďalší klik na modul alebo iný panel otváranie zruší.
+- **Prázdny `command`** = položka je len na zobrazenie: bez hoveru a bez reakcie na klik (platí pre všetky položky menu).
+- Príkaz beží cez `sh -c` (skript musí byť spustiteľný, alebo `bash ~/skript.sh`) najviac 5 sekúnd, potom sa ukončí
+  a hodnota ostane prázdna. Berie sa len prvý neprázdny riadok, bez riadiacich znakov (ANSI farby nie sú podporené).
+
+```toml
+[[menu]]
+name = "dashboard"
+type = "text"
+text_columns = 2
+cell_width = 150
+text_size = 16
+wait_exec = false
+
+[[menu.item]]
+label = "CPU: {} %"
+exec = "~/.config/dynamic-island/scripts/cpu.sh"
+interval = 2
+
+[[menu.item]]
+label = "RAM: {} %"
+exec = "~/.config/dynamic-island/scripts/ram.sh"
+interval = 2
+
+[[menu.item]]
+label = "Kôš: {}"
+exec = "~/.config/dynamic-island/scripts/trash.sh"   # vypíše napr. "3 položky" alebo "prázdny"; bez interval = raz pri otvorení
+command = "xdg-open trash:///"                        # voliteľné: klik otvorí kôš (bez command je položka len informačná)
+```
+
 ### Príkaz `module:` v položke menu
 
 `command` položky je bežne shell príkaz. S predponou `module:` sa namiesto toho spustí vnútorná akcia ostrovčeka –
@@ -253,6 +320,9 @@ menu sa zatvorí a otvorí sa požadovaný panel (alebo sa vykoná akcia):
 | `"module:power"` | otvorí sa iné menu s `name = "power"` (ľubovoľné `[[menu]]`) |
 | `"module:disks"` | zoznam diskov (len ak je niečo pripojené) |
 | `"module:audio-mute"`, `module:layout-toggle`, `module:inhibit-toggle`, `module:eject-all` | vstavané akcie ako pri `on_click` modulov |
+
+| `"module:hardware"` | kontajner `hardware` so záložkami (naposledy použitá záložka) |
+| `"module:hardware:wifi"` | kontajner rovno na záložke `wifi` (`audio`, `bluetooth`, `wifi`, `monitor`) |
 
 Neznámy názov sa ignoruje (menu sa len zavrie).
 
