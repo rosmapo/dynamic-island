@@ -3348,7 +3348,20 @@ impl Ui {
         // ---- pätka: hláška o poslednej operácii, inak počet položiek a vybraných
         let foot_h = (c.font * 0.85 + 8.0) * s;
         let fy = list_y + rows as f32 * row_h + gap;
-        let msg = if !self.trash_note.is_empty() {
+        // hover nad riadkom: pôvodná cesta položky (len kým je myš nad riadkom; počas potvrdenia sa nemení)
+        let hovered_path = match self.hover {
+            Some(Hit::TrashRow(i)) if !self.trash_confirm => self.trash.get(i).map(|e| {
+                if e.location.ends_with('/') {
+                    format!("{}{}", e.location, e.name)
+                } else {
+                    format!("{}/{}", e.location, e.name)
+                }
+            }),
+            _ => None,
+        };
+        let msg = if let Some(p) = hovered_path {
+            p
+        } else if !self.trash_note.is_empty() {
             self.trash_note.clone()
         } else if n == 0 {
             String::new()

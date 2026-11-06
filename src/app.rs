@@ -29,10 +29,40 @@ extern "C" fn on_sigusr2(_: i32) {
     sys::raw_wake(SIG_FD.load(Ordering::SeqCst));
 }
 
+/// Rozdelí príkaz na slová, ak neobsahuje žiadnu shell syntax (pipe, presmerovanie, úvodzovky, premenné,
+/// `~`, zástupné znaky, `VAR=hodnota` na začiatku…). Inak `None` a príkaz sa pošle do `sh -c`.
+fn simple_command(cmd: &str) -> Option<Vec<String>> {
+    const SPECIAL: &[char] = &[
+        '|', '&', ';', '<', '>', '(', ')', '$', '`', '"', '\'', '\\', '*', '?', '[', ']', '{', '}', '~', '#', '!', '\n',
+    ];
+    if cmd.contains(SPECIAL) {
+        return None;
+    }
+    let words: Vec<String> = cmd.split_whitespace().map(str::to_string).collect();
+    let first = words.first()?;
+    if first.contains('=') || matches!(first.as_str(), "exec" | "cd" | "export" | "." | "source" | "eval" | "set" | "umask") {
+        return None;
+    }
+    Some(words)
+}
+
 /// Spustí príkaz oddelene od ostrovčeka (vlastná session, bez čakania).
 pub fn spawn_detached(cmd: &str) {
-    let mut c = Command::new("sh");
-    c.arg("-c").arg(cmd).stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null());
+    // Jednoduchý príkaz (len program a argumenty, bez shell syntaxe) sa spustí priamo – inak by v zozname
+    // procesov ostal medzistupeň `sh -c program` (dash nerobí `exec` sám). Zložitejšie príkazy idú cez `sh -c`.
+    let mut c = match simple_command(cmd) {
+        Some(words) => {
+            let mut c = Command::new(&words[0]);
+            c.args(&words[1..]);
+            c
+        }
+        None => {
+            let mut c = Command::new("sh");
+            c.arg("-c").arg(cmd);
+            c
+        }
+    };
+    c.stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null());
     unsafe {
         c.pre_exec(|| {
             sys::new_session();
