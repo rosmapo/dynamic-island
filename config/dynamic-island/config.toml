@@ -53,6 +53,8 @@ tab_size = 44            # strana tlačidla záložky (px)
 icon_size = 22           # veľkosť ikony (px)
 width = 500            # celková šírka okna vrátane lišty; bez nej podľa aktívnej záložky
 # height = 420           # celková výška okna vrátane lišty; bez nej podľa najvyššej záložky
+preload = false        # predvolene true: údaje monitora sa načítajú už pri otvorení kontajnera (ddcutil je pomalý)
+
 # poradie a výber záložiek; ikona je Nerd Font glyf (chýbajúca = predvolená)
 tab5 = "audio"
 tab2 = "wifi"
@@ -70,7 +72,7 @@ font_size = 16
 rows = 8
 width = 500
 editor_command = "nm-connection-editor"
-editor_label = ""		# Prázdny editor_command tlačidlo skryje.
+editor_label = ""		# text a / alebo editor_icon = "\U000f0493"; bez nich (alebo s prázdnym editor_command) sa tlačidlo nezobrazí
 
 [vpn]
 interfaces = ["tun*"]
@@ -107,6 +109,7 @@ font_size = 16
 rows = 8
 scan_ms = 4000
 # editor_command = "blueman-manager"
+# editor_icon = "\U000f0493"
 # editor_label = "Správca"
 
 [keyboard]

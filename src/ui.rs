@@ -1498,6 +1498,10 @@ impl Ui {
         self.set_panel(p);
         self.hw = true;
         self.hw_tab = idx;
+        if fresh && self.cfg.hw.preload && p != Panel::Monitor && self.cfg.hw.tabs.iter().any(|t| t.module == "monitor") {
+            // `ddcutil` je pomalý – údaje monitora sa načítajú vopred, kým používateľ pracuje s inou záložkou
+            self.queued.push(Action::Monitor(crate::monitor::MonitorCmd::Load));
+        }
         if fresh {
             // pri otvorení okno nezačína od nuly – rozmer vyrastá z ostrovčeka ako pri iných paneloch
             let (w, h) = self.hw_target();
@@ -3413,16 +3417,20 @@ impl Ui {
         let tog = Rect::new(x0 + inset * 0.5, hcy - th * 0.5, tw, th);
         let ref_sz = px * 1.7;
         let rbtn = Rect::new(tog.x + tog.w + 6.0 * s, hcy - ref_sz * 0.5, ref_sz, ref_sz);
-        let ed_label = format!("\u{f0493}  {}", self.cfg.wifi.editor_label);
-        let ed_w = text.measure(&ed_label, px) + 2.0 * inset;
+        // tlačidlo správcu: len ikona a / alebo text z configu, pozadie sa kreslí iba pri hoveri
+        let ed_label = crate::wifi::editor_text(&self.cfg.wifi.editor_icon, &self.cfg.wifi.editor_label);
         let ed_h = ref_sz * 1.1;
-        let ed = Rect::new(pill.x + pill.w - pad - ed_w, hcy - ed_h * 0.5, ed_w, ed_h);
-        if !self.cfg.wifi.editor_command.is_empty() {
+        let mut ed = Rect::new(0.0, 0.0, 0.0, 0.0);
+        if !self.cfg.wifi.editor_command.is_empty() && !ed_label.is_empty() {
+            let ed_w = (text.measure(&ed_label, px) + 2.0 * inset).max(ed_h);
+            ed = Rect::new(pill.x + pill.w - pad - ed_w, hcy - ed_h * 0.5, ed_w, ed_h);
             self.hits.push((ed, Hit::WifiEditor));
             let hov = self.hover == Some(Hit::WifiEditor);
-            let bg = if hov { fade(t.menu_selected, pa) } else { fade(t.fg, 0.12 * pa) };
-            frame.content.push(Item::Rect { r: ed, radius: ed.h * 0.5, soft: 0.8, color: bg });
-            text.layout_to(&mut frame.content, &ed_label, px, ed.x + inset, base(hcy), fade(if hov { t.menu_selected_text } else { t.fg }, pa));
+            if hov {
+                frame.content.push(Item::Rect { r: ed, radius: ed.h * 0.5, soft: 0.8, color: fade(t.menu_selected, pa) });
+            }
+            let tw = text.measure(&ed_label, px);
+            text.layout_to(&mut frame.content, &ed_label, px, ed.x + (ed.w - tw) * 0.5, base(hcy), fade(if hov { t.menu_selected_text } else { t.fg }, pa));
         }
         if self.wifi.available {
             self.hits.push((tog, Hit::WifiToggle));
@@ -3456,7 +3464,7 @@ impl Ui {
             ("Nepripojené".to_string(), 0.7)
         };
         let left = rbtn.x + rbtn.w + 10.0 * s;
-        let right = ed.x - 10.0 * s;
+        let right = if ed.w > 0.0 { ed.x - 10.0 * s } else { x0 + w_in };
         if right > left {
             let mid = Self::ellipsize(text, &mid, px, right - left);
             let mw = text.measure(&mid, px);
@@ -3504,10 +3512,6 @@ impl Ui {
                 let fg = if hov {
                     frame.content.push(Item::Rect { r: cell, radius: 10.0 * s, soft: 0.8, color: fade(t.menu_selected, pa) });
                     t.menu_selected_text
-                } else if ap.active {
-                    // aktuálne pripojená sieť: jemné podfarbenie a farba zvýraznenia
-                    frame.content.push(Item::Rect { r: cell, radius: 10.0 * s, soft: 0.8, color: fade(t.accent, 0.18 * pa) });
-                    t.accent
                 } else {
                     t.fg
                 };
@@ -3598,20 +3602,23 @@ impl Ui {
         let rbtn = Rect::new(tog.x + tog.w + 6.0 * s, hcy - ref_sz * 0.5, ref_sz, ref_sz);
 
         let mut ed = Rect::new(0.0, 0.0, 0.0, 0.0);
-        if !self.cfg.bluetooth.editor_command.is_empty() {
-            let ed_label = format!("\u{f0493}  {}", self.cfg.bluetooth.editor_label);
-            let ed_w = text.measure(&ed_label, px) + 2.0 * inset;
+        // tlačidlo správcu: len ikona a / alebo text z configu, pozadie sa kreslí iba pri hoveri
+        let ed_label = crate::wifi::editor_text(&self.cfg.bluetooth.editor_icon, &self.cfg.bluetooth.editor_label);
+        if !self.cfg.bluetooth.editor_command.is_empty() && !ed_label.is_empty() {
             let ed_h = ref_sz * 1.1;
+            let ed_w = (text.measure(&ed_label, px) + 2.0 * inset).max(ed_h);
             ed = Rect::new(pill.x + pill.w - pad - ed_w, hcy - ed_h * 0.5, ed_w, ed_h);
             self.hits.push((ed, Hit::BtEditor));
             let hov = self.hover == Some(Hit::BtEditor);
-            let bg = if hov { fade(t.menu_selected, pa) } else { fade(t.fg, 0.12 * pa) };
-            frame.content.push(Item::Rect { r: ed, radius: ed.h * 0.5, soft: 0.8, color: bg });
+            if hov {
+                frame.content.push(Item::Rect { r: ed, radius: ed.h * 0.5, soft: 0.8, color: fade(t.menu_selected, pa) });
+            }
+            let tw = text.measure(&ed_label, px);
             text.layout_to(
                 &mut frame.content,
                 &ed_label,
                 px,
-                ed.x + inset,
+                ed.x + (ed.w - tw) * 0.5,
                 base(hcy),
                 fade(if hov { t.menu_selected_text } else { t.fg }, pa),
             );
@@ -3756,7 +3763,8 @@ impl Ui {
             } else if !self.bluetooth.available {
                 "Bluetooth adaptér sa nenašiel".into()
             } else if !self.bluetooth.powered {
-                "Bluetooth je vypnutý".into()
+                // stav „vypnutý“ už ukazuje hlavička (a prepínač), v zozname sa neopakuje
+                String::new()
             } else {
                 "Žiadne zariadenia – skús obnoviť".into()
             };
@@ -3789,18 +3797,9 @@ impl Ui {
                         soft: 0.8,
                         color: fade(t.menu_selected, pa),
                     });
-                } else if d.connected {
-                    frame.content.push(Item::Rect {
-                        r: cell,
-                        radius: 10.0 * s,
-                        soft: 0.8,
-                        color: fade(t.accent, 0.18 * pa),
-                    });
                 }
                 let fg = if hov {
                     t.menu_selected_text
-                } else if d.connected {
-                    t.accent
                 } else {
                     t.fg
                 };
@@ -3985,9 +3984,6 @@ impl Ui {
                     let fg = if hov {
                         frame.content.push(Item::Rect { r: cell, radius: 10.0 * s, soft: 0.8, color: fade(t.menu_selected, pa) });
                         t.menu_selected_text
-                    } else if is_def {
-                        frame.content.push(Item::Rect { r: cell, radius: 10.0 * s, soft: 0.8, color: fade(t.accent, 0.18 * pa) });
-                        t.accent
                     } else {
                         t.fg
                     };

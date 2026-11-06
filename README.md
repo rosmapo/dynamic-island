@@ -201,6 +201,7 @@ s daným názvom neexistuje, záložka sa zobrazí, ale nedá sa otvoriť. Predv
     icon_size = 22
     # width = 560            # celková šírka vrátane lišty; bez nej sa šírka mení podľa aktívnej záložky
     # height = 420           # celková výška vrátane lišty; bez nej podľa najvyššej záložky (okno pri prepínaní neskáče)
+    # preload = false        # predvolene true: údaje monitora (ddcutil je pomalý) sa načítajú už pri otvorení kontajnera
     tab1 = "audio"
     tab1_icon = "\uf028"     # Nerd Font glyf; bez nej predvolená
     tab2 = "wifi"            # poradie a výber záložiek (`tab1` … `tab8`)
@@ -223,9 +224,11 @@ podľa signálu), pri otvorení spustí vyhľadávanie.
   **Esc** zruší, **Ctrl+V** vloží schránku (`wl-paste`). Pri zlom hesle sa vytvorený profil zmaže
 - **pravý klik** na uloženú sieť ju zabudne
 - hlavička: vľavo prepínač rádia Wi-Fi a tlačidlo obnovenia, v strede názov pripojenej siete, vpravo tlačidlo
-  „Pripojenia“ (`editor_command`, predvolene `nm-connection-editor`)
-- zoznam má stĺpec zabezpečenia (WPA2, WPA3, WPA2/WPA3, WEP, Otvorená …); aktuálne pripojená sieť má podfarbený riadok,
-  farbu zvýraznenia a značku ✓
+  správcu pripojení (`editor_command`, predvolene `nm-connection-editor`). Tlačidlo má len ikonu (`editor_icon`) a / alebo
+  text (`editor_label`) z configu, pozadie sa kreslí iba pri hoveri; ak nie je nastavená ani ikona, ani text, tlačidlo
+  sa nezobrazí. Rovnako funguje `editor_command` / `editor_icon` / `editor_label` v `[bluetooth]`.
+- zoznam má stĺpec zabezpečenia (WPA2, WPA3, WPA2/WPA3, WEP, Otvorená …); aktuálne pripojená sieť má len značku ✓
+  (riadok sa zvýrazňuje iba pod myšou; rovnako pri audio zariadeniach a pripojených bluetooth zariadeniach)
 - siete s 802.1X (firemné), WEP a skryté siete zatiaľ nie sú podporované
 
 Klávesnicu ostrovček zachytáva **iba počas zadávania hesla** (layer-shell `exclusive`), inak ju nechá aplikáciám.
@@ -239,8 +242,9 @@ on_click = "wifi"
 font_size = 15   # písmo
 rows = 8         # koľko sietí je vidieť naraz, viac = skrolovanie kolieskom
 width = 420      # šírka panela
-editor_command = "nm-connection-editor"   # tlačidlo v hlavičke (prázdne = bez tlačidla)
-editor_label = "Pripojenia"
+editor_command = "nm-connection-editor"   # príkaz tlačidla v hlavičke (prázdne = bez tlačidla)
+editor_icon = "\U000f0493"               # ikona tlačidla (Nerd Font); bez ikony aj textu sa tlačidlo nezobrazí
+# editor_label = "Pripojenia"            # voliteľný text (aj spolu s ikonou)
 ```
 
 ## Wallpaper

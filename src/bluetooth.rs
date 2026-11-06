@@ -26,6 +26,8 @@ pub struct BtCfg {
     pub scan_ms: u64,
     /// voliteľný príkaz tlačidla v hlavičke (napr. blueman-manager)
     pub editor_command: String,
+    /// ikona a / alebo text tlačidla; ak sú obe prázdne, tlačidlo sa nezobrazí
+    pub editor_icon: String,
     pub editor_label: String,
 }
 
@@ -37,7 +39,8 @@ impl BtCfg {
             width: t.f64_or("width", 380.0).clamp(200.0, 1000.0) as f32,
             scan_ms: t.f64_or("scan_ms", 4000.0).clamp(500.0, 30000.0) as u64,
             editor_command: t.str_or("editor_command", ""),
-            editor_label: t.str_or("editor_label", "Správca"),
+            editor_icon: t.str_or("editor_icon", ""),
+            editor_label: t.str_or("editor_label", ""),
         }
     }
 }

@@ -56,6 +56,8 @@ pub struct HwCfg {
     pub width: Option<f32>,
     /// celková výška okna vrátane lišty; `None` = podľa najvyššej záložky
     pub height: Option<f32>,
+    /// pri otvorení kontajnera načítať údaje monitora hneď (aj keď je aktívna iná záložka), aby bol pripravený
+    pub preload: bool,
 }
 
 /// Predvolená ikona modulu (kód z Nerd Fontu).
@@ -110,6 +112,7 @@ impl HwCfg {
             icon_size: t.f64_or("icon_size", 22.0).clamp(8.0, 64.0) as f32,
             width: size("width"),
             height: size("height"),
+            preload: t.bool_or("preload", true),
         }
     }
 }
@@ -177,6 +180,8 @@ mod tests {
         assert_eq!(names, ["audio", "bluetooth", "wifi", "monitor"]);
         assert!(c.tabs.iter().all(|t| !t.icon.is_empty()));
         assert_eq!((c.pos, c.tab_size, c.width, c.height), (TabPos::Left, 44.0, None, None));
+        assert!(c.preload);
+        assert!(!HwCfg::from_table(&toml::parse("preload=false\n").unwrap()).preload);
     }
 
     #[test]

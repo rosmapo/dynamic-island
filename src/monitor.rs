@@ -184,16 +184,14 @@ fn set_night(enable: bool, temp: u32) {
 }
 
 fn load_state(cfg: &MonitorCfg) -> MonitorState {
-    // rýchly test, či ddcutil vôbec existuje
-    if out("ddcutil", &["detect", "--brief"]).is_none() && get_vcp(&cfg.bus, 0x10).is_none() {
+    // jas je zároveň test, či ddcutil existuje a monitor odpovedá (`ddcutil detect` by trvalo aj sekundy navyše)
+    let Some(brightness) = get_vcp(&cfg.bus, 0x10) else {
         return MonitorState {
             error: "ddcutil nie je dostupný alebo monitor neodpovedá".into(),
             loaded: true,
             ..Default::default()
         };
-    }
-
-    let brightness = get_vcp(&cfg.bus, 0x10).unwrap_or(0);
+    };
     let contrast = get_vcp(&cfg.bus, 0x12).unwrap_or(0);
     let raw_preset = get_vcp(&cfg.bus, 0x14);
     let raw_input = get_vcp(&cfg.bus, 0x60);

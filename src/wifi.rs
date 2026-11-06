@@ -29,7 +29,20 @@ pub struct WifiCfg {
     pub width: f32,
     /// príkaz tlačidla v hlavičke (správca pripojení)
     pub editor_command: String,
+    /// ikona a / alebo text tlačidla; ak sú obe prázdne, tlačidlo sa nezobrazí
+    pub editor_icon: String,
     pub editor_label: String,
+}
+
+/// Obsah tlačidla v hlavičke z ikony a textu (oba voliteľné, okolité medzery sa zahodia); prázdny = tlačidlo sa nekreslí.
+pub fn editor_text(icon: &str, label: &str) -> String {
+    let (i, l) = (icon.trim(), label.trim());
+    match (i.is_empty(), l.is_empty()) {
+        (true, true) => String::new(),
+        (false, true) => i.to_string(),
+        (true, false) => l.to_string(),
+        (false, false) => format!("{i} {l}"),
+    }
 }
 
 impl WifiCfg {
@@ -39,7 +52,8 @@ impl WifiCfg {
             rows: t.f64_or("rows", 8.0).clamp(1.0, 30.0) as usize,
             width: t.f64_or("width", 420.0).clamp(200.0, 1000.0) as f32,
             editor_command: t.str_or("editor_command", "nm-connection-editor"),
-            editor_label: t.str_or("editor_label", "Pripojenia"),
+            editor_icon: t.str_or("editor_icon", ""),
+            editor_label: t.str_or("editor_label", ""),
         }
     }
 }
@@ -495,6 +509,17 @@ mod tests {
         let c = WifiCfg::from_table(&Table::new());
         assert_eq!((c.rows, c.width, c.font_size), (8, 420.0, 15.0));
         assert_eq!(c.editor_command, "nm-connection-editor");
+        // bez ikony a textu sa tlačidlo nezobrazí
+        assert_eq!(editor_text(&c.editor_icon, &c.editor_label), "");
+    }
+
+    #[test]
+    fn editor_button_text() {
+        assert_eq!(editor_text("", ""), "");
+        assert_eq!(editor_text("  ", " "), "");
+        assert_eq!(editor_text("\u{f0493}", ""), "\u{f0493}");
+        assert_eq!(editor_text("", "Pripojenia   "), "Pripojenia");
+        assert_eq!(editor_text("\u{f0493}", "Pripojenia"), "\u{f0493} Pripojenia");
     }
 
     #[test]
