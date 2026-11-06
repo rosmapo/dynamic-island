@@ -102,7 +102,7 @@ v súhrne (`summary`), aplikácii (`app`) alebo tele (`body`); voliteľne vlastn
 ## Tlačidlá modulov
 
 Každý modul (aj `[[custom]]`) má `on_click` (ľavé), `on_click_right` (pravé) a `on_click_middle` (stredné tlačidlo).
-Hodnota je shell príkaz, alebo vstavaná akcia: `calendar`, `clipboard`, `wallpaper`, `wifi`, názov `[[menu]]`, `menu` (zoznam diskov),
+Hodnota je shell príkaz, alebo vstavaná akcia: `calendar`, `clipboard`, `trash`, `wallpaper`, `wifi`, názov `[[menu]]`, `menu` (zoznam diskov),
 `eject-all`, `inhibit-toggle`, `layout-toggle`, `audio-mute`. Prázdna hodnota = tlačidlo nič nerobí.
 
     [clock]
@@ -151,6 +151,36 @@ max_items = 200     # najviac koľko najnovších položiek sa načíta
 
 Vybraná (hover) položka používa farby `menu_selected` / `menu_selected_text` z `[colors]` (pozri nižšie).
 
+## Kôš (trash)
+
+Panel s košom zo **všetkých pripojených diskov** (domovský `~/.local/share/Trash` aj `.Trash-UID` / `.Trash/UID` na
+pripojených diskoch podľa freedesktop špecifikácie) – náhrada samostatného správcu koša. Otvorí sa `on_click = "trash"` na
+ľubovoľnom module, alebo položkou menu s `command = "module:trash"` (napr. v dashboarde: položka „Kôš“ s `exec`
+a `command = "module:trash"`). Zoznam sa pri každom otvorení načíta znova a je zoradený od naposledy zmazaného;
+zobrazuje názov, pôvodné umiestnenie (domov skrátený na `~`) a dátum zmazania.
+
+- **Výber**: každý riadok má zaškrtávacie políčko, **klik na riadok** prepne jeho výber (myš nenesie Ctrl ani Shift, preto
+  sa výber viacerých robí obyčajnými klikmi). Políčko v hlavičke zoznamu vyberie všetko / zruší výber.
+- **Obnoviť vybrané** (vľavo, aktívne len keď je niečo vybrané) vráti položky na pôvodné miesto, chýbajúce priečinky
+  vytvorí a nikdy neprepíše existujúci súbor – takú položku nechá v koši a v pätke napíše, koľko chýb nastalo.
+- **Vyprázdniť kôš** (vpravo, červené) natrvalo zmaže *všetky* položky. S `confirm_empty = true` sa najprv panel
+  prepne na otázku „Natrvalo vymazať N položiek?“ s tlačidlami Zrušiť / Vymazať (kým je otázka vidieť, panel sa
+  odchodom myši nezatvorí).
+- Pätka ukazuje počet položiek a vybraných, po operácii výsledok (`Obnovené: 3`, `Vymazané: 12`).
+- Viac položiek ako `rows` sa skroluje kolieskom (vpravo je posuvník).
+
+```toml
+[trash]
+width = 560            # šírka panela (px)
+rows = 8               # koľko riadkov je vidieť; viac položiek = skrolovanie
+text_size = 14         # veľkosť písma (px)
+confirm_empty = true   # pred vyprázdnením sa spýtať
+show_location = true   # stĺpec s pôvodným umiestnením
+show_date = true       # stĺpec s dátumom zmazania
+```
+
+Tlačidlo „Vyprázdniť kôš“ používa farby `alert` / `on_alert`, „Obnoviť vybrané“ `accent` / `on_accent` z `[colors]`.
+
 ## Hardware (záložky)
 
 Kontajner, ktorý obalí štyri panely – audio, bluetooth, wifi a monitor – lištou so záložkami. Panely sú tie isté ako pri
@@ -159,6 +189,12 @@ zatvárania. Otvára sa akciou `hardware` (naposledy použitá záložka) alebo 
 `hardware:wifi` / `hardware:monitor` (konkrétna záložka) – ako `on_click*` ľubovoľného modulu, alebo v menu cez
 `module:hardware`. Opakovaný klik na tú istú záložku kontajner zavrie.
 
+Záložkou môže byť aj **vlastné menu**: `tabN = "menu:NAZOV"` (`NAZOV` = `name` z `[[menu]]`, veľkosť písmen sa zachová).
+Tak vznikne napr. záložka s tlačidlami (label alebo icon) pre nastavenia externých aplikácií. Menu sa v kontajneri správa
+ako samostatne: položky s `exec` sa spustia pri prepnutí na záložku (voľba `wait_exec` sa tu neuplatní, okno sa otvára
+hneď), klik na položku vykoná jej `command` a zavrie okno. Záložku vyberieš aj akciou `hardware:menu:NAZOV`. Ak menu
+s daným názvom neexistuje, záložka sa zobrazí, ale nedá sa otvoriť. Predvolená ikona takej záložky je ozubené koleso.
+
     [hardware]
     tabs_position = "left"   # left | right | top | bottom
     tab_size = 44
@@ -166,8 +202,10 @@ zatvárania. Otvára sa akciou `hardware` (naposledy použitá záložka) alebo 
     # width = 560            # celková šírka vrátane lišty; bez nej sa šírka mení podľa aktívnej záložky
     # height = 420           # celková výška vrátane lišty; bez nej podľa najvyššej záložky (okno pri prepínaní neskáče)
     tab1 = "audio"
-    tab1_icon = ""     # Nerd Font glyf; bez nej predvolená
+    tab1_icon = "\uf028"     # Nerd Font glyf; bez nej predvolená
     tab2 = "wifi"            # poradie a výber záložiek (`tab1` … `tab8`)
+    tab3 = "menu:nastavenia" # vlastné [[menu]] name = "nastavenia"
+    tab3_icon = "\U000f0493"  # glyfy nad U+FFFF sa zapisujú ako \UXXXXXXXX
 
 Panel záložky je zarovnaný hore, pätička (ovládacie tlačidlá) dole; ak je okno vyššie než obsah, medzi nimi ostane
 voľné miesto. Ikony sa berú z `icon_family`. Predvolené sú `f057e` (audio), `f00af` (bluetooth), `f0928` (wifi) a

@@ -120,6 +120,8 @@ pub enum Msg {
     Disks(Vec<DiskInfo>),
     /// história schránky (najnovšie prvé)
     Clip(Vec<ClipEntry>),
+    /// obsah koša zo všetkých diskov (najnovšie prvé) + hláška o práve dokončenej obnove / vyprázdnení (inak prázdna)
+    Trash(Vec<crate::trash::TrashEntry>, String),
     /// zoznam obrázkov modulu wallpaper + cesta k aktuálnemu pozadiu
     Wall(Vec<crate::wallpaper::WallEntry>, String),
     /// náhľad obrázka s daným indexom je hotový

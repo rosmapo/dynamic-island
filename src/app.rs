@@ -141,6 +141,26 @@ fn run_action(a: Action, cfg: &Config, disk_tx: &Option<Tx<DiskCmd>>, tx: &Tx<Ms
             });
         }
         Action::ClipCopy(line) => spawn_with_stdin(&cfg.clip_copy, line),
+        Action::TrashLoad => {
+            let tx = tx.clone();
+            std::thread::spawn(move || {
+                tx.send(Msg::Trash(crate::trash::load_all(), String::new()));
+            });
+        }
+        Action::TrashRestore(items) => {
+            let tx = tx.clone();
+            std::thread::spawn(move || {
+                let note = crate::trash::restore_all(&items);
+                tx.send(Msg::Trash(crate::trash::load_all(), note));
+            });
+        }
+        Action::TrashEmpty(items) => {
+            let tx = tx.clone();
+            std::thread::spawn(move || {
+                let note = crate::trash::empty_all(&items);
+                tx.send(Msg::Trash(crate::trash::load_all(), note));
+            });
+        }
         Action::Audio(cmd) => crate::audio::run(cmd, cfg.vol_limit, tx.clone()),
         Action::Wifi(cmd) => crate::wifi::run(cmd, tx.clone()),
         Action::Monitor(cmd) => crate::monitor::run(cmd, cfg.monitor.clone(), tx.clone()),

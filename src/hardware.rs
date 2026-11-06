@@ -64,8 +64,24 @@ pub fn default_icon(module: &str) -> &'static str {
         "audio" => "\u{f057e}",
         "bluetooth" => "\u{f00af}",
         "wifi" => "\u{f0928}",
+        m if m.starts_with(MENU_PREFIX) => "\u{f0493}",
         _ => "\u{f0379}",
     }
+}
+
+/// Názov záložky `menu:NAZOV` = vlastné `[[menu]]` s `name = "NAZOV"` (veľkosť písmen sa zachová).
+pub const MENU_PREFIX: &str = "menu:";
+
+/// Normalizuje názov záložky: vstavané moduly bez ohľadu na veľkosť písmen, `menu:NAZOV` s názvom menu tak, ako je
+/// napísaný. Neplatný názov (neznámy modul, prázdny názov menu) vráti `None`.
+pub fn parse_tab_name(raw: &str) -> Option<String> {
+    let raw = raw.trim();
+    if raw.len() > MENU_PREFIX.len() && raw.is_char_boundary(MENU_PREFIX.len()) && raw[..MENU_PREFIX.len()].eq_ignore_ascii_case(MENU_PREFIX) {
+        let name = raw[MENU_PREFIX.len()..].trim();
+        return (!name.is_empty()).then(|| format!("{MENU_PREFIX}{name}"));
+    }
+    let lower = raw.to_lowercase();
+    MODULES.contains(&lower.as_str()).then_some(lower)
 }
 
 impl HwCfg {
@@ -73,14 +89,12 @@ impl HwCfg {
         let mut tabs = Vec::new();
         let mut configured = false;
         for i in 1..=MAX_TABS {
-            let name = t.str_or(&format!("tab{i}"), "").trim().to_lowercase();
-            if name.is_empty() {
+            let raw = t.str_or(&format!("tab{i}"), "");
+            if raw.trim().is_empty() {
                 continue;
             }
             configured = true;
-            if !MODULES.contains(&name.as_str()) {
-                continue;
-            }
+            let Some(name) = parse_tab_name(&raw) else { continue };
             let icon = t.str_or(&format!("tab{i}_icon"), "");
             let icon = if icon.trim().is_empty() { default_icon(&name).to_string() } else { icon };
             tabs.push(HwTab { module: name, icon });
@@ -177,6 +191,23 @@ mod tests {
         assert_eq!((c.pos, c.tab_size, c.width), (TabPos::Bottom, 50.0, Some(500.0)));
         // príliš malá výška sa zvýši na minimum
         assert_eq!(c.height, Some(120.0));
+    }
+
+    #[test]
+    fn menu_tabs() {
+        assert_eq!(parse_tab_name("Wifi"), Some("wifi".into()));
+        assert_eq!(parse_tab_name(" menu:Nastavenia "), Some("menu:Nastavenia".into()));
+        assert_eq!(parse_tab_name("MENU: Apps"), Some("menu:Apps".into()));
+        assert_eq!(parse_tab_name("menu:"), None);
+        assert_eq!(parse_tab_name("menu:   "), None);
+        assert_eq!(parse_tab_name("menu"), None);
+        assert_eq!(parse_tab_name("foo"), None);
+        let src = "tab1=\"wifi\"\ntab2=\"menu:Nastavenia\"\ntab2_icon=\"X\"\ntab3=\"menu:Apps\"\ntab4=\"menu:\"\n";
+        let c = HwCfg::from_table(&toml::parse(src).unwrap());
+        let t: Vec<(&str, &str)> = c.tabs.iter().map(|t| (t.module.as_str(), t.icon.as_str())).collect();
+        // názov menu sa nelowercasuje, chýbajúca ikona = predvolená pre menu, prázdny názov menu sa preskočí
+        assert_eq!(t, vec![("wifi", default_icon("wifi")), ("menu:Nastavenia", "X"), ("menu:Apps", default_icon("menu:Apps"))]);
+        assert_eq!(default_icon("menu:Apps"), "\u{f0493}");
     }
 
     #[test]

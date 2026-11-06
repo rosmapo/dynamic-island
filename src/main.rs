@@ -21,6 +21,7 @@ mod render;
 mod snapshot;
 mod sys;
 mod text;
+mod trash;
 mod toml;
 mod ui;
 mod wallpaper;

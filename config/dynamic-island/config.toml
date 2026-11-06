@@ -124,6 +124,15 @@ max_items = 200   # koľko najnovších položiek sa načíta
 # list_command = "cliphist list"
 # copy_command = "cliphist decode | wl-copy"
 
+# Kôš zo všetkých diskov: on_click = "trash" (alebo v menu command = "module:trash")
+[trash]
+width = 560            # šírka panela
+rows = 8               # koľko riadkov je vidieť, viac = skrolovanie
+text_size = 14         # veľkosť písma
+confirm_empty = true   # pred vyprázdnením sa spýtať
+show_location = true   # stĺpec s pôvodným umiestnením
+show_date = true       # stĺpec s dátumom zmazania
+
 [wallpaper]
 directory = "~/.config/wayfire/media/wallpaper"
 columns = 4

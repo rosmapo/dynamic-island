@@ -193,6 +193,8 @@ pub struct Config {
     pub bluetooth: crate::bluetooth::BtCfg,
     /// kontajner so záložkami audio / bluetooth / wifi / monitor – `[hardware]`
     pub hw: crate::hardware::HwCfg,
+    /// kôš (zoznam, obnova, vyprázdnenie) – `[trash]`
+    pub trash: crate::trash::TrashCfg,
     pub auto: AutoCfg,
 
     pub notif_enabled: bool,
@@ -579,6 +581,7 @@ impl Config {
             monitor: crate::monitor::MonitorCfg::from_table(&t.sub("monitor")),
             bluetooth: crate::bluetooth::BtCfg::from_table(&t.sub("bluetooth")),
             hw: crate::hardware::HwCfg::from_table(&t.sub("hardware")),
+            trash: crate::trash::TrashCfg::from_table(&t.sub("trash")),
             auto: AutoCfg {
                 enabled: auto.bool_or("enabled", true),
                 bar_height: auto.f64_or("bar_height", 40.0),

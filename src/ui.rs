@@ -35,6 +35,12 @@ pub enum Action {
     ClipLoad,
     /// skopírovať položku histórie (celý riadok z `cliphist list`)
     ClipCopy(String),
+    /// načítať kôš zo všetkých diskov (výsledok príde ako `Msg::Trash`)
+    TrashLoad,
+    /// obnoviť vybrané položky koša na pôvodné miesto
+    TrashRestore(Vec<crate::trash::TrashEntry>),
+    /// natrvalo zmazať všetky uvedené položky koša
+    TrashEmpty(Vec<crate::trash::TrashEntry>),
     /// načítať zoznam obrázkov a náhľady modulu wallpaper
     WallLoad,
     /// nastaviť pozadie skriptom (`wallpaper -v CESTA`)
@@ -58,6 +64,7 @@ enum Panel {
     Disks,
     Menu(usize),
     Clip,
+    Trash,
     Wall,
     Wifi,
     Audio,
@@ -74,6 +81,15 @@ enum Hit {
     DiskAll,
     MenuItem(usize),
     ClipItem(usize),
+    /// riadok koša (index do `trash`) – klik prepne jeho výber
+    TrashRow(usize),
+    /// zaškrtávacie políčko v hlavičke zoznamu: vybrať všetko / zrušiť výber
+    TrashAll,
+    TrashRestore,
+    TrashEmpty,
+    /// potvrdenie vyprázdnenia: áno / nie
+    TrashYes,
+    TrashNo,
     WallItem(usize),
     AudioMute(bool),
     AudioSlider(bool),
@@ -192,6 +208,10 @@ const CLIP_ROW_EXTRA: f32 = 16.0; // výška riadku = písmo + toto
 const CLIP_SCROLLBAR: f32 = 8.0;
 /// jednotka osi kolieska zodpovedajúca jednému riadku
 const CLIP_SCROLL_UNIT: f32 = 10.0;
+const TRASH_PAD: f32 = 12.0;
+const TRASH_GAP: f32 = 8.0;
+const TRASH_SCROLLBAR: f32 = 8.0;
+const TRASH_SCROLL_UNIT: f32 = 10.0;
 
 pub struct Ui {
     pub cfg: Config,
@@ -257,6 +277,15 @@ pub struct Ui {
     clip_query: String,
     clip_view: Vec<usize>,
     clip_sel: Option<usize>,
+    /// modul trash: položky (najnovšie zmazané prvé), prvý viditeľný riadok, nazbieraný posun kolieska,
+    /// vybrané položky (podľa cesty `.trashinfo`, prežijú opätovné načítanie), hláška a zapnuté potvrdenie vyprázdnenia
+    trash: Vec<crate::trash::TrashEntry>,
+    trash_loaded: bool,
+    trash_scroll: usize,
+    trash_acc: f32,
+    trash_sel: std::collections::HashSet<std::path::PathBuf>,
+    trash_note: String,
+    trash_confirm: bool,
     /// modul wallpaper: obrázky, aktuálne pozadie, prvý viditeľný riadok mriežky, nazbieraný posun kolieska
     wall: Vec<crate::wallpaper::WallEntry>,
     wall_loaded: bool,
@@ -494,6 +523,13 @@ impl Ui {
             clip_query: String::new(),
             clip_view: Vec::new(),
             clip_sel: None,
+            trash: Vec::new(),
+            trash_loaded: false,
+            trash_scroll: 0,
+            trash_acc: 0.0,
+            trash_sel: std::collections::HashSet::new(),
+            trash_note: String::new(),
+            trash_confirm: false,
             menu_mi: 0,
             menu_gen: 0,
             menu_out: Vec::new(),
@@ -598,6 +634,18 @@ impl Ui {
                 self.clip = v;
                 self.clip_loaded = true;
                 self.clip_refilter();
+            }
+            Msg::Trash(v, note) => {
+                self.trash = v;
+                self.trash_loaded = true;
+                let present: std::collections::HashSet<&std::path::PathBuf> = self.trash.iter().map(|e| &e.info).collect();
+                self.trash_sel.retain(|p| present.contains(p));
+                if !note.is_empty() {
+                    // dokončená obnova / vyprázdnenie
+                    self.trash_note = note;
+                    self.trash_confirm = false;
+                }
+                self.trash_scroll = self.trash_scroll.min(self.trash.len().saturating_sub(self.cfg.trash.rows));
             }
             Msg::Wall(v, current) => {
                 self.wall = v;
@@ -1137,6 +1185,13 @@ impl Ui {
                 let h = 2.0 * CLIP_PAD + self.clip_rows() as f32 * row_h;
                 (self.cfg.clip_width * self.scale, h * self.scale)
             }
+            Panel::Trash => {
+                let f = self.cfg.trash.font;
+                let row_h = f + CLIP_ROW_EXTRA;
+                // tlačidlá, hlavička zoznamu, riadky, pätka (počet / hláška)
+                let h = 2.0 * TRASH_PAD + (f + 14.0) + TRASH_GAP + row_h + self.trash_rows() as f32 * row_h + TRASH_GAP + (f * 0.85 + 8.0);
+                (self.cfg.trash.width * self.scale, h * self.scale)
+            }
             _ => {
                 let w = 8.0 * CAL_CELL + 2.0 * CAL_PAD;
                 let h = CAL_HEAD + CAL_NAMES + 6.0 * CAL_ROW + CAL_BOTTOM;
@@ -1318,13 +1373,22 @@ impl Ui {
             self.clip_refilter();
             self.queued.push(Action::ClipLoad);
         }
+        if p == Panel::Trash {
+            // pri každom otvorení znova načítať kôš (staré položky ostanú viditeľné, kým nepríde nový zoznam)
+            self.trash_scroll = 0;
+            self.trash_acc = 0.0;
+            self.trash_sel.clear();
+            self.trash_note.clear();
+            self.trash_confirm = false;
+            self.queued.push(Action::TrashLoad);
+        }
         match p {
             Panel::None => {
                 self.panel_h.set(0.0);
                 self.panel_w.set(0.0);
                 self.panel_a.set(0.0);
             }
-            Panel::Calendar | Panel::Disks | Panel::Menu(_) | Panel::Clip | Panel::Wall | Panel::Wifi | Panel::Audio | Panel::Monitor | Panel::Bluetooth => {
+            Panel::Calendar | Panel::Disks | Panel::Menu(_) | Panel::Clip | Panel::Trash | Panel::Wall | Panel::Wifi | Panel::Audio | Panel::Monitor | Panel::Bluetooth => {
                 if p == Panel::Calendar {
                     self.rebuild_cal();
                 }
@@ -1363,25 +1427,26 @@ impl Ui {
     }
 
     fn is_big(p: Panel) -> bool {
-        matches!(p, Panel::Calendar | Panel::Disks | Panel::Menu(_) | Panel::Clip | Panel::Wall | Panel::Wifi | Panel::Audio | Panel::Monitor | Panel::Bluetooth)
+        matches!(p, Panel::Calendar | Panel::Disks | Panel::Menu(_) | Panel::Clip | Panel::Trash | Panel::Wall | Panel::Wifi | Panel::Audio | Panel::Monitor | Panel::Bluetooth)
     }
 
     // ------------------------------------------- kontajner hardware
 
-    /// Panel, ktorý patrí modulu záložky (`audio` | `bluetooth` | `wifi` | `monitor`).
-    fn module_panel(name: &str) -> Option<Panel> {
+    /// Panel, ktorý patrí záložke: `audio` | `bluetooth` | `wifi` | `monitor`, alebo `menu:NAZOV` = vlastné `[[menu]]`
+    /// s daným názvom (neexistujúce menu = `None`, záložka sa nedá otvoriť).
+    fn tab_panel(&self, name: &str) -> Option<Panel> {
         match name {
             "audio" => Some(Panel::Audio),
             "bluetooth" => Some(Panel::Bluetooth),
             "wifi" => Some(Panel::Wifi),
             "monitor" => Some(Panel::Monitor),
-            _ => None,
+            _ => name.strip_prefix(crate::hardware::MENU_PREFIX).and_then(|m| self.menu_index(m)).map(Panel::Menu),
         }
     }
 
     /// Panel môže byť obsahom kontajnera `hardware`.
     fn is_hw_inner(p: Panel) -> bool {
-        matches!(p, Panel::Audio | Panel::Bluetooth | Panel::Wifi | Panel::Monitor)
+        matches!(p, Panel::Audio | Panel::Bluetooth | Panel::Wifi | Panel::Monitor | Panel::Menu(_))
     }
 
     /// Veľký panel sa práve kreslí v kontajneri `hardware` (aj počas jeho zatvárania).
@@ -1408,7 +1473,7 @@ impl Ui {
     fn hw_target(&self) -> (f32, f32) {
         let c = &self.cfg.hw;
         let s = self.scale;
-        let inner_h = c.tabs.iter().filter_map(|t| Self::module_panel(&t.module)).map(|p| self.panel_dims(p).1).fold(0.0f32, f32::max);
+        let inner_h = c.tabs.iter().filter_map(|t| self.tab_panel(&t.module)).map(|p| self.panel_dims(p).1).fold(0.0f32, f32::max);
         let inner_w = self.panel_dims(self.big).0;
         let tab = c.tab_size * s;
         let bar_t = crate::hardware::bar_thickness(tab, HW_BAR_PAD * s);
@@ -1423,8 +1488,12 @@ impl Ui {
             return;
         }
         let idx = tab.unwrap_or(self.hw_tab).min(n - 1);
-        let Some(p) = Self::module_panel(&self.cfg.hw.tabs[idx].module) else { return };
+        let Some(p) = self.tab_panel(&self.cfg.hw.tabs[idx].module) else { return };
         let fresh = !(self.hw && Self::is_hw_inner(self.panel));
+        // záložka s menu: spustí `exec` jeho položiek (`wait_exec` sa v kontajneri neuplatní, okno sa otvára hneď)
+        if let Panel::Menu(mi) = p {
+            self.menu_start(mi);
+        }
         // vyčistí príznak kontajnera a inicializuje panel záložky (načítanie, posun, rozpísané heslo…)
         self.set_panel(p);
         self.hw = true;
@@ -1762,6 +1831,24 @@ impl Ui {
         self.cfg.clip_rows.min(self.clip_view.len()).max(1)
     }
 
+    /// Počet riadkov zoznamu koša, ktoré sú práve vidieť.
+    fn trash_rows(&self) -> usize {
+        crate::trash::rows_shown(self.trash.len(), self.cfg.trash.rows)
+    }
+
+    /// Vybrané položky koša (v poradí zoznamu).
+    fn trash_selected(&self) -> Vec<crate::trash::TrashEntry> {
+        self.trash.iter().filter(|e| self.trash_sel.contains(&e.info)).cloned().collect()
+    }
+
+    fn toggle_trash(&mut self) {
+        if self.panel == Panel::Trash {
+            self.set_panel(Panel::None);
+        } else {
+            self.set_panel(Panel::Trash);
+        }
+    }
+
     fn toggle_clip(&mut self) {
         if self.panel == Panel::Clip {
             self.set_panel(Panel::None);
@@ -1803,7 +1890,19 @@ impl Ui {
     /// Otvorí menu `mi`: spustí `exec` jeho položiek (výstupy sa začínajú prázdne, nič sa neukladá medzi otvoreniami)
     /// a zobrazí ho hneď, alebo pri `wait_exec` až po načítaní výstupov (najneskôr po `wait_timeout_ms`).
     fn open_menu(&mut self, mi: usize) {
-        let Some(m) = self.cfg.menus.get(mi) else { return };
+        let Some((wait, wait_ms)) = self.menu_start(mi) else { return };
+        if wait {
+            // aktuálny panel ostáva, kým výstupy nedobehnú; akákoľvek zmena panela čakanie zruší
+            self.menu_wait = Some((mi, Instant::now() + Duration::from_millis(wait_ms)));
+        } else {
+            self.set_panel(Panel::Menu(mi));
+        }
+    }
+
+    /// Pripraví otvorenie menu `mi` (nová generácia, prázdne výstupy) a spustí `exec` jeho položiek.
+    /// Vráti `(čakať na výstupy?, najdlhšie čakanie v ms)`; `None` = menu neexistuje. Panel nemení.
+    fn menu_start(&mut self, mi: usize) -> Option<(bool, u64)> {
+        let m = self.cfg.menus.get(mi)?;
         let jobs: Vec<(usize, String)> = m.items.iter().enumerate().filter(|(_, it)| !it.exec.is_empty()).map(|(i, it)| (i, it.exec.clone())).collect();
         let (n, wait, wait_ms) = (m.items.len(), m.wait_exec, m.wait_ms);
         self.menu_gen = self.menu_gen.wrapping_add(1);
@@ -1814,12 +1913,7 @@ impl Ui {
         for (idx, cmd) in jobs {
             self.queued.push(Action::MenuExec { gen: self.menu_gen, idx, cmd });
         }
-        if wait {
-            // aktuálny panel ostáva, kým výstupy nedobehnú; akákoľvek zmena panela čakanie zruší
-            self.menu_wait = Some((mi, Instant::now() + Duration::from_millis(wait_ms)));
-        } else {
-            self.set_panel(Panel::Menu(mi));
-        }
+        Some((wait, wait_ms))
     }
 
     /// Všetky položky s `exec` otvoreného menu majú načítaný výstup.
@@ -2031,11 +2125,11 @@ impl Ui {
             return;
         }
         // počas písania hesla panel nezatvárame (zavrie ho Esc / odoslanie); rovnako pri rozpísanom filtri schránky
-        if self.typing_password() || (self.panel == Panel::Clip && !self.clip_query.is_empty()) || self.audio_drag.is_some() || self.monitor_drag.is_some() {
+        if self.typing_password() || (self.panel == Panel::Clip && !self.clip_query.is_empty()) || (self.panel == Panel::Trash && self.trash_confirm) || self.audio_drag.is_some() || self.monitor_drag.is_some() {
             return;
         }
         match self.panel {
-            Panel::Calendar | Panel::Disks | Panel::Menu(_) | Panel::Clip | Panel::Wall | Panel::Wifi | Panel::Audio | Panel::Monitor | Panel::Bluetooth => {
+            Panel::Calendar | Panel::Disks | Panel::Menu(_) | Panel::Clip | Panel::Trash | Panel::Wall | Panel::Wifi | Panel::Audio | Panel::Monitor | Panel::Bluetooth => {
                 self.collapse_at = Some(now + Duration::from_millis(self.cfg.collapse_ms))
             }
             Panel::Tip => self.collapse_at = Some(now + Duration::from_millis(200)),
@@ -2045,7 +2139,7 @@ impl Ui {
 
     fn action_for(cmd: &str) -> Option<Action> {
         match cmd {
-            "" | "calendar" | "menu" | "clipboard" | "wallpaper" | "wifi" | "audio" | "monitor" | "bluetooth" => None,
+            "" | "calendar" | "menu" | "clipboard" | "trash" | "wallpaper" | "wifi" | "audio" | "monitor" | "bluetooth" => None,
             c if Self::hardware_cmd(c).is_some() => None,
             "eject-all" => Some(Action::DiskEjectAll),
             "inhibit-toggle" => Some(Action::InhibitToggle),
@@ -2075,6 +2169,10 @@ impl Ui {
             }
             "clipboard" => {
                 self.set_panel(Panel::Clip);
+                None
+            }
+            "trash" => {
+                self.set_panel(Panel::Trash);
                 None
             }
             "wallpaper" => {
@@ -2127,6 +2225,13 @@ impl Ui {
         if matches!(self.panel, Panel::Menu(_)) {
             if button == BTN_LEFT {
                 let hit = self.hit_at(x, y);
+                // menu otvorené ako záložka kontajnera `hardware`: lišta so záložkami ostáva ovládateľná
+                if let Some(Hit::HwTab(i)) = hit {
+                    if self.hw && i != self.hw_tab {
+                        self.open_hardware(Some(i));
+                    }
+                    return out;
+                }
                 let mut cmd = String::new();
                 if let (Some(Hit::MenuItem(k)), Panel::Menu(mi)) = (hit, self.panel) {
                     if let Some(item) = self.cfg.menus.get(mi).and_then(|m| m.items.get(k)) {
@@ -2187,6 +2292,11 @@ impl Ui {
                     self.toggle_clip();
                     self.collapse_at = None;
                     self.start_grace(now);
+                } else if cmd == "trash" {
+                    self.tip_pending = None;
+                    self.toggle_trash();
+                    self.collapse_at = None;
+                    self.start_grace(now);
                 } else if cmd == "audio" {
                     self.tip_pending = None;
                     self.toggle_audio();
@@ -2240,6 +2350,60 @@ impl Ui {
                     }
                     self.set_panel(Panel::None);
                     self.collapse_at = None;
+                }
+            }
+            Hit::TrashRow(i) => {
+                if button == BTN_LEFT {
+                    if let Some(e) = self.trash.get(i) {
+                        let key = e.info.clone();
+                        if !self.trash_sel.remove(&key) {
+                            self.trash_sel.insert(key);
+                        }
+                    }
+                    self.trash_note.clear();
+                }
+            }
+            Hit::TrashAll => {
+                if button == BTN_LEFT {
+                    if self.trash_sel.len() == self.trash.len() {
+                        self.trash_sel.clear();
+                    } else {
+                        self.trash_sel = self.trash.iter().map(|e| e.info.clone()).collect();
+                    }
+                    self.trash_note.clear();
+                }
+            }
+            Hit::TrashRestore => {
+                if button == BTN_LEFT {
+                    let items = self.trash_selected();
+                    if !items.is_empty() {
+                        self.trash_note = "Obnovujem…".into();
+                        out.push(Action::TrashRestore(items));
+                    }
+                }
+            }
+            Hit::TrashEmpty => {
+                if button == BTN_LEFT && !self.trash.is_empty() {
+                    if self.cfg.trash.confirm_empty {
+                        self.trash_confirm = true;
+                    } else {
+                        self.trash_note = "Mažem…".into();
+                        out.push(Action::TrashEmpty(self.trash.clone()));
+                    }
+                }
+            }
+            Hit::TrashYes => {
+                if button == BTN_LEFT {
+                    self.trash_confirm = false;
+                    if !self.trash.is_empty() {
+                        self.trash_note = "Mažem…".into();
+                        out.push(Action::TrashEmpty(self.trash.clone()));
+                    }
+                }
+            }
+            Hit::TrashNo => {
+                if button == BTN_LEFT {
+                    self.trash_confirm = false;
                 }
             }
             Hit::HwTab(i) => {
@@ -2511,6 +2675,13 @@ impl Ui {
             let max_start = self.wall_row_count().saturating_sub(self.cfg.wall.rows) as f32;
             self.wall_scroll = (self.wall_scroll as f32 + rows).clamp(0.0, max_start) as usize;
         }
+        if self.panel == Panel::Trash && self.hover.is_some() {
+            self.trash_acc += value;
+            let rows = (self.trash_acc / TRASH_SCROLL_UNIT).trunc();
+            self.trash_acc -= rows * TRASH_SCROLL_UNIT;
+            let max_start = self.trash.len().saturating_sub(self.cfg.trash.rows) as f32;
+            self.trash_scroll = (self.trash_scroll as f32 + rows).clamp(0.0, max_start) as usize;
+        }
         if self.panel == Panel::Clip && self.hover.is_some() {
             // koliesko aj touchpad: posun sa zbiera a každá celá jednotka = jeden riadok
             self.clip_acc += value;
@@ -2724,6 +2895,7 @@ impl Ui {
                 Panel::Disks => self.build_disks(&mut frame, text, content, ct),
                 Panel::Menu(mi) => self.build_menu(&mut frame, text, content, mi, ct),
                 Panel::Clip => self.build_clip(&mut frame, text, content, ct),
+                Panel::Trash => self.build_trash(&mut frame, text, content, ct),
                 Panel::Wall => self.build_wall(&mut frame, text, content, ct),
                 Panel::Wifi => self.build_wifi(&mut frame, text, content, ct),
                 Panel::Audio => self.build_audio(&mut frame, text, content, ct),
@@ -2750,7 +2922,7 @@ impl Ui {
                         text.layout_to(&mut frame.content, l, px2, pill.x + self.s(16.0), cy + (asc - desc) * 0.5, col);
                     }
                 }
-                Panel::None | Panel::Calendar | Panel::Disks | Panel::Menu(_) | Panel::Clip | Panel::Wall | Panel::Wifi | Panel::Audio | Panel::Monitor | Panel::Bluetooth => {}
+                Panel::None | Panel::Calendar | Panel::Disks | Panel::Menu(_) | Panel::Clip | Panel::Trash | Panel::Wall | Panel::Wifi | Panel::Audio | Panel::Monitor | Panel::Bluetooth => {}
             }
         }
         frame
@@ -3011,6 +3183,178 @@ impl Ui {
             let x = pill.x + pill.w - pad - sb + (sb - w) * 0.5;
             frame.content.push(Item::Rect { r: Rect::new(x, thumb_y, w, thumb_h), radius: w * 0.5, soft: 0.8, color: fade(t.fg, 0.35 * pa) });
         }
+    }
+
+    /// Tlačidlo hlavičky koša: `hit = None` = vypnuté (stlmené, bez reakcie na myš). Vráti šírku.
+    fn trash_button(&mut self, frame: &mut Frame, text: &mut Text, x: f32, y: f32, h: f32, px: f32, label: &str, colors: (Color, Color), hit: Option<Hit>, pa: f32) -> f32 {
+        let s = self.scale;
+        let t = self.theme;
+        let (asc, desc) = text.line_metrics(px);
+        let w = text.measure(label, px) + 36.0 * s;
+        let r = Rect::new(x, y, w, h);
+        let (bg, fg) = match hit {
+            Some(hh) => {
+                self.hits.push((r, hh));
+                let a = if self.hover == Some(hh) { 1.0 } else { 0.85 };
+                (fade(colors.0, a * pa), fade(colors.1, pa))
+            }
+            None => (fade(t.fg, 0.08 * pa), fade(t.fg, 0.35 * pa)),
+        };
+        frame.content.push(Item::Rect { r, radius: h * 0.5, soft: 0.8, color: bg });
+        let tw = text.measure(label, px);
+        text.layout_to(&mut frame.content, label, px, x + (w - tw) * 0.5, y + h * 0.5 + (asc - desc) * 0.5, fg);
+        w
+    }
+
+    /// Zaškrtávacie políčko (štvorec so zaoblením; zaškrtnuté = vyplnené farbou accent s malým štvorčekom).
+    fn trash_checkbox(&self, frame: &mut Frame, r: Rect, checked: bool, pa: f32) {
+        let s = self.scale;
+        let t = self.theme;
+        if checked {
+            frame.content.push(Item::Rect { r, radius: 4.0 * s, soft: 0.8, color: fade(t.accent, pa) });
+            let d = r.w * 0.28;
+            frame.content.push(Item::Rect { r: Rect::new(r.x + d, r.y + d, r.w - 2.0 * d, r.h - 2.0 * d), radius: 2.0 * s, soft: 0.8, color: fade(t.on_accent, pa) });
+        } else {
+            frame.content.push(Item::Rect { r, radius: 4.0 * s, soft: 0.8, color: fade(t.fg, 0.28 * pa) });
+            let b = 1.5 * s;
+            frame.content.push(Item::Rect { r: Rect::new(r.x + b, r.y + b, r.w - 2.0 * b, r.h - 2.0 * b), radius: 3.0 * s, soft: 0.8, color: fade(t.bg, 0.9 * pa) });
+        }
+    }
+
+    fn build_trash(&mut self, frame: &mut Frame, text: &mut Text, pill: Rect, pa: f32) {
+        let s = self.scale;
+        let t = self.theme;
+        let c = self.cfg.trash.clone();
+        let px = c.font * s;
+        let px2 = px * 0.85;
+        let (asc, desc) = text.line_metrics(px);
+        let (asc2, desc2) = text.line_metrics(px2);
+        let pad = TRASH_PAD * s;
+        let gap = TRASH_GAP * s;
+        let row_h = (c.font + CLIP_ROW_EXTRA) * s;
+        let btn_h = (c.font + 14.0) * s;
+        let x0 = pill.x + pad;
+        let w_in = pill.w - 2.0 * pad;
+        let n = self.trash.len();
+        let n_sel = self.trash_sel.len();
+
+        // ---- hlavička: Obnoviť vybrané (vľavo) | Vyprázdniť kôš (vpravo, červené); pri potvrdení otázka a Áno / Nie
+        let by = pill.y + pad;
+        if self.trash_confirm {
+            let yes_w = text.measure("Vymazať", px) + 36.0 * s;
+            let no_w = text.measure("Zrušiť", px) + 36.0 * s;
+            let xr = x0 + w_in;
+            self.trash_button(frame, text, xr - yes_w, by, btn_h, px, "Vymazať", (t.alert, t.on_alert), Some(Hit::TrashYes), pa);
+            self.trash_button(frame, text, xr - yes_w - gap - no_w, by, btn_h, px, "Zrušiť", (t.fg, t.bg), Some(Hit::TrashNo), pa);
+            let q = format!("Natrvalo vymazať {}?", crate::trash::count_label(n));
+            let q = Self::ellipsize(text, &q, px, (w_in - yes_w - no_w - 2.0 * gap).max(0.0));
+            text.layout_to(&mut frame.content, &q, px, x0 + 4.0 * s, by + btn_h * 0.5 + (asc - desc) * 0.5, fade(t.fg, pa));
+        } else {
+            let rh = if n_sel > 0 { Some(Hit::TrashRestore) } else { None };
+            self.trash_button(frame, text, x0, by, btn_h, px, "Obnoviť vybrané", (t.accent, t.on_accent), rh, pa);
+            let eh = if n > 0 { Some(Hit::TrashEmpty) } else { None };
+            let ew = text.measure("Vyprázdniť kôš", px) + 36.0 * s;
+            self.trash_button(frame, text, x0 + w_in - ew, by, btn_h, px, "Vyprázdniť kôš", (t.alert, t.on_alert), eh, pa);
+        }
+
+        // ---- hlavička zoznamu: výber všetkého + názvy stĺpcov
+        let rows = self.trash_rows();
+        let scrollable = n > rows;
+        let sb = if scrollable { TRASH_SCROLLBAR * s } else { 0.0 };
+        let inset = 10.0 * s;
+        let cb = (c.font * 0.9).max(12.0) * s;
+        let col_x0 = x0 + inset + cb + 10.0 * s;
+        let col_gap = 10.0 * s;
+        let avail = (pill.x + pill.w - pad - sb - inset - col_x0).max(0.0);
+        let date_w = text.measure("00.00.0000 00:00", px) + 4.0 * s;
+        let (name_w, loc_w, dat_w) = crate::trash::columns(avail, date_w, col_gap, c.show_location, c.show_date);
+        let name_x = col_x0;
+        let mut nx = name_x + name_w + col_gap;
+        let loc_x = nx;
+        if c.show_location {
+            nx += loc_w + col_gap;
+        }
+        let dat_x = nx;
+
+        let hy = by + btn_h + gap;
+        let cell = Rect::new(x0, hy, inset + cb + 10.0 * s, row_h);
+        self.hits.push((cell, Hit::TrashAll));
+        let all = n > 0 && n_sel == n;
+        let hov = self.hover == Some(Hit::TrashAll);
+        if hov {
+            frame.content.push(Item::Rect { r: cell, radius: 8.0 * s, soft: 0.8, color: fade(t.fg, 0.10 * pa) });
+        }
+        self.trash_checkbox(frame, Rect::new(x0 + inset, hy + (row_h - cb) * 0.5, cb, cb), all, pa);
+        let title_col = fade(t.fg, 0.55 * pa);
+        let ty = hy + row_h * 0.5 + (asc2 - desc2) * 0.5;
+        text.layout_to(&mut frame.content, "Názov", px2, name_x, ty, title_col);
+        if c.show_location {
+            text.layout_to(&mut frame.content, "Pôvodné umiestnenie", px2, loc_x, ty, title_col);
+        }
+        if c.show_date {
+            text.layout_to(&mut frame.content, "Dátum zmazania", px2, dat_x, ty, title_col);
+        }
+        let ly = hy + row_h - 1.0 * s;
+        frame.content.push(Item::Rect { r: Rect::new(x0, ly, w_in - sb, 1.0 * s), radius: 0.0, soft: 0.5, color: fade(t.fg, 0.12 * pa) });
+
+        // ---- riadky
+        let list_y = hy + row_h;
+        if n == 0 {
+            let msg = if self.trash_loaded { "Kôš je prázdny" } else { "Načítavam…" };
+            let tw = text.measure(msg, px);
+            let cy = list_y + rows as f32 * row_h * 0.5;
+            text.layout_to(&mut frame.content, msg, px, pill.x + (pill.w - tw) * 0.5, cy + (asc - desc) * 0.5, fade(t.fg, 0.7 * pa));
+        } else {
+            let start = self.trash_scroll.min(n.saturating_sub(rows));
+            for k in 0..rows.min(n) {
+                let i = start + k;
+                let y = list_y + k as f32 * row_h;
+                let r = Rect::new(x0, y, w_in - sb, row_h);
+                self.hits.push((r, Hit::TrashRow(i)));
+                let checked = self.trash_sel.contains(&self.trash[i].info);
+                if checked {
+                    frame.content.push(Item::Rect { r, radius: 8.0 * s, soft: 0.8, color: fade(t.accent, 0.22 * pa) });
+                } else if self.hover == Some(Hit::TrashRow(i)) {
+                    frame.content.push(Item::Rect { r, radius: 8.0 * s, soft: 0.8, color: fade(t.fg, 0.10 * pa) });
+                }
+                self.trash_checkbox(frame, Rect::new(x0 + inset, y + (row_h - cb) * 0.5, cb, cb), checked, pa);
+                let by0 = y + row_h * 0.5 + (asc - desc) * 0.5;
+                let e = &self.trash[i];
+                let name = Self::ellipsize(text, &e.name, px, name_w);
+                text.layout_to(&mut frame.content, &name, px, name_x, by0, fade(t.fg, pa));
+                if c.show_location {
+                    let loc = Self::ellipsize(text, &e.location, px, loc_w);
+                    text.layout_to(&mut frame.content, &loc, px, loc_x, by0, fade(t.fg, 0.7 * pa));
+                }
+                if c.show_date {
+                    text.layout_to(&mut frame.content, &e.date, px, dat_x, by0, fade(t.fg, 0.7 * pa));
+                }
+            }
+            if scrollable {
+                let track_h = rows as f32 * row_h;
+                let thumb_h = (track_h * rows as f32 / n as f32).max(16.0 * s).min(track_h);
+                let frac = start as f32 / (n - rows) as f32;
+                let thumb_y = list_y + (track_h - thumb_h) * frac;
+                let w = 4.0 * s;
+                let x = pill.x + pill.w - pad - sb + (sb - w) * 0.5;
+                frame.content.push(Item::Rect { r: Rect::new(x, thumb_y, w, thumb_h), radius: w * 0.5, soft: 0.8, color: fade(t.fg, 0.35 * pa) });
+            }
+        }
+
+        // ---- pätka: hláška o poslednej operácii, inak počet položiek a vybraných
+        let foot_h = (c.font * 0.85 + 8.0) * s;
+        let fy = list_y + rows as f32 * row_h + gap;
+        let msg = if !self.trash_note.is_empty() {
+            self.trash_note.clone()
+        } else if n == 0 {
+            String::new()
+        } else if n_sel > 0 {
+            format!("{} · vybrané: {}", crate::trash::count_label(n), n_sel)
+        } else {
+            crate::trash::count_label(n)
+        };
+        let msg = Self::ellipsize(text, &msg, px2, w_in - 2.0 * inset);
+        text.layout_to(&mut frame.content, &msg, px2, x0 + inset, fy + foot_h * 0.5 + (asc2 - desc2) * 0.5, fade(t.fg, 0.7 * pa));
     }
 
     fn build_wifi(&mut self, frame: &mut Frame, text: &mut Text, pill: Rect, pa: f32) {
