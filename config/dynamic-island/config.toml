@@ -18,7 +18,7 @@ shadow      = true
 surface_width  = 760    # priehľadný povrch; myš prijíma len samotný ostrovček
 surface_height = 580
 tooltip_delay_ms  = 450
-collapse_delay_ms = 100
+collapse_delay_ms = 200
 poll_ms = 300           # kontrola caps/inhibitor/rec/rozloženia
 
 [colors]  # voliteľné prepisy: "@meno" z colors_file alebo "#rrggbb"
@@ -33,7 +33,7 @@ format = "%A  %d. %B,  %H:%M"
 locale = "sk_SK.UTF-8"
 on_click = "calendar"                        # kalendár sa rozbalí priamo v ostrovčeku
 on_click_middle = "~/.config/wayfire/scripts/wallpaper -r"
-on_click_right = "hardware"   
+on_click_right = "sysmenu"   
 
 [network]
 interface = "wlan0"
@@ -54,14 +54,16 @@ icon_size = 22           # veľkosť ikony (px)
 width = 500            # celková šírka okna vrátane lišty; bez nej podľa aktívnej záložky
 # height = 420           # celková výška okna vrátane lišty; bez nej podľa najvyššej záložky
 # poradie a výber záložiek; ikona je Nerd Font glyf (chýbajúca = predvolená)
-tab1 = "audio"
+tab5 = "audio"
 tab2 = "wifi"
 tab3 = "bluetooth"
 tab4 = "monitor"
-tab1_icon = ""
+tab1 = "menu:settings"          # názov z [[menu]] name = "nastavenia"
+tab5_icon = ""
 tab2_icon = ""
 tab3_icon = ""
 tab4_icon = ""
+tab1_icon = ""          # ikona je voliteľná, predvolene ozubené koleso "\U000f0493" 
 
 [wifi]
 font_size = 16
@@ -124,14 +126,13 @@ max_items = 200   # koľko najnovších položiek sa načíta
 # list_command = "cliphist list"
 # copy_command = "cliphist decode | wl-copy"
 
-# Kôš zo všetkých diskov: on_click = "trash" (alebo v menu command = "module:trash")
 [trash]
-width = 560            # šírka panela
-rows = 8               # koľko riadkov je vidieť, viac = skrolovanie
-text_size = 14         # veľkosť písma
-confirm_empty = true   # pred vyprázdnením sa spýtať
-show_location = true   # stĺpec s pôvodným umiestnením
-show_date = true       # stĺpec s dátumom zmazania
+width = 600
+rows = 15
+text_size = 18
+confirm_empty = true
+show_location = false
+show_date = true
 
 [wallpaper]
 directory = "~/.config/wayfire/media/wallpaper"
@@ -156,7 +157,7 @@ button4_command = "qt6ct"
 name = "off"
 text = ""
 on_click = "power"
-on_click_right = "sysmenu"
+on_click_right = "hardware"
 
 [capslock]
 text = "CAPS"
@@ -342,9 +343,9 @@ separator = true
 #exec = "~/.config/dynamic-island/scripts/temp.sh"
 #interval = 5
 [[menu.item]]
-label = "Kôš: {}"
+label = "Kôš {}"
 exec = "~/.config/dynamic-island/scripts/trash.sh"
-command = "/home/mm/.local/bin/trash"                               # voliteľné: klik otvorí kôš
+command = "module:trash"                               # voliteľné: klik otvorí kôš
 [[menu.item]]
 separator = true
 
@@ -401,6 +402,8 @@ text_size = 48
 cell_width = 100
 gap = 6
 padding = 12
+separator_thickness = 2
+separator_length = 0.8
 [[menu.item]]
 label = ""
 command = "swaylock -f -i /home/mm/.config/wayfire/media/lockscreen.jpg --show-keyboard-layout --indicator-radius 100 --indicator-thickness 7"
@@ -416,3 +419,43 @@ command = "sudo reboot"
 [[menu.item]]
 label = ""
 command = "sudo poweroff"
+
+#### Settings #################################################################
+[[menu]]
+name = "settings"
+title = "Nastavenie"
+text_columns = 3
+icon_columns = 1          
+icon_size = 86
+#rows = 5
+text_size = 18
+cell_width = 120
+gap = 16
+padding = 10
+separator_thickness = 2
+separator_length = 0.8
+
+[[menu.item]]
+separator = true
+[[menu.item]]
+label = "Wayfire"
+command = "wcm"
+[[menu.item]]
+label = "Gestures"
+command = "wstroke-config"
+[[menu.item]]
+label = "MX Master"
+command = "solaar"
+#[[menu.item]]
+#separator = true
+[[menu.item]]
+label = "Firewall"
+command = "rungufw.sh"
+[[menu.item]]
+label = "S.M.A.R.T"
+command = "QDiskInfo"
+[[menu.item]]
+separator = true
+[[menu.item]]
+icon = "themes.png"
+command = "module:wallpaper"
