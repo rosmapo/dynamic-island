@@ -182,7 +182,6 @@ const DISK_BOTTOM: f32 = 12.0;
 // kontajner hardware (logické px)
 const HW_BAR_PAD: f32 = 10.0; // okraj lišty okolo záložiek
 const HW_BAR_INSET: f32 = 6.0; // odsadenie podkladu lišty od okraja okna
-const HW_TAB_GAP: f32 = 6.0;
 
 // panel schránky (logické px)
 /// po koľkých sekundách bez stlačenia klávesu sa zadávanie hesla zruší
@@ -1477,7 +1476,7 @@ impl Ui {
         let inner_w = self.panel_dims(self.big).0;
         let tab = c.tab_size * s;
         let bar_t = crate::hardware::bar_thickness(tab, HW_BAR_PAD * s);
-        let bar_l = crate::hardware::bar_length(c.tabs.len(), tab, HW_TAB_GAP * s, HW_BAR_PAD * s);
+        let bar_l = crate::hardware::bar_length(c.tabs.len(), tab, c.tab_gap * s, HW_BAR_PAD * s);
         crate::hardware::window_size(c.pos, (inner_w, inner_h), bar_t, bar_l, c.width.map(|w| w * s), c.height.map(|h| h * s))
     }
 
@@ -2950,7 +2949,7 @@ impl Ui {
         frame.content.push(Item::Rect { r: back, radius: (tab * 0.5).min(back.w * 0.5).min(back.h * 0.5), soft: 0.8, color: fade(t.fg, 0.07 * pa) });
 
         let (asc, desc) = text.line_metrics(icon_px);
-        for (i, (rx, ry, rw, rh)) in hw::tab_rects(pos, (bx, by, bw, bh), n, tab, HW_TAB_GAP * s, HW_BAR_PAD * s).into_iter().enumerate() {
+        for (i, (rx, ry, rw, rh)) in hw::tab_rects(pos, (bx, by, bw, bh), n, tab, c.tab_gap * s, HW_BAR_PAD * s).into_iter().enumerate() {
             let r = Rect::new(rx, ry, rw, rh);
             self.hits.push((r, Hit::HwTab(i)));
             let on = i == active;

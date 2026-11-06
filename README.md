@@ -199,6 +199,7 @@ s daným názvom neexistuje, záložka sa zobrazí, ale nedá sa otvoriť. Predv
     tabs_position = "left"   # left | right | top | bottom
     tab_size = 44
     icon_size = 22
+    # tab_gap = 6            # medzera medzi tlačidlami záložiek (px, 0–64)
     # width = 560            # celková šírka vrátane lišty; bez nej sa šírka mení podľa aktívnej záložky
     # height = 420           # celková výška vrátane lišty; bez nej podľa najvyššej záložky (okno pri prepínaní neskáče)
     # preload = false        # predvolene true: údaje monitora (ddcutil je pomalý) sa načítajú už pri otvorení kontajnera

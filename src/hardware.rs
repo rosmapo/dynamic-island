@@ -52,6 +52,8 @@ pub struct HwCfg {
     pub tab_size: f32,
     /// veľkosť ikony (px)
     pub icon_size: f32,
+    /// medzera medzi tlačidlami záložiek (px)
+    pub tab_gap: f32,
     /// celková šírka okna vrátane lišty; `None` = podľa obsahu aktívnej záložky
     pub width: Option<f32>,
     /// celková výška okna vrátane lišty; `None` = podľa najvyššej záložky
@@ -110,6 +112,7 @@ impl HwCfg {
             pos: TabPos::parse(&t.str_or("tabs_position", "left")),
             tab_size: t.f64_or("tab_size", 44.0).clamp(24.0, 120.0) as f32,
             icon_size: t.f64_or("icon_size", 22.0).clamp(8.0, 64.0) as f32,
+            tab_gap: t.f64_or("tab_gap", 6.0).clamp(0.0, 64.0) as f32,
             width: size("width"),
             height: size("height"),
             preload: t.bool_or("preload", true),
@@ -180,6 +183,7 @@ mod tests {
         assert_eq!(names, ["audio", "bluetooth", "wifi", "monitor"]);
         assert!(c.tabs.iter().all(|t| !t.icon.is_empty()));
         assert_eq!((c.pos, c.tab_size, c.width, c.height), (TabPos::Left, 44.0, None, None));
+        assert_eq!(c.tab_gap, 6.0);
         assert!(c.preload);
         assert!(!HwCfg::from_table(&toml::parse("preload=false\n").unwrap()).preload);
     }

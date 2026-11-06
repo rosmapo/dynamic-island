@@ -51,6 +51,7 @@ tooltip_wifi = ""
 tabs_position = "left"   # left | right | top | bottom
 tab_size = 44            # strana tlačidla záložky (px)
 icon_size = 22           # veľkosť ikony (px)
+# tab_gap = 6            # medzera medzi tlačidlami záložiek (px, 0–64, predvolene 6)
 width = 500            # celková šírka okna vrátane lišty; bez nej podľa aktívnej záložky
 # height = 420           # celková výška okna vrátane lišty; bez nej podľa najvyššej záložky
 preload = false        # predvolene true: údaje monitora sa načítajú už pri otvorení kontajnera (ddcutil je pomalý)
