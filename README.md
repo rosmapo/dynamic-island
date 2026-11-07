@@ -242,6 +242,7 @@ cez frontu s `eventfd`.
 | `providers.rs` | vlákna zdrojov: sieť/VPN, zvuk, „fast“ poll (caps, inhibitor, recorder, rozloženie), `[[custom]]` |
 | `wayfire.rs` | Wayfire IPC (rozloženie klávesnice, autohide) |
 | `dbus.rs` | vlastný D-Bus klient (session aj system bus) |
+| `sysinfo.rs` | natívne zdroje pre položky menu (`exec = "builtin:…"`): CPU, RAM, swap, teplota, disk, sieť |
 | `mpris.rs` | modul `media`: prehrávače MPRIS, výber aktívneho, obal (JPEG → PNG), príkazy play/next/prev |
 | `notify.rs`, `nicons.rs`, `history.rs` | notifikačný server, ikony notifikácií (PNG z `image-data`/téme ikon), história a jej načítanie pre panel |
 | `disks.rs` | UDisks2 (automount, odpojenie) |
@@ -372,6 +373,9 @@ služby (nie na Debian).
 | `/sys/class/net/<iface>/{operstate,wireless,flags}` | stav rozhrania, detekcia Wi-Fi, VPN rozhrania (`flags & 1`) |
 | `/proc/net/wireless` | úroveň signálu (dBm) |
 | `/sys/class/leds/*::capslock/brightness` | Caps Lock (LED musí existovať a byť čitateľná bez root) |
+| `/proc/stat`, `/proc/meminfo`, `/proc/net/dev`, `/proc/net/route` | `builtin:cpu`, `builtin:ram`/`swap`, `builtin:net-*` (rozhranie s predvolenou trasou) |
+| `/sys/class/thermal/thermal_zone*/{temp,type}`, `/sys/class/hwmon/*/{name,temp*_input,temp*_label}` | `builtin:temp` |
+| `statvfs(3)` (libc) | `builtin:disk*` – rovnaké čísla ako `df` |
 | `/proc/mounts`, `/proc/self` | zistenie pripojených diskov a UID pre kôš |
 | `/run/media/…` | len v testoch/ukážkach; skutočné mountpointy dáva UDisks2 |
 
@@ -759,7 +763,7 @@ Menu sa spúšťa akciou s jeho názvom (`on_click = "apps"`) alebo `module:apps
 | `icon` | PNG: len názov → `~/.config/dynamic-island/icons/`; alebo cesta (`~/…`, absolútna). Buď `icon`, alebo `label` |
 | `label` | text; pri `exec` šablóna — `{}` sa nahradí výstupom (`"CPU: {} %"`) |
 | `command` | shell príkaz, alebo `module:…` (pozri 6.4). **Prázdny = položka len na zobrazenie** (bez hoveru a kliku) |
-| `exec` | príkaz, ktorého prvý neprázdny riadok výstupu sa zobrazí (max. 5 s, cez `sh -c`, bez ANSI) |
+| `exec` | príkaz, ktorého prvý neprázdny riadok výstupu sa zobrazí (max. 5 s, cez `sh -c`, bez ANSI); `builtin:ZDROJ` = natívny zdroj bez procesu, pozri 6.18b |
 | `interval` | obnovovanie `exec` počas otvoreného menu v s; `0` = raz pri otvorení |
 | `separator` | `true` = oddeľovací riadok (ostatné kľúče sa ignorujú) |
 | `track` | skupina sledovaného procesu (pozri 6.19) |
@@ -767,6 +771,36 @@ Menu sa spúšťa akciou s jeho názvom (`on_click = "apps"`) alebo `module:apps
 Hodnoty `exec` sa pri každom otvorení menu začínajú prázdne (aby sa nezobrazila zastaraná hodnota). Vybraná položka
 textového menu používa `menu_selected` / `menu_selected_text`, ikonové menu má jemné zvýraznenie. Odchod myši menu
 zatvorí; po otvorení panela sa odchod ignoruje, kým myš nevstúpi do nového panela.
+
+### 6.18b Natívne systémové zdroje (`exec = "builtin:…"`) a `[system]`
+
+Položka menu s `exec = "builtin:ZDROJ[:ARGUMENT]"` sa nevyhodnocuje cez shell, ale priamo v ostrovčeku (`src/sysinfo.rs`):
+bez spúšťania procesov, výstup má rovnaký tvar ako pôvodné skripty, takže `label = "CPU: {} %"`, `interval` a
+rozloženie ostávajú rovnaké. Vyhodnocuje sa len pri otvorenom menu (a podľa `interval`), nič nebeží na pozadí.
+
+| Zdroj | Výstup | Poznámka |
+|---|---|---|
+| `cpu` | `7` (%) | rozdiel dvoch vzoriek `/proc/stat` (pri `interval` oproti predošlému vyhodnoteniu, pri prvom po 0,5 s); polia ako `cpu.sh` (bez steal/guest) |
+| `ram` | `2,35 GB` / `850 MB` | využitá pamäť = `MemTotal − MemAvailable`; **1 GB = 1024³ B** (ako `free`), 2 desatinné miesta |
+| `ram-pct` | `15` (%) | celé číslo (skrátené) |
+| `swap` | `0 MB` | využitý swap (formát ako `ram`) |
+| `temp` | `52 °C` | najvyššia teplota z thermal zón (ako `temp.sh`), inak z hwmon; `n/a`, ak nič nie je |
+| `temp:NÁZOV` | `61 °C` | najvyššia zo snímačov, ktorých názov (`type` zóny, `name` + `temp*_label` v hwmon) obsahuje NÁZOV, bez ohľadu na veľkosť písmen (`coretemp`, `k10temp`, `nvme`, `Package`) |
+| `disk[:CESTA]` | `8,4 GB` / `63,2 MB` / `4,1 kB` | **obsadené miesto presne ako `df`/GNOME** (`statvfs`: `(blocks − bfree) × frsize`), **1 GB = 10⁹ B**, 1 desatinné miesto; CESTA = ľubovoľná cesta v danom súborovom systéme (predvolene `/`, `~/` sa rozvinie) |
+| `disk-pct[:CESTA]` | `7` (%) | **presne ako `df --output=pcent`**: `used / (used + avail)` zaokrúhlené nahor (rezerva pre root sa nepočíta) |
+| `disk-free[:CESTA]`, `disk-total[:CESTA]` | `29,3 GB` | voľné miesto pre bežného používateľa (`bavail`) / veľkosť; formát ako `disk` |
+| `net-down`, `net-up` | `0 kB/s` / `1,5 MB/s` | rozhranie s predvolenou trasou (`/proc/net/route`) alebo `[system] net_interface`; od 1 MB/s `MB/s` (1 MB = 1024²), inak celé `kB/s` (1 kB = 1024 B); bez trasy `n/a` |
+
+Neznámy zdroj zobrazí `?`, nedostupný údaj `n/a`. Desatinný oddeľovač určuje `[system] decimal`.
+
+| Kľúč `[system]` | Predvolené | Popis |
+|---|---|---|
+| `decimal` | `","` | desatinný oddeľovač vo výstupe (`","` alebo `"."`) |
+| `net_interface` | `""` | rozhranie pre `net-down` / `net-up`; prázdne = rozhranie s predvolenou trasou |
+
+Skripty z `config/dynamic-island/scripts/` (`cpu.sh`, `ram.sh`, `net.sh`, `disk.sh`, `disk2.sh`, `temp.sh`) zostávajú v repozitári
+ako náhrada pre prípad, že by niečo bolo treba upraviť; vzorový config už používa `builtin:`. Pri migrácii na iný systém sú
+potrebné len `/proc` a `/sys` (Linux); žiadne externé programy.
 
 ### 6.19 Sledované procesy (`track`) a modul `radio`
 

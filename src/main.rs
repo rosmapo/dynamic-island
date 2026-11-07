@@ -21,6 +21,7 @@ mod nicons;
 mod providers;
 mod render;
 mod snapshot;
+mod sysinfo;
 mod sys;
 mod text;
 mod trash;

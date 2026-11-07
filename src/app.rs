@@ -219,8 +219,13 @@ fn run_action(a: Action, cfg: &Config, disk_tx: &Option<Tx<DiskCmd>>, tx: &Tx<Ms
         Action::MenuExec { gen, idx, cmd } => {
             // výstup príde na pozadí ako `Msg::MenuExec`; hlavná slučka medzitým nečaká
             let tx = tx.clone();
+            let opts = crate::sysinfo::Opts { decimal: cfg.sys_decimal.clone(), net_iface: cfg.sys_net_iface.clone() };
             std::thread::spawn(move || {
-                let raw = run_capture(&cmd, MENU_EXEC_TIMEOUT);
+                // `builtin:ZDROJ` = natívny zdroj (CPU, RAM, disk, sieť, teplota), inak príkaz cez shell
+                let raw = match cmd.trim().strip_prefix("builtin:") {
+                    Some(spec) => crate::sysinfo::eval(spec, &opts),
+                    None => run_capture(&cmd, MENU_EXEC_TIMEOUT),
+                };
                 tx.send(Msg::MenuExec(gen, idx, crate::data::menu_exec_line(&raw)));
             });
         }

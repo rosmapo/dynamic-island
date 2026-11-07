@@ -208,6 +208,9 @@ pub struct Config {
     pub notif_width: f32,
     pub notif_max: usize,
     pub notif_lines: usize,
+    /// `[system]`: desatinný oddeľovač a rozhranie pre natívne zdroje `exec = "builtin:…"`
+    pub sys_decimal: String,
+    pub sys_net_iface: String,
     /// zobrazovať ikony notifikácií (vo vyskakovacom okne aj v histórii)
     pub notif_icons: bool,
     /// panel histórie notifikácií: šírka, výška (px), najviac riadkov tela na kartu
@@ -297,6 +300,7 @@ impl Config {
         let rec = t.sub("recorder");
         let radio = t.sub("radio");
         let media = t.sub("media");
+        let system = t.sub("system");
         let dk = t.sub("disks");
         let auto = t.sub("autohide");
         let nt = t.sub("notifications");
@@ -559,6 +563,8 @@ impl Config {
             notif_width: nt.f64_or("width", 450.0) as f32,
             notif_max: nt.f64_or("max_visible", 3.0).max(1.0) as usize,
             notif_lines: nt.f64_or("max_lines", 3.0).max(1.0) as usize,
+            sys_decimal: system.str_or("decimal", ","),
+            sys_net_iface: system.str_or("net_interface", ""),
             notif_icons: nt.bool_or("icons", true),
             hist_w: nt.f64_or("panel_width", 480.0).clamp(240.0, 1400.0) as f32,
             hist_h: nt.f64_or("panel_height", 520.0).clamp(200.0, 1600.0) as f32,

@@ -47,6 +47,43 @@ extern "C" {
     fn prctl(option: c_int, a2: std::ffi::c_ulong, a3: std::ffi::c_ulong, a4: std::ffi::c_ulong, a5: std::ffi::c_ulong) -> c_int;
     fn setsid() -> c_int;
     fn kill(pid: c_int, sig: c_int) -> c_int;
+    #[link_name = "statvfs"]
+    fn c_statvfs(path: *const c_char, buf: *mut StatVfs) -> c_int;
+}
+
+/// `struct statvfs` (glibc, LP64): 11 × unsigned long + 6 × int rezerva.
+#[repr(C)]
+struct StatVfs {
+    f_bsize: std::ffi::c_ulong,
+    f_frsize: std::ffi::c_ulong,
+    f_blocks: std::ffi::c_ulong,
+    f_bfree: std::ffi::c_ulong,
+    f_bavail: std::ffi::c_ulong,
+    f_files: std::ffi::c_ulong,
+    f_ffree: std::ffi::c_ulong,
+    f_favail: std::ffi::c_ulong,
+    f_fsid: std::ffi::c_ulong,
+    f_flag: std::ffi::c_ulong,
+    f_namemax: std::ffi::c_ulong,
+    f_spare: [c_int; 6],
+}
+
+/// Údaje o súborovom systéme, ktorý obsahuje `path` (rovnaké čísla ako `df`): veľkosť bloku a počty blokov.
+pub struct FsStat {
+    pub frsize: u64,
+    pub blocks: u64,
+    pub bfree: u64,
+    pub bavail: u64,
+}
+
+pub fn statvfs(path: &str) -> Option<FsStat> {
+    let c = CString::new(path).ok()?;
+    let mut s: StatVfs = unsafe { std::mem::zeroed() };
+    if unsafe { c_statvfs(c.as_ptr(), &mut s) } != 0 {
+        return None;
+    }
+    let fr = if s.f_frsize > 0 { s.f_frsize } else { s.f_bsize };
+    Some(FsStat { frsize: fr as u64, blocks: s.f_blocks as u64, bfree: s.f_bfree as u64, bavail: s.f_bavail as u64 })
 }
 
 const LC_TIME: c_int = 2;
