@@ -6,6 +6,7 @@ use crate::wayfire;
 use std::io::{BufRead, BufReader};
 use std::os::unix::process::CommandExt;
 use std::process::{Command, Stdio};
+use std::sync::atomic::{AtomicBool, AtomicI32, Ordering};
 use std::time::Duration;
 
 pub fn spawn_all(cfg: &Config, tx: &Tx<Msg>) {
@@ -237,6 +238,19 @@ fn read_audio() -> Option<(bool, f32)> {
     run_stdout("wpctl", &["get-volume", "@DEFAULT_AUDIO_SINK@"]).and_then(|s| parse_wpctl(&s))
 }
 
+/// PID bežiaceho `pactl subscribe` (0 = žiadny) a príznak, že sa ostrovček chystá na `exec()` (reštart).
+static AUDIO_SUB_PID: AtomicI32 = AtomicI32::new(0);
+static SHUTTING_DOWN: AtomicBool = AtomicBool::new(false);
+
+/// Volať tesne pred `exec()` (reštart po zmene configu): `exec` zachová PID procesu, takže nevyzdvihnutý potomok
+/// (`pactl subscribe`, ktorého rodičovské vlákno `exec` zničí) by ostal ako zombie `[pactl] <defunct>` – nové vlákno
+/// by naň nikdy nezavolalo `wait`. Preto sa `pactl` ukončí a vlákno zvuku ho ešte stihne vyzdvihnúť.
+pub fn stop_children() {
+    SHUTTING_DOWN.store(true, Ordering::SeqCst);
+    sys::terminate(AUDIO_SUB_PID.load(Ordering::SeqCst));
+    std::thread::sleep(Duration::from_millis(150));
+}
+
 fn spawn_audio(tx: Tx<Msg>) {
     std::thread::spawn(move || {
         let mut last: Option<(bool, f32)> = None;
@@ -249,6 +263,9 @@ fn spawn_audio(tx: Tx<Msg>) {
             }
         };
         loop {
+            if SHUTTING_DOWN.load(Ordering::SeqCst) {
+                return;
+            }
             emit(&mut last);
             // udalosti z PipeWire/PulseAudio; ak pactl nie je, zálohuj pollingom
             let child = with_parent_death(Command::new("pactl").arg("subscribe"))
@@ -258,6 +275,11 @@ fn spawn_audio(tx: Tx<Msg>) {
                 .spawn();
             match child {
                 Ok(mut ch) => {
+                    AUDIO_SUB_PID.store(ch.id() as i32, Ordering::SeqCst);
+                    if SHUTTING_DOWN.load(Ordering::SeqCst) {
+                        // reštart začal medzitým – `pactl` hneď ukončiť a vyzdvihnúť
+                        let _ = ch.kill();
+                    }
                     if let Some(out) = ch.stdout.take() {
                         for line in BufReader::new(out).lines().map_while(Result::ok) {
                             if line.contains("sink") || line.contains("server") {
@@ -266,6 +288,10 @@ fn spawn_audio(tx: Tx<Msg>) {
                         }
                     }
                     let _ = ch.wait();
+                    AUDIO_SUB_PID.store(0, Ordering::SeqCst);
+                    if SHUTTING_DOWN.load(Ordering::SeqCst) {
+                        return;
+                    }
                     std::thread::sleep(Duration::from_secs(2));
                 }
                 Err(_) => std::thread::sleep(Duration::from_secs(1)),

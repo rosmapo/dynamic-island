@@ -46,6 +46,7 @@ extern "C" {
     fn signal(sig: c_int, handler: usize) -> usize;
     fn prctl(option: c_int, a2: std::ffi::c_ulong, a3: std::ffi::c_ulong, a4: std::ffi::c_ulong, a5: std::ffi::c_ulong) -> c_int;
     fn setsid() -> c_int;
+    fn kill(pid: c_int, sig: c_int) -> c_int;
 }
 
 const LC_TIME: c_int = 2;
@@ -246,6 +247,12 @@ pub fn install_signal(sig: i32, handler: extern "C" fn(i32)) {
 /// Dieťa dostane SIGTERM, keď zanikne rodičovské vlákno (aby neostávali sirotci).
 pub fn die_with_parent() {
     unsafe { prctl(1, 15, 0, 0, 0) };
+}
+/// Pošle SIGTERM procesu `pid`.
+pub fn terminate(pid: i32) {
+    if pid > 0 {
+        unsafe { kill(pid, 15) };
+    }
 }
 pub fn new_session() {
     unsafe { setsid() };

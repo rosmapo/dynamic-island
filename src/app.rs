@@ -382,6 +382,7 @@ pub fn run(cfg: Config) -> Result<(), String> {
                 if names.iter().any(|n| *n == cfg_name) && !cfg_name.is_empty() {
                     eprintln!("dynamic-island: konfigurácia sa zmenila, reštartujem");
                     let exe = std::env::current_exe().map_err(|e| e.to_string())?;
+                    providers::stop_children();
                     let err = Command::new(exe).args(std::env::args().skip(1)).exec();
                     return Err(format!("exec: {err}"));
                 }
