@@ -19,10 +19,6 @@ use wayland_client::protocol::{
     wl_surface::{self, WlSurface},
 };
 use wayland_client::{Connection, Dispatch, EventQueue, Proxy, QueueHandle, WEnum};
-use wayland_protocols::ext::idle_notify::v1::client::{
-    ext_idle_notification_v1::{self, ExtIdleNotificationV1},
-    ext_idle_notifier_v1::{self, ExtIdleNotifierV1},
-};
 use wayland_protocols_wlr::layer_shell::v1::client::{
     zwlr_layer_shell_v1::{self, ZwlrLayerShellV1},
     zwlr_layer_surface_v1::{self, Anchor, KeyboardInteractivity, ZwlrLayerSurfaceV1},
@@ -61,8 +57,6 @@ pub struct WlState {
     pub scale: i32,
     pub scale_dirty: bool,
     pub ptr_events: Vec<PtrEvent>,
-    /// (index pravidla [[idle]], true = nečinný / false = návrat)
-    pub idle_events: Vec<(usize, bool)>,
 }
 
 impl WlState {
@@ -84,12 +78,10 @@ pub struct Wl {
     _outputs: Vec<WlOutput>,
     _seat: Option<WlSeat>,
     _shell: ZwlrLayerShellV1,
-    _idle: Vec<ExtIdleNotificationV1>,
-    _notifier: Option<ExtIdleNotifierV1>,
 }
 
 impl Wl {
-    pub fn new(width: u32, height: u32, idle_secs: &[u32]) -> Result<Wl, String> {
+    pub fn new(width: u32, height: u32) -> Result<Wl, String> {
         let conn = Connection::connect_to_env().map_err(|e| format!("nepodarilo sa pripojiť k Waylandu: {e}"))?;
         let (globals, mut queue) = registry_queue_init::<WlState>(&conn).map_err(|e| format!("wl_registry: {e}"))?;
         let qh = queue.handle();
@@ -109,20 +101,6 @@ impl Wl {
         });
         let outputs: Vec<WlOutput> =
             want.into_iter().map(|(name, ver)| globals.registry().bind::<WlOutput, _, _>(name, ver.min(3), &qh, ())).collect();
-
-        // náhrada swayidle: ext-idle-notify-v1
-        let notifier: Option<ExtIdleNotifierV1> = globals.bind(&qh, 1..=2, ()).ok();
-        let mut idle = Vec::new();
-        if !idle_secs.is_empty() {
-            match (&notifier, &seat) {
-                (Some(n), Some(s)) => {
-                    for (i, secs) in idle_secs.iter().enumerate() {
-                        idle.push(n.get_idle_notification(secs.saturating_mul(1000), s, &qh, i));
-                    }
-                }
-                _ => eprintln!("dynamic-island: kompozitor nepodporuje ext-idle-notify-v1, [[idle]] sa ignoruje"),
-            }
-        }
 
         let surface = compositor.create_surface(&qh, ());
         let layer = shell.get_layer_surface(&surface, None, zwlr_layer_shell_v1::Layer::Overlay, "dynamic-island".to_string(), &qh, ());
@@ -148,7 +126,6 @@ impl Wl {
             scale: 1,
             scale_dirty: false,
             ptr_events: Vec::new(),
-            idle_events: Vec::new(),
         };
         queue.roundtrip(&mut st).map_err(|e| format!("roundtrip: {e}"))?;
         while !st.configured && !st.closed {
@@ -159,7 +136,7 @@ impl Wl {
         if let Some(m) = st.outputs.values().max() {
             st.scale = (*m).max(1);
         }
-        Ok(Wl { conn, queue, qh, st, egl_win: None, _outputs: outputs, _seat: seat, _shell: shell, _idle: idle, _notifier: notifier })
+        Ok(Wl { conn, queue, qh, st, egl_win: None, _outputs: outputs, _seat: seat, _shell: shell })
     }
 
     pub fn create_egl(&mut self, pw: i32, ph: i32) -> Result<Egl, String> {
@@ -379,19 +356,6 @@ impl Dispatch<WlKeyboard, ()> for WlState {
     }
 }
 
-impl Dispatch<ExtIdleNotifierV1, ()> for WlState {
-    fn event(_: &mut Self, _: &ExtIdleNotifierV1, _: ext_idle_notifier_v1::Event, _: &(), _: &Connection, _: &QueueHandle<Self>) {}
-}
-
-impl Dispatch<ExtIdleNotificationV1, usize> for WlState {
-    fn event(st: &mut Self, _: &ExtIdleNotificationV1, ev: ext_idle_notification_v1::Event, idx: &usize, _: &Connection, _: &QueueHandle<Self>) {
-        match ev {
-            ext_idle_notification_v1::Event::Idled => st.idle_events.push((*idx, true)),
-            ext_idle_notification_v1::Event::Resumed => st.idle_events.push((*idx, false)),
-            _ => {}
-        }
-    }
-}
 
 // zachovaj `layer` v štruktúre (zničí sa spolu s Wl)
 impl Drop for Wl {

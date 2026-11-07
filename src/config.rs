@@ -35,14 +35,6 @@ pub struct NotifRule {
     pub timeout_ms: Option<i32>,
 }
 
-/// Náhrada swayidle: po `timeout` sekundách nečinnosti spusti `on_idle`, po návrate `on_resume`.
-#[derive(Clone, Debug, Default)]
-pub struct IdleCfg {
-    pub timeout: u32,
-    pub on_idle: String,
-    pub on_resume: String,
-}
-
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum MenuKind {
     Icons,
@@ -217,7 +209,6 @@ pub struct Config {
     pub notif_rules: Vec<NotifRule>,
     pub history_file: PathBuf,
     pub history_max: usize,
-    pub idle: Vec<IdleCfg>,
 }
 
 pub fn expand(p: &str) -> String {
@@ -558,21 +549,6 @@ impl Config {
                             body: r.str_or("body", ""),
                             on_click: r.str_or("on_click", ""),
                             timeout_ms: r.get("timeout_ms").and_then(|v| v.as_f64()).map(|v| v as i32),
-                        })
-                        .collect()
-                })
-                .unwrap_or_default(),
-            idle: t
-                .get("idle")
-                .and_then(|v| v.as_arr())
-                .map(|a| {
-                    a.iter()
-                        .filter_map(|v| v.as_table())
-                        .filter(|r| r.f64_or("timeout", 0.0) > 0.0)
-                        .map(|r| IdleCfg {
-                            timeout: r.f64_or("timeout", 0.0) as u32,
-                            on_idle: r.str_or("on_idle", ""),
-                            on_resume: r.str_or("on_resume", ""),
                         })
                         .collect()
                 })

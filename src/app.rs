@@ -300,8 +300,7 @@ pub fn run(cfg: Config) -> Result<(), String> {
     let fonts = Fonts::load(&cfg.font_family, &cfg.icon_family)?;
     let mut text = Text::new(Box::new(fonts));
 
-    let idle_secs: Vec<u32> = cfg.idle.iter().map(|i| i.timeout).collect();
-    let mut wl = Wl::new(cfg.surface_w, cfg.surface_h, &idle_secs)?;
+    let mut wl = Wl::new(cfg.surface_w, cfg.surface_h)?;
     let mut scale = wl.st.scale.max(1);
     let egl = wl.create_egl((cfg.surface_w as i32) * scale, (cfg.surface_h as i32) * scale)?;
     let mut renderer = Renderer::new(&egl)?;
@@ -457,16 +456,6 @@ pub fn run(cfg: Config) -> Result<(), String> {
                     theme = Theme::load(&cfg);
                     ui.theme = theme;
                     dirty = true;
-                }
-            }
-        }
-
-        // nečinnosť (náhrada swayidle)
-        for (i, idle) in std::mem::take(&mut wl.st.idle_events) {
-            if let Some(rule) = cfg.idle.get(i) {
-                let cmd = if idle { &rule.on_idle } else { &rule.on_resume };
-                if !cmd.is_empty() {
-                    spawn_detached(cmd);
                 }
             }
         }

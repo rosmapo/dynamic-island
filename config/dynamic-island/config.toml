@@ -233,13 +233,6 @@ summary = "Debian Aktualizácie"
 on_click = "foot bash -c 'sudo apt update && sudo apt -u -V upgrade; exec bash'"
 # timeout_ms = 0
 
-# Náhrada swayidle (protokol ext-idle-notify-v1). Wayfire plugin idle (Super+Z) ich blokuje rovnako ako swayidle.
-# Môžeš pridať viac pravidiel (napr. zamknutie po 300 s, uspanie po 600 s).
-[[idle]]
-timeout = 600
-on_idle = "systemctl suspend"
-# on_resume = ""
-
 ##### [[custom]]
 ##### name = "ram"
 ##### exec = "awk '/MemTotal/{t=$2} /MemAvailable/{a=$2} END{printf \"\uf2db %.1f GB\", (t-a)/1048576}' /proc/meminfo"

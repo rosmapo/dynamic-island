@@ -119,11 +119,11 @@ SSID sa zisťuje cez `iw`, potom `iwgetid` / `nmcli`; ak nič z toho nie je nain
 
 Notifikácie sa zobrazujú priamo v ostrovčeku (nahradia jeho obsah ako HUD), ďalšie čakajúce sú označené `+N`.
 
-## Idle (náhrada swayidle)
+## Idle inhibitor
 
-`[[idle]]` s `timeout` (s), `on_idle`, `on_resume` používa `ext-idle-notify-v1`, rovnako ako `swayidle`; odstráň
-`swayidle -w timeout 600 'systemctl suspend' &` z autostartu. Inhibit (Super+Z vo Wayfire) ho blokuje rovnako ako swayidle.
-Ikona inhibítora je už len ukazovateľ (`on_click = ""`).
+Ikona inhibítora je len ukazovateľ (`on_click = ""`): zobrazí sa, kým existuje súbor `[inhibitor] file` (predvolene
+`~/.idle_inhibit`), ktorý spravuje Wayfire skript (Super+Z). Samotná nečinnosť (uspanie, zamknutie) sa rieši mimo
+ostrovčeka, napr. cez `swayidle`.
 
 ## Schránka (cliphist)
 
