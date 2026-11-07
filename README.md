@@ -351,6 +351,27 @@ exec = "~/.config/dynamic-island/scripts/trash.sh"   # vypíše napr. "3 položk
 command = "xdg-open trash:///"                        # voliteľné: klik otvorí kôš (bez command je položka len informačná)
 ```
 
+### Sledované procesy (`track`) a modul `radio`
+
+Položka menu s `track = "skupina"` sa nespustí ako obyčajný príkaz, ale ostrovček si proces **sám spustí a pamätá si ho**. V jednej skupine beží najviac jeden proces: nový štart najprv ukončí (celú skupinu procesov) predošlý, takže netreba `killall`. O skončení procesu sa ostrovček dozvie blokujúcim čakaním na jeho koniec – nič sa nezisťuje cyklicky.
+
+Modul **`radio`** (pridaj ho do `modules`) zobrazí ikonu, kým beží proces zo skupiny `radio`. **Klik na ikonu** proces ukončí; ikona zmizne aj vtedy, keď proces skončí sám. Tooltip ukáže `label` položky. Vypnutie z menu: `command = "module:track-stop:radio"`. Pri reštarte ostrovčeka po zmene configu sa sledované procesy ukončia.
+
+```
+[[menu.item]]
+label = "Lumen"
+command = "mpv https://audio.lumen.sk/live128.mp3 --no-config"
+track = "radio"
+
+[[menu.item]]
+label = "Vypnúť rádio"
+command = "module:track-stop:radio"
+
+[radio]                 # voliteľné
+icon = "\U000f0439"
+tooltip = "{name}\nKlik = vypnúť"   # {name} = label položky
+```
+
 ### Príkaz `module:` v položke menu
 
 `command` položky je bežne shell príkaz. S predponou `module:` sa namiesto toho spustí vnútorná akcia ostrovčeka –

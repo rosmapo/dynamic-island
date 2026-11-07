@@ -19,6 +19,7 @@ pub enum ModId {
     Caps,
     Inhibit,
     Recorder,
+    Radio,
     Disks,
     Custom(usize),
 }
@@ -27,6 +28,10 @@ pub enum ModId {
 pub enum Action {
     Run(String),
     InhibitToggle,
+    /// spustiť príkaz ako sledovaný proces skupiny `group` (predošlý zo skupiny sa najprv ukončí)
+    RunTracked { group: String, name: String, cmd: String },
+    /// ukončiť sledovaný proces skupiny
+    TrackStop(String),
     LayoutToggle,
     AudioMute,
     DiskEject(String),
@@ -432,6 +437,7 @@ impl Ui {
                 "capslock" => ModId::Caps,
                 "inhibitor" => ModId::Inhibit,
                 "recorder" => ModId::Recorder,
+                "radio" => ModId::Radio,
                 "disks" => ModId::Disks,
                 other => match cfg.custom.iter().position(|c| c.name == other) {
                     Some(i) => ModId::Custom(i),
@@ -447,6 +453,7 @@ impl Ui {
                 ModId::Caps => Btn::default(),
                 ModId::Inhibit => cfg.inh.clone(),
                 ModId::Recorder => cfg.rec.clone(),
+                ModId::Radio => cfg.radio.clone(),
                 ModId::Disks => cfg.disks.clone(),
                 ModId::Custom(i) => cfg.custom[i].btn.clone(),
             };
@@ -744,6 +751,15 @@ impl Ui {
             Msg::Caps(c) => self.data.caps = c,
             Msg::Inhibit(i) => self.data.inhibit = i,
             Msg::Rec(r) => self.data.rec = r,
+            Msg::TrackStart { group, id, name } => {
+                self.data.tracked.insert(group, (id, name));
+            }
+            Msg::TrackEnd { group, id } => {
+                // koniec staršieho procesu nesmie zrušiť indikáciu práve spusteného nového
+                if self.data.tracked.get(&group).map(|t| t.0) == Some(id) {
+                    self.data.tracked.remove(&group);
+                }
+            }
             Msg::Custom(i, o) => {
                 if i < self.data.custom.len() {
                     self.data.custom[i] = o;
@@ -832,6 +848,10 @@ impl Ui {
                     (d.rec.clone(), Some((t.alert, t.on_alert)), None, fill(&c.rec.tooltip, &[("text", d.rec.clone())]), 12.0)
                 }
             }
+            ModId::Radio => match d.tracked.get("radio") {
+                Some((_, name)) => (c.radio_icon.clone(), badge_acc, None, fill(&c.radio.tooltip, &[("name", name.clone())]), 12.0),
+                None => none,
+            },
             ModId::Disks => {
                 if d.disks.is_empty() {
                     none
@@ -2148,6 +2168,7 @@ impl Ui {
             "inhibit-toggle" => Some(Action::InhibitToggle),
             "layout-toggle" => Some(Action::LayoutToggle),
             "audio-mute" => Some(Action::AudioMute),
+            c if c.starts_with("track-stop:") => Some(Action::TrackStop(c["track-stop:".len()..].trim().to_string())),
             other => Some(Action::Run(other.to_string())),
         }
     }
@@ -2236,9 +2257,13 @@ impl Ui {
                     return out;
                 }
                 let mut cmd = String::new();
+                // položka s `track`: skupina a zobrazovaný názov (label) sledovaného procesu
+                let (mut track, mut track_name) = (String::new(), String::new());
                 if let (Some(Hit::MenuItem(k)), Panel::Menu(mi)) = (hit, self.panel) {
                     if let Some(item) = self.cfg.menus.get(mi).and_then(|m| m.items.get(k)) {
                         cmd = item.command.clone();
+                        track = item.track.clone();
+                        track_name = item.label.clone();
                     }
                 }
                 // `module:...` – otvorí iný panel ostrovčeka (kalendár, iné menu) namiesto shell príkazu
@@ -2252,7 +2277,12 @@ impl Ui {
                     return out;
                 }
                 if !cmd.is_empty() {
-                    out.push(Action::Run(cmd));
+                    if track.is_empty() {
+                        out.push(Action::Run(cmd));
+                    } else {
+                        let name = if track_name.is_empty() { track.clone() } else { track_name };
+                        out.push(Action::RunTracked { group: track, name, cmd });
+                    }
                 }
                 // klik na položku zatvorí menu; klik na okraj/nadpis ho nechá otvorené (zavrie ho odchod myši)
                 if matches!(hit, Some(Hit::MenuItem(_))) {

@@ -371,6 +371,8 @@ icon = "sysmonitor.png"
 command = "gnome-system-monitor"
 
 ### Radio menu #############################################################################
+# `track = "radio"`: ostrovček príkaz spustí sám, jeden proces na skupinu (nové rádio predošlé ukončí) a modul
+# `radio` v `modules` ukáže ikonu, kým beží; klik na ikonu ho vypne. Voliteľne `[radio]` s `icon`, `tooltip`.
 [[menu]]
 name = "radio"
 title = ""
@@ -382,19 +384,23 @@ gap = 2
 padding = 12
 [[menu.item]]
 label = "Slovensko"
-command = "sh -c 'killall mpv; sleep 0.5; killall mpv; mpv https://icecast.stv.livebox.sk/slovensko_128.mp3 --no-config'"
+command = "mpv https://icecast.stv.livebox.sk/slovensko_128.mp3 --no-config"
+track = "radio"
 [[menu.item]]
 label = "Lumen"
-command = "sh -c 'killall mpv; sleep 0.5; killall mpv; mpv https://audio.lumen.sk/live128.mp3 --no-config'"
+command = "mpv https://audio.lumen.sk/live128.mp3 --no-config"
+track = "radio"
 [[menu.item]]
 label = "Mária"
-command = "sh -c 'killall mpv; sleep 0.5; killall mpv; mpv \"https://dreamsiteradiocp5.com/proxy/radiomariaslomp3?mp=/stream.mp3\" --no-config'"
+command = 'mpv "https://dreamsiteradiocp5.com/proxy/radiomariaslomp3?mp=/stream.mp3" --no-config'
+track = "radio"
 [[menu.item]]
 label = "Rádio 7"
-command = "sh -c 'killall mpv; sleep 0.5; killall mpv; mpv https://play.radio7.sk/128 --no-config'"
+command = "mpv https://play.radio7.sk/128 --no-config"
+track = "radio"
 [[menu.item]]
 label = ""
-command = "sh -c 'killall mpv; sleep 0.5; killall mpv'"
+command = "module:track-stop:radio"
 
 ### Power menu #######################################################################
 [[menu]]

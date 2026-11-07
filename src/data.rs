@@ -156,6 +156,10 @@ pub enum Msg {
     Inhibit(bool),
     Rec(String),
     Custom(usize, CustomOut),
+    /// sledovaný proces (položka menu s `track`) sa spustil: skupina, jeho číslo a zobrazovaný názov
+    TrackStart { group: String, id: u64, name: String },
+    /// sledovaný proces so zadaným číslom skončil (ukončený alebo skončil sám)
+    TrackEnd { group: String, id: u64 },
     /// autohide: true = skryť
     AutoHide(bool),
     /// signály SIGUSR1 / SIGUSR2
@@ -178,6 +182,8 @@ pub struct Data {
     pub caps: bool,
     pub inhibit: bool,
     pub rec: String,
+    /// bežiace sledované procesy: skupina → (číslo procesu, názov)
+    pub tracked: std::collections::HashMap<String, (u64, String)>,
     pub custom: Vec<CustomOut>,
     pub disks: Vec<DiskInfo>,
     pub clock: String,

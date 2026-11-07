@@ -46,8 +46,8 @@ fn simple_command(cmd: &str) -> Option<Vec<String>> {
     Some(words)
 }
 
-/// Spustí príkaz oddelene od ostrovčeka (vlastná session, bez čakania).
-pub fn spawn_detached(cmd: &str) {
+/// Príkaz pripravený na spustenie oddelene od ostrovčeka (vlastná session = vlastná skupina procesov).
+fn session_command(cmd: &str) -> Command {
     // Jednoduchý príkaz (len program a argumenty, bez shell syntaxe) sa spustí priamo – inak by v zozname
     // procesov ostal medzistupeň `sh -c program` (dash nerobí `exec` sám). Zložitejšie príkazy idú cez `sh -c`.
     let mut c = match simple_command(cmd) {
@@ -69,11 +69,75 @@ pub fn spawn_detached(cmd: &str) {
             Ok(())
         });
     }
-    if let Ok(mut child) = c.spawn() {
+    c
+}
+
+/// Spustí príkaz oddelene od ostrovčeka (vlastná session, bez čakania).
+pub fn spawn_detached(cmd: &str) {
+    if let Ok(mut child) = session_command(cmd).spawn() {
         std::thread::spawn(move || {
             let _ = child.wait();
         });
     }
+}
+
+// ------------------------------------------------------------ sledované procesy (položky menu s `track`)
+
+/// Bežiaci sledovaný proces: číslo (rozlišuje ho od predošlého v tej istej skupine), PID vedúceho skupiny
+/// a rúra, cez ktorú čakajúce vlákno oznámi, že proces skončil.
+struct Tracked {
+    id: u64,
+    pid: i32,
+    done: std::sync::mpsc::Receiver<()>,
+}
+
+static TRACKED: std::sync::Mutex<Vec<(String, Tracked)>> = std::sync::Mutex::new(Vec::new());
+/// Štarty sa vykonávajú po jednom: nový proces počká, kým sa predošlý zo skupiny skutočne ukončí.
+static TRACK_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+static TRACK_ID: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+/// Ukončí sledovaný proces skupiny (celú jeho skupinu procesov). S `wait` počká, kým skutočne skončí
+/// (najviac 2 s, potom SIGKILL).
+fn stop_group(group: &str, wait: bool) {
+    let prev = {
+        let mut v = TRACKED.lock().unwrap_or_else(|e| e.into_inner());
+        v.iter().position(|(g, _)| g == group).map(|i| v.remove(i).1)
+    };
+    let Some(t) = prev else { return };
+    sys::terminate_group(t.pid);
+    if wait && t.done.recv_timeout(Duration::from_secs(2)).is_err() {
+        sys::kill_group(t.pid);
+        let _ = t.done.recv_timeout(Duration::from_secs(1));
+    }
+}
+
+/// Ukončí všetky sledované procesy (pred `exec()` pri reštarte): čakajúce vlákna ich ešte stihnú vyzdvihnúť,
+/// takže nezostanú zombie ani bez indikácie.
+pub fn stop_tracked() {
+    let groups: Vec<String> = TRACKED.lock().unwrap_or_else(|e| e.into_inner()).iter().map(|(g, _)| g.clone()).collect();
+    for g in groups {
+        stop_group(&g, false);
+    }
+}
+
+/// Spustí `cmd` ako sledovaný proces skupiny `group`: predošlý zo skupiny sa najprv ukončí, ostrovček dostane
+/// `Msg::TrackStart` a po skončení procesu `Msg::TrackEnd`. Na koniec procesu sa len blokujúco čaká (`wait`),
+/// nič sa nezisťuje cyklicky.
+fn start_tracked(group: String, name: String, cmd: String, tx: Tx<Msg>) {
+    std::thread::spawn(move || {
+        let guard = TRACK_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        stop_group(&group, true);
+        let Ok(mut child) = session_command(&cmd).spawn() else { return };
+        let id = TRACK_ID.fetch_add(1, Ordering::SeqCst) + 1;
+        let (dtx, drx) = std::sync::mpsc::channel::<()>();
+        TRACKED.lock().unwrap_or_else(|e| e.into_inner()).push((group.clone(), Tracked { id, pid: child.id() as i32, done: drx }));
+        tx.send(Msg::TrackStart { group: group.clone(), id, name });
+        drop(guard);
+        let _ = child.wait();
+        let _ = dtx.send(());
+        TRACKED.lock().unwrap_or_else(|e| e.into_inner()).retain(|(_, t)| t.id != id);
+        tx.send(Msg::TrackEnd { group, id });
+    });
 }
 
 /// Spustí `sh -c cmd` a pošle mu `input` (+ nový riadok) na vstup; beží oddelene od ostrovčeka.
@@ -211,6 +275,8 @@ fn run_action(a: Action, cfg: &Config, disk_tx: &Option<Tx<DiskCmd>>, tx: &Tx<Ms
             }
         }
         Action::Run(cmd) => spawn_detached(&cmd),
+        Action::RunTracked { group, name, cmd } => start_tracked(group, name, cmd, tx.clone()),
+        Action::TrackStop(group) => stop_group(&group, false),
         Action::InhibitToggle => {
             let f = &cfg.inh_file;
             if std::path::Path::new(f).exists() {
@@ -382,6 +448,7 @@ pub fn run(cfg: Config) -> Result<(), String> {
                 if names.iter().any(|n| *n == cfg_name) && !cfg_name.is_empty() {
                     eprintln!("dynamic-island: konfigurácia sa zmenila, reštartujem");
                     let exe = std::env::current_exe().map_err(|e| e.to_string())?;
+                    stop_tracked();
                     providers::stop_children();
                     let err = Command::new(exe).args(std::env::args().skip(1)).exec();
                     return Err(format!("exec: {err}"));

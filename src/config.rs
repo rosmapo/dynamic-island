@@ -62,6 +62,9 @@ pub struct MenuItemCfg {
     pub interval: f64,
     /// Vlastný riadok s oddelovačom; `icon`/`label`/`command` sa ignorujú.
     pub separator: bool,
+    /// Skupina sledovaného procesu (napr. `"radio"`): ostrovček si príkaz spustí sám, pamätá si ho (jeden proces na
+    /// skupinu – nový štart predošlý ukončí) a modul s názvom skupiny ukáže ikonu, kým beží. Prázdne = bežný príkaz.
+    pub track: String,
 }
 
 /// Vlastné menu (panel ako kalendár). Spúšťa sa cez `on_click = "meno_menu"`.
@@ -162,6 +165,9 @@ pub struct Config {
     pub inh_icon: String,
     pub inh_file: String,
     pub inh: Btn,
+    /// modul `radio`: ikona sledovaného procesu zo skupiny `radio` (pozri `MenuItemCfg::track`)
+    pub radio_icon: String,
+    pub radio: Btn,
     pub rec_file: String,
     pub rec: Btn,
     pub disks: Btn,
@@ -283,6 +289,7 @@ impl Config {
         let caps = t.sub("capslock");
         let inh = t.sub("inhibitor");
         let rec = t.sub("recorder");
+        let radio = t.sub("radio");
         let dk = t.sub("disks");
         let auto = t.sub("autohide");
         let nt = t.sub("notifications");
@@ -360,6 +367,7 @@ impl Config {
                                     exec,
                                     interval: it.f64_or("interval", 0.0).max(0.0),
                                     separator: false,
+                                    track: it.str_or("track", "").trim().to_string(),
                                 });
                             }
                         }
@@ -429,7 +437,7 @@ impl Config {
         }
 
         let mut modules = t.strs("modules").unwrap_or_else(|| {
-            ["network", "vpn", "clock", "keyboard", "audio", "capslock", "inhibitor", "recorder", "disks"]
+            ["network", "vpn", "clock", "keyboard", "audio", "capslock", "inhibitor", "recorder", "radio", "disks"]
                 .map(String::from)
                 .to_vec()
         });
@@ -506,6 +514,8 @@ impl Config {
             inh_icon: inh.str_or("icon", "\u{f0f4}"),
             inh_file: expand(&inh.str_or("file", "~/.idle_inhibit")),
             inh: btn(&inh, "inhibit-toggle", "", "Idle Inhibitor"),
+            radio_icon: radio.str_or("icon", "\u{f0439}"),
+            radio: btn(&radio, "track-stop:radio", "", "{name}\nKlik = vypnúť"),
             rec_file: expand(&rec.str_or("file", "/tmp/RECORDING")),
             rec: btn(&rec, "", "", ""),
             disks: btn(&dk, "menu", "eject-all", "{list}"),

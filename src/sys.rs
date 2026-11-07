@@ -254,6 +254,18 @@ pub fn terminate(pid: i32) {
         unsafe { kill(pid, 15) };
     }
 }
+/// SIGTERM celej skupine procesov `pgid` (proces po `new_session` je vedúcim svojej skupiny, takže ide aj o jeho potomkov).
+pub fn terminate_group(pgid: i32) {
+    if pgid > 1 {
+        unsafe { kill(-pgid, 15) };
+    }
+}
+/// SIGKILL celej skupine procesov `pgid`.
+pub fn kill_group(pgid: i32) {
+    if pgid > 1 {
+        unsafe { kill(-pgid, 9) };
+    }
+}
 pub fn new_session() {
     unsafe { setsid() };
 }
