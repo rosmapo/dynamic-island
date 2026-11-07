@@ -29,7 +29,8 @@ pub enum Item {
     Rect { r: Rect, radius: f32, soft: f32, color: Color },
     Glyph(GlyphQuad),
     /// RGBA textúra; `path` je kľúč v IconCache (už expandovaný / resolved).
-    Image { r: Rect, path: String, color: Color },
+    /// `radius` > 0 zaoblí rohy obrázka (v shadri, s vyhladením hrany)
+    Image { r: Rect, path: String, color: Color, radius: f32 },
 }
 
 #[derive(Default)]
@@ -84,9 +85,18 @@ const IMAGE_FS: &str = "
 precision mediump float;
 varying vec2 v_uv; varying vec4 v_color;
 uniform sampler2D u_tex;
+uniform vec2 u_size;
+uniform vec2 u_radius;
 void main() {
   vec4 t = texture2D(u_tex, v_uv);
-  gl_FragColor = vec4(t.rgb * t.a, t.a) * v_color;
+  float k = 1.0;
+  if (u_radius.x > 0.0) {
+    vec2 p = (v_uv - 0.5) * u_size;
+    vec2 q = abs(p) - (u_size * 0.5 - vec2(u_radius.x));
+    float d = length(max(q, 0.0)) + min(max(q.x, q.y), 0.0) - u_radius.x;
+    k = clamp(0.5 - d, 0.0, 1.0);
+  }
+  gl_FragColor = vec4(t.rgb * t.a, t.a) * v_color * k;
 }";
 
 pub struct Renderer {
@@ -99,6 +109,8 @@ pub struct Renderer {
     text_tex_u: i32,
     image_res: i32,
     image_tex_u: i32,
+    image_size: i32,
+    image_radius: i32,
     vbo: u32,
     tex: u32,
     tex_gen: u32,
@@ -127,6 +139,8 @@ impl Renderer {
             let text_tex_u = u(text_prog, "u_tex");
             let image_res = u(image_prog, "u_res");
             let image_tex_u = u(image_prog, "u_tex");
+            let image_size = u(image_prog, "u_size");
+            let image_radius = u(image_prog, "u_radius");
             let mut vbo = 0u32;
             (gl.gen_buffers)(1, &mut vbo);
             let mut tex = 0u32;
@@ -146,6 +160,8 @@ impl Renderer {
                 text_tex_u,
                 image_res,
                 image_tex_u,
+                image_size,
+                image_radius,
                 vbo,
                 tex,
                 tex_gen: u32::MAX,
@@ -287,9 +303,9 @@ impl Renderer {
         let mut i = 0;
         while i < items.len() {
             match &items[i] {
-                Item::Image { r, path, color } => {
+                Item::Image { r, path, color, radius } => {
                     if let Some(tex) = self.ensure_image_tex(path, icons) {
-                        self.draw_image(*r, tex, *color, w, h);
+                        self.draw_image(*r, tex, *color, *radius, w, h);
                     }
                     i += 1;
                 }
@@ -404,7 +420,7 @@ impl Renderer {
         }
     }
 
-    fn draw_image(&mut self, r: Rect, tex: u32, color: Color, w: u32, h: u32) {
+    fn draw_image(&mut self, r: Rect, tex: u32, color: Color, radius: f32, w: u32, h: u32) {
         let c = [color[0], color[1], color[2], color[3]]; // alpha multiply v shadri cez v_color
         let (x0, y0, x1, y1) = (r.x, r.y, r.x + r.w, r.y + r.h);
         let verts = [
@@ -427,6 +443,8 @@ impl Renderer {
             };
             (gl.use_program)(self.image_prog);
             (gl.uniform2f)(self.image_res, w as f32, h as f32);
+            (gl.uniform2f)(self.image_size, r.w, r.h);
+            (gl.uniform2f)(self.image_radius, radius.min(r.w.min(r.h) * 0.5).max(0.0), 0.0);
             (gl.active_texture)(TEXTURE0);
             (gl.bind_texture)(TEXTURE_2D, tex);
             (gl.uniform1i)(self.image_tex_u, 0);

@@ -15,6 +15,7 @@ mod history;
 mod icons;
 mod json;
 mod monitor;
+mod mpris;
 mod notify;
 mod nicons;
 mod providers;

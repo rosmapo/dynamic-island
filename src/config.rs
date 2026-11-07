@@ -160,6 +160,15 @@ pub struct Config {
     /// modul `radio`: ikona sledovaného procesu zo skupiny `radio` (pozri `MenuItemCfg::track`)
     pub radio_icon: String,
     pub radio: Btn,
+    /// modul `media` („Práve hrá“, MPRIS): ikona pri prehrávaní / pozastavení, tlačidlá, ignorované prehrávače
+    /// (podreťazec mena na zbernici), šírka panela, veľkosť obalu a písmo (logické px)
+    pub media_icon: String,
+    pub media_icon_paused: String,
+    pub media: Btn,
+    pub media_ignore: Vec<String>,
+    pub media_w: f32,
+    pub media_art: f32,
+    pub media_font: f32,
     pub rec_file: String,
     pub rec: Btn,
     pub disks: Btn,
@@ -287,6 +296,7 @@ impl Config {
         let inh = t.sub("inhibitor");
         let rec = t.sub("recorder");
         let radio = t.sub("radio");
+        let media = t.sub("media");
         let dk = t.sub("disks");
         let auto = t.sub("autohide");
         let nt = t.sub("notifications");
@@ -434,7 +444,7 @@ impl Config {
         }
 
         let mut modules = t.strs("modules").unwrap_or_else(|| {
-            ["network", "vpn", "clock", "keyboard", "audio", "capslock", "inhibitor", "recorder", "radio", "disks"]
+            ["network", "vpn", "clock", "keyboard", "audio", "capslock", "inhibitor", "recorder", "radio", "media", "disks"]
                 .map(String::from)
                 .to_vec()
         });
@@ -513,6 +523,19 @@ impl Config {
             inh: btn(&inh, "inhibit-toggle", "", "Idle Inhibitor"),
             radio_icon: radio.str_or("icon", "\u{f0439}"),
             radio: btn(&radio, "track-stop:radio", "", "{name}\nKlik = vypnúť"),
+            media_icon: media.str_or("icon", "\u{f001}"),
+            media_icon_paused: media.str_or("icon_paused", "\u{f04c}"),
+            media: {
+                let mut b = btn(&media, "media", "media-play-pause", "{artist} – {title}");
+                if media.get("on_click_middle").is_none() {
+                    b.middle = "media-next".into();
+                }
+                b
+            },
+            media_ignore: media.strs("ignore").unwrap_or_default(),
+            media_w: media.f64_or("panel_width", 460.0).clamp(300.0, 900.0) as f32,
+            media_art: media.f64_or("art_size", 128.0).clamp(80.0, 256.0) as f32,
+            media_font: media.f64_or("font_size", 16.0).clamp(10.0, 32.0) as f32,
             rec_file: expand(&rec.str_or("file", "/tmp/RECORDING")),
             rec: btn(&rec, "", "", ""),
             disks: btn(&dk, "menu", "eject-all", "{list}"),

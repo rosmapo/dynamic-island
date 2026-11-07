@@ -37,11 +37,12 @@ Obsah:
 | `inhibitor` | ikona, kým existuje súbor `~/.idle_inhibit` | existencia súboru |
 | `recorder` | text zo súboru `/tmp/RECORDING` | obsah súboru |
 | `radio` | ikona, kým beží sledovaný proces (položka menu s `track`) | vlastné sledovanie procesu |
+| `media` | ikona, kým je aktívny prehrávač (MPRIS); klik otvorí panel „Práve hrá“ | D-Bus `org.mpris.MediaPlayer2.*` |
 | `disks` | ikona USB s počtom pripojených médií, automount, odpojenie/vysunutie | UDisks2 (D-Bus) |
 | `[[custom]]` | ľubovoľný text/skript/tlačidlo | vlastný príkaz |
 
 **Panely** (rozbalia sa v kapsule; otvárajú sa kliknutím na modul alebo akciou v menu): kalendár, zoznam diskov,
-schránka (cliphist), história notifikácií, kôš, tapety, Wi-Fi, Bluetooth, zvuk, monitor (DDC/CI), kontajner `hardware` so záložkami
+schránka (cliphist), história notifikácií, „Práve hrá“, kôš, tapety, Wi-Fi, Bluetooth, zvuk, monitor (DDC/CI), kontajner `hardware` so záložkami
 (audio/bluetooth/wifi/monitor/vlastné menu), vlastné `[[menu]]` (ikony / text / dashboard).
 
 **Ďalšie funkcie:** notifikačný server (`org.freedesktop.Notifications`) so zobrazením priamo v kapsule a históriou,
@@ -105,7 +106,7 @@ Voliteľné programy podľa používaných modulov (podrobnosti v [5.3](#53-exte
 | `bluez`, `bluez-tools` | (D-Bus), `bt-agent`, `bluetoothctl` | panel Bluetooth (párovanie) |
 | `udisks2` | (D-Bus) | modul `disks` |
 | `ddcutil`, `wlsunset` | `ddcutil`, `wlsunset`, `pgrep`, `pkill` | panel monitor (jas, kontrast, vstup, nočný režim) |
-| `imagemagick` | `magick` / `convert` | náhľady tapiet |
+| `imagemagick` | `magick` / `convert` | náhľady tapiet, obaly v module `media` |
 | `wl-clipboard`, `cliphist` | `wl-paste`, `wl-copy`, `cliphist` | panel schránky, vloženie hesla Wi-Fi |
 | `mpv` (len podľa configu) | `mpv` | položky menu s rádiom |
 | vlastné skripty | `lumix`, `~/.config/wayfire/scripts/wallpaper`, … | jas, tapety — pozri [5.6](#56-osobné-skripty-a-konvencie) |
@@ -171,6 +172,7 @@ procesy (`track`) aj `pactl subscribe`. Zmena farebného súboru (`colors_file`)
 | `~/.config/dynamic-island/config.toml` | konfigurácia |
 | `~/.config/dynamic-island/icons/` | PNG ikony pre menu (položka s `icon = "meno.png"`) |
 | `~/.config/dynamic-island/notifications.log` | história notifikácií (JSON riadky); zmeniteľné `[notifications] history_file` |
+| `~/.cache/dynamic-island/media-art/` | obaly albumov prekonvertované na PNG (názov = hash cesty a času); súbory staršie ako 90 dní sa pri štarte mažú |
 | `~/.cache/dynamic-island/notif-icons/` | PNG ikony vyrobené z `image-data` (názov = hash obrázka); súbory staršie ako 90 dní sa pri štarte mažú |
 | `$XDG_RUNTIME_DIR/dynamic-island/hud` | rúra pre `--hud`/`--brightness` → HUD (záloha `/tmp`) |
 | `~/.cache/wallpaper-chooser/` | stav tapiet (`current`, `applied-theme`) a náhľady `thumbs/` |
@@ -240,6 +242,7 @@ cez frontu s `eventfd`.
 | `providers.rs` | vlákna zdrojov: sieť/VPN, zvuk, „fast“ poll (caps, inhibitor, recorder, rozloženie), `[[custom]]` |
 | `wayfire.rs` | Wayfire IPC (rozloženie klávesnice, autohide) |
 | `dbus.rs` | vlastný D-Bus klient (session aj system bus) |
+| `mpris.rs` | modul `media`: prehrávače MPRIS, výber aktívneho, obal (JPEG → PNG), príkazy play/next/prev |
 | `notify.rs`, `nicons.rs`, `history.rs` | notifikačný server, ikony notifikácií (PNG z `image-data`/téme ikon), história a jej načítanie pre panel |
 | `disks.rs` | UDisks2 (automount, odpojenie) |
 | `wifi.rs`, `bluetooth.rs` | NetworkManager, BlueZ |
@@ -339,7 +342,7 @@ Spúšťajú sa podľa **názvu** (cez `PATH`), v konfigurácii sa **nedajú** z
 | `ddcutil` | `monitor.rs` | jas (VCP 0x10), kontrast (0x12), teplotný preset (0x14), vstup (0x60), cez I²C `bus` | bus a kódy sa nastavujú v `[monitor]` |
 | `wlsunset` (+ `pgrep`, `pkill`, `sh`, `nohup`) | `monitor.rs` | nočný režim (`-t TEPLOTA -T TEPLOTA+1`) | pevné; iný nástroj (gammastep) = zmena kódu |
 | `bt-agent` / `bluetoothctl` (+ `pgrep`, `sh`) | `bluetooth.rs` | agent párovania (NoInputNoOutput) | bez agenta párovanie nových zariadení často zlyhá |
-| `magick` / `convert` | `wallpaper.rs` | tvorba náhľadov tapiet | ImageMagick 6 aj 7 |
+| `magick` / `convert` | `wallpaper.rs`, `mpris.rs` | náhľady tapiet; prevod obalov (`mpris:artUrl`, najčastejšie JPEG) na PNG | ImageMagick 6 aj 7 |
 | `wl-paste` | `wifi.rs` | vloženie hesla (Ctrl+V) | `wl-clipboard` |
 | `sh` | všade | spúšťanie príkazov z configu | |
 | `lumix` | **config** (`[brightness] get`/`set`) | jas | nahraditeľné v configu |
@@ -355,6 +358,7 @@ Vlastný D-Bus klient (`dbus.rs`): session bus cez `/run/user/UID/bus`, system b
 |---|---|---|---|
 | `org.freedesktop.Notifications` | session | notifikácie | ostrovček je **server**; nemôže bežať ďalší notifikačný démon (meno je obsadené → ostrovček to vypíše a skúša každých 5 s) |
 | `org.freedesktop.NetworkManager` (+ `.Device`, `.Device.Wireless`, `.AccessPoint`, `.Settings`, `.Settings.Connection`) | system | panel Wi-Fi | **iba NetworkManager**; `iwd`/`systemd-networkd` by vyžadovali nový backend |
+| `org.mpris.MediaPlayer2.*` (`Player`, `Properties`) | session | modul `media` | ľubovoľný prehrávač s MPRIS (fooyin, mpv s `mpris`, prehliadač, Spotify…) |
 | `org.bluez` (`Adapter1`, `Device1`, `Battery1`, ObjectManager) | system | panel Bluetooth | BlueZ |
 | `org.freedesktop.UDisks2` (`Block`, `Drive`, `Filesystem`) | system | modul `disks` | **UDisks2** (automount, odpojenie, vysunutie) |
 
@@ -490,7 +494,7 @@ Hodnota je **vstavaná akcia** alebo **shell príkaz**. Prázdna hodnota = nič.
 | Akcia | Účinok |
 |---|---|
 | `calendar` | kalendár (koliesko = zmena mesiaca) |
-| `clipboard`, `notifications`, `trash`, `wallpaper`, `wifi`, `bluetooth`, `audio`, `monitor` | príslušný panel (`notifications` = história notifikácií) |
+| `clipboard`, `notifications`, `media`, `trash`, `wallpaper`, `wifi`, `bluetooth`, `audio`, `monitor` | príslušný panel (`notifications` = história notifikácií) |
 | `hardware`, `hardware:audio` / `:bluetooth` / `:wifi` / `:monitor` / `:menu:NAZOV` | kontajner záložiek (posledná / konkrétna záložka) |
 | `menu` | zoznam diskov (modul `disks`) |
 | *názov `[[menu]]`* | vlastné menu |
@@ -505,7 +509,7 @@ Predvolené akcie: `clock` → `calendar`; `audio` → `audio-mute`; `keyboard` 
 `inhibit-toggle`; `radio` → `track-stop:radio`; `disks` → ľavé `menu`, pravé `eject-all`; ostatné nič.
 
 V `command` položky `[[menu.item]]` sa vstavané akcie volajú s predponou **`module:`** (`module:calendar`,
-`module:power` = iné menu, `module:disks`, `module:clipboard`, `module:notifications`, `module:trash`, `module:wallpaper`, `module:wifi`,
+`module:power` = iné menu, `module:disks`, `module:clipboard`, `module:notifications`, `module:media`, `module:media-play-pause`, `module:media-next`, `module:media-prev`, `module:trash`, `module:wallpaper`, `module:wifi`,
 `module:hardware`, `module:hardware:wifi`, `module:audio-mute`, `module:layout-toggle`, `module:inhibit-toggle`,
 `module:eject-all`, `module:track-stop:radio`). Bez predpony je `command` vždy shell príkaz. Neznámy názov sa ignoruje.
 
@@ -559,6 +563,33 @@ custom `{text} {tooltip} {class}`; hodiny: formát `strftime`.
 | `[radio]` | `icon` | `f0439` | ikona sledovaného procesu skupiny `radio` |
 | | `tooltip` | `"{name}\nKlik = vypnúť"` | `{name}` = `label` položky menu |
 | | `on_click*` | `track-stop:radio` | |
+
+### 6.8b `[media]` — Práve hrá (MPRIS)
+
+Modul `media` (treba ho dať do `modules`) ukáže ikonu, kým je nejaký prehrávač MPRIS aktívny (hrá alebo je pozastavený
+so skladbou); pozastavený je stlmený a má ikonu `icon_paused`. Zdroj: `org.mpris.MediaPlayer2.*` na session D-Bus; stav sa
+nesleduje cyklicky, ale signálmi. Pri viacerých prehrávačoch sa zobrazí ten, čo hrá (zvolený zostáva, kým hrá).
+
+| Kľúč | Predvolené | Popis |
+|---|---|---|
+| `icon` / `icon_paused` | `\uf001` / `\uf04c` | ikona pri prehrávaní / pozastavení |
+| `tooltip` | `"{artist} – {title}"` | aj `{album}` |
+| `ignore` | `[]` | prehrávače, ktoré sa preskočia (podreťazec mena na zbernici, napr. `"chromium"`) |
+| `panel_width` | `460` (300–900) | šírka panela |
+| `art_size` | `128` (80–256) | veľkosť obalu (px) |
+| `font_size` | `16` (10–32) | písmo panela |
+| `on_click` / `on_click_right` / `on_click_middle` | `media` / `media-play-pause` / `media-next` | pozri 6.4 |
+
+**Panel „Práve hrá“** (akcia `media`): obal vľavo, vpravo názov, interpret, album, ukazovateľ pozície (čas | lišta |
+dĺžka) a tlačidlá predošlá / play-pauza / ďalšia; vpravo hore je **šípka zbalenia**. Panel sa **nezatvára odchodom myši**,
+zbalí sa iba šípkou (alebo opätovným klikom na ikonu); notifikácia ho dočasne nahradí a po doznení sa znova otvorí.
+Pozícia sa číta iba kým je panel otvorený a prehrávač hrá (raz za sekundu). Text piesne sa nezobrazuje.
+
+**Obal:** z `mpris:artUrl`. Berie sa iba `file://…`; obrázky iné než PNG (JPEG…) sa cez ImageMagick (`magick`/`convert`,
+max. 256 px) prekonvertujú do `~/.cache/dynamic-island/media-art/`. `http(s)://` adresy (napr. prehliadač) sa
+nesťahujú – zobrazí sa zástupný štvorec s notou. Bez ImageMagicku sa zobrazia iba obaly vo formáte PNG.
+Rohy obalu (a ikôn notifikácií) sa zaoblia v shadri obrázkov (`Item::Image { radius }`, polomer = 14 % veľkosti, vyhladená hrana); ostatné obrázky (ikony menu, náhľady tapiet) majú `radius: 0`.
+Overenie prehrávača: `playerctl -p NAZOV metadata` / `busctl --user list | grep -i mpris`.
 
 ### 6.9 `[audio]`
 

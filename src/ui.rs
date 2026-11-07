@@ -20,6 +20,7 @@ pub enum ModId {
     Inhibit,
     Recorder,
     Radio,
+    Media,
     Disks,
     Custom(usize),
 }
@@ -40,6 +41,8 @@ pub enum Action {
     ClipLoad,
     /// skopírovať položku histórie (celý riadok z `cliphist list`)
     ClipCopy(String),
+    /// príkaz prehrávaču MPRIS (modul `media`)
+    Media(crate::mpris::MediaCmd),
     /// načítať históriu notifikácií zo súboru (výsledok príde ako `Msg::NotifHist`)
     HistLoad,
     /// odstrániť jeden záznam histórie notifikácií (čas, id)
@@ -77,6 +80,8 @@ enum Panel {
     Clip,
     /// história notifikácií
     NotifHist,
+    /// „Práve hrá“ (MPRIS); nezatvára sa odchodom myši, iba tlačidlom zbalenia
+    Media,
     Trash,
     Wall,
     Wifi,
@@ -100,6 +105,11 @@ enum Hit {
     HistDel(usize),
     /// tlačidlo „Vymazať“ v hlavičke histórie
     HistClear,
+    MediaPrev,
+    MediaPlay,
+    MediaNext,
+    /// zbalenie panela „Práve hrá“ späť na kapsulu
+    MediaCollapse,
     /// riadok koša (index do `trash`) – klik prepne jeho výber
     TrashRow(usize),
     /// zaškrtávacie políčko v hlavičke zoznamu: vybrať všetko / zrušiť výber
@@ -302,6 +312,9 @@ pub struct Ui {
     hist_loaded: bool,
     hist_scroll: usize,
     hist_acc: f32,
+    /// „Práve hrá“: posledná pozícia (µs) a príznak, že sa panel má po notifikácii znova otvoriť
+    media_pos: i64,
+    media_resume: bool,
     /// modul trash: položky (najnovšie zmazané prvé), prvý viditeľný riadok, nazbieraný posun kolieska,
     /// vybrané položky (podľa cesty `.trashinfo`, prežijú opätovné načítanie), hláška a zapnuté potvrdenie vyprázdnenia
     trash: Vec<crate::trash::TrashEntry>,
@@ -396,6 +409,11 @@ pub fn days_in_month(year: i32, month0: i32) -> i32 {
 }
 
 /// Nahradí `{meno}` v šablóne tooltipu.
+/// Panel „Práve hrá“: okraj, výška riadku s ukazovateľom pozície a veľkosť tlačidiel (logické px)
+const MEDIA_PAD: f32 = 14.0;
+const MEDIA_BAR_H: f32 = 16.0;
+const MEDIA_BTN: f32 = 40.0;
+
 pub fn fill(fmt: &str, vars: &[(&str, String)]) -> String {
     let mut out = fmt.to_string();
     for (k, v) in vars {
@@ -459,6 +477,7 @@ impl Ui {
                 "inhibitor" => ModId::Inhibit,
                 "recorder" => ModId::Recorder,
                 "radio" => ModId::Radio,
+                "media" => ModId::Media,
                 "disks" => ModId::Disks,
                 other => match cfg.custom.iter().position(|c| c.name == other) {
                     Some(i) => ModId::Custom(i),
@@ -475,6 +494,7 @@ impl Ui {
                 ModId::Inhibit => cfg.inh.clone(),
                 ModId::Recorder => cfg.rec.clone(),
                 ModId::Radio => cfg.radio.clone(),
+                ModId::Media => cfg.media.clone(),
                 ModId::Disks => cfg.disks.clone(),
                 ModId::Custom(i) => cfg.custom[i].btn.clone(),
             };
@@ -554,6 +574,8 @@ impl Ui {
             hist_loaded: false,
             hist_scroll: 0,
             hist_acc: 0.0,
+            media_pos: 0,
+            media_resume: false,
             trash: Vec::new(),
             trash_loaded: false,
             trash_scroll: 0,
@@ -661,6 +683,16 @@ impl Ui {
                     }
                 }
             }
+            Msg::Media(m) => {
+                self.data.media = m;
+                if self.data.media.is_none() {
+                    self.media_resume = false;
+                    if self.panel == Panel::Media {
+                        self.set_panel(Panel::None);
+                    }
+                }
+            }
+            Msg::MediaPos(p) => self.media_pos = p,
             Msg::NotifHist(v) => {
                 self.hist = v;
                 self.hist_loaded = true;
@@ -882,6 +914,14 @@ impl Ui {
                 Some((_, name)) => (c.radio_icon.clone(), badge_acc, None, fill(&c.radio.tooltip, &[("name", name.clone())]), 12.0),
                 None => none,
             },
+            ModId::Media => match &d.media {
+                Some(m) => {
+                    let vars = [("artist", m.artist.clone()), ("title", m.title.clone()), ("album", m.album.clone())];
+                    let (icon, fg) = if m.playing { (c.media_icon.clone(), None) } else { (c.media_icon_paused.clone(), Some(fade(t.fg, 0.6))) };
+                    (icon, None, fg, fill(&c.media.tooltip, &vars), 10.0)
+                }
+                None => none,
+            },
             ModId::Disks => {
                 if d.disks.is_empty() {
                     none
@@ -1075,6 +1115,12 @@ impl Ui {
         self.notif_dirty = false;
         if self.notifs.is_empty() {
             self.notif_t.set(0.0);
+            if self.media_resume {
+                self.media_resume = false;
+                if self.panel == Panel::None {
+                    self.set_panel(Panel::Media);
+                }
+            }
             return;
         }
         let s = self.scale;
@@ -1105,6 +1151,10 @@ impl Ui {
         self.notif_h.set(h);
         self.notif_t.set(1.0);
         if self.panel != Panel::None {
+            // „Práve hrá“ sa po doznení notifikácie znova otvorí
+            if self.panel == Panel::Media {
+                self.media_resume = true;
+            }
             self.set_panel(Panel::None);
         }
     }
@@ -1249,6 +1299,10 @@ impl Ui {
                 (self.cfg.clip_width * self.scale, h * self.scale)
             }
             Panel::NotifHist => (self.cfg.hist_w * self.scale, self.cfg.hist_h * self.scale),
+            Panel::Media => {
+                let (w, h) = self.media_dims();
+                (w * self.scale, h * self.scale)
+            }
             Panel::Trash => {
                 let f = self.cfg.trash.font;
                 let row_h = f + CLIP_ROW_EXTRA;
@@ -1378,7 +1432,28 @@ impl Ui {
         (w * self.scale, h * self.scale)
     }
 
+    /// Rozmer panela „Práve hrá“ v logických px: obal vľavo, vpravo texty, ukazovateľ pozície a ovládanie.
+    fn media_dims(&self) -> (f32, f32) {
+        let f = self.cfg.media_font;
+        let texts = f * 1.7 + f * 1.45 + f * 1.3;
+        let min_h = texts + 8.0 + MEDIA_BAR_H + 8.0 + MEDIA_BTN;
+        (self.cfg.media_w, 2.0 * MEDIA_PAD + self.cfg.media_art.max(min_h))
+    }
+
     fn set_panel(&mut self, p: Panel) {
+        // bez prehrávača sa panel „Práve hrá“ neotvorí; počas neho sa číta pozícia (vlákno MPRIS)
+        let p = if p == Panel::Media && self.data.media.is_none() { Panel::None } else { p };
+        let prev = self.panel;
+        if prev == Panel::Media && p != Panel::Media {
+            self.queued.push(Action::Media(crate::mpris::MediaCmd::Watch(false)));
+        }
+        if p == Panel::Media {
+            self.collapse_at = None;
+            if prev != Panel::Media {
+                self.media_pos = 0;
+                self.queued.push(Action::Media(crate::mpris::MediaCmd::Watch(true)));
+            }
+        }
         // zmena panela ruší čakanie na výstupy menu (`wait_exec`)
         self.menu_wait = None;
         self.panel = p;
@@ -1458,7 +1533,7 @@ impl Ui {
                 self.panel_w.set(0.0);
                 self.panel_a.set(0.0);
             }
-            Panel::Calendar | Panel::Disks | Panel::Menu(_) | Panel::Clip | Panel::Trash | Panel::Wall | Panel::Wifi | Panel::Audio | Panel::Monitor | Panel::Bluetooth | Panel::NotifHist => {
+            Panel::Calendar | Panel::Disks | Panel::Menu(_) | Panel::Clip | Panel::Trash | Panel::Wall | Panel::Wifi | Panel::Audio | Panel::Monitor | Panel::Bluetooth | Panel::NotifHist | Panel::Media => {
                 if p == Panel::Calendar {
                     self.rebuild_cal();
                 }
@@ -1497,7 +1572,7 @@ impl Ui {
     }
 
     fn is_big(p: Panel) -> bool {
-        matches!(p, Panel::Calendar | Panel::Disks | Panel::Menu(_) | Panel::Clip | Panel::Trash | Panel::Wall | Panel::Wifi | Panel::Audio | Panel::Monitor | Panel::Bluetooth | Panel::NotifHist)
+        matches!(p, Panel::Calendar | Panel::Disks | Panel::Menu(_) | Panel::Clip | Panel::Trash | Panel::Wall | Panel::Wifi | Panel::Audio | Panel::Monitor | Panel::Bluetooth | Panel::NotifHist | Panel::Media)
     }
 
     // ------------------------------------------- kontajner hardware
@@ -1923,6 +1998,14 @@ impl Ui {
         }
     }
 
+    fn toggle_media(&mut self) {
+        if self.panel == Panel::Media {
+            self.set_panel(Panel::None);
+        } else {
+            self.set_panel(Panel::Media);
+        }
+    }
+
     fn toggle_hist(&mut self) {
         if self.panel == Panel::NotifHist {
             self.set_panel(Panel::None);
@@ -2085,7 +2168,7 @@ impl Ui {
         if let Some(t) = self.collapse_at {
             if now >= t {
                 self.collapse_at = None;
-                if self.panel != Panel::None {
+                if self.panel != Panel::None && self.panel != Panel::Media {
                     self.set_panel(Panel::None);
                     changed = true;
                 }
@@ -2203,7 +2286,7 @@ impl Ui {
         self.tip_pending = None;
         // práve otvorený panel (kliknutím na modul / položku menu): nový panel býva menší ako ostrovček,
         // takže myš po kliku zvyčajne skončí mimo neho – odchod sa ignoruje, kým do panela nevstúpi
-        if self.grace.is_some() {
+        if self.grace.is_some() || self.panel == Panel::Media {
             return;
         }
         // počas písania hesla panel nezatvárame (zavrie ho Esc / odoslanie); rovnako pri rozpísanom filtri schránky
@@ -2211,7 +2294,7 @@ impl Ui {
             return;
         }
         match self.panel {
-            Panel::Calendar | Panel::Disks | Panel::Menu(_) | Panel::Clip | Panel::Trash | Panel::Wall | Panel::Wifi | Panel::Audio | Panel::Monitor | Panel::Bluetooth | Panel::NotifHist => {
+            Panel::Calendar | Panel::Disks | Panel::Menu(_) | Panel::Clip | Panel::Trash | Panel::Wall | Panel::Wifi | Panel::Audio | Panel::Monitor | Panel::Bluetooth | Panel::NotifHist | Panel::Media => {
                 self.collapse_at = Some(now + Duration::from_millis(self.cfg.collapse_ms))
             }
             Panel::Tip => self.collapse_at = Some(now + Duration::from_millis(200)),
@@ -2221,12 +2304,15 @@ impl Ui {
 
     fn action_for(cmd: &str) -> Option<Action> {
         match cmd {
-            "" | "calendar" | "menu" | "clipboard" | "notifications" | "trash" | "wallpaper" | "wifi" | "audio" | "monitor" | "bluetooth" => None,
+            "" | "calendar" | "menu" | "clipboard" | "notifications" | "media" | "trash" | "wallpaper" | "wifi" | "audio" | "monitor" | "bluetooth" => None,
             c if Self::hardware_cmd(c).is_some() => None,
             "eject-all" => Some(Action::DiskEjectAll),
             "inhibit-toggle" => Some(Action::InhibitToggle),
             "layout-toggle" => Some(Action::LayoutToggle),
             "audio-mute" => Some(Action::AudioMute),
+            "media-play-pause" => Some(Action::Media(crate::mpris::MediaCmd::PlayPause)),
+            "media-next" => Some(Action::Media(crate::mpris::MediaCmd::Next)),
+            "media-prev" => Some(Action::Media(crate::mpris::MediaCmd::Prev)),
             c if c.starts_with("track-stop:") => Some(Action::TrackStop(c["track-stop:".len()..].trim().to_string())),
             other => Some(Action::Run(other.to_string())),
         }
@@ -2256,6 +2342,10 @@ impl Ui {
             }
             "notifications" => {
                 self.set_panel(Panel::NotifHist);
+                None
+            }
+            "media" => {
+                self.set_panel(Panel::Media);
                 None
             }
             "trash" => {
@@ -2388,6 +2478,11 @@ impl Ui {
                     self.toggle_clip();
                     self.collapse_at = None;
                     self.start_grace(now);
+                } else if cmd == "media" {
+                    self.tip_pending = None;
+                    self.toggle_media();
+                    self.collapse_at = None;
+                    self.start_grace(now);
                 } else if cmd == "notifications" {
                     self.tip_pending = None;
                     self.toggle_hist();
@@ -2453,6 +2548,14 @@ impl Ui {
                     self.collapse_at = None;
                 }
             }
+            Hit::MediaPrev if button == BTN_LEFT => out.push(Action::Media(crate::mpris::MediaCmd::Prev)),
+            Hit::MediaPlay if button == BTN_LEFT => out.push(Action::Media(crate::mpris::MediaCmd::PlayPause)),
+            Hit::MediaNext if button == BTN_LEFT => out.push(Action::Media(crate::mpris::MediaCmd::Next)),
+            Hit::MediaCollapse if button == BTN_LEFT => {
+                self.set_panel(Panel::None);
+                self.hover = None;
+            }
+            Hit::MediaPrev | Hit::MediaPlay | Hit::MediaNext | Hit::MediaCollapse => {}
             Hit::HistCard(_) => {}
             Hit::HistDel(i) => {
                 if button == BTN_LEFT && i < self.hist.len() {
@@ -3021,6 +3124,7 @@ impl Ui {
                 Panel::Menu(mi) => self.build_menu(&mut frame, text, content, mi, ct),
                 Panel::Clip => self.build_clip(&mut frame, text, content, ct),
                 Panel::NotifHist => self.build_hist(&mut frame, text, content, ct),
+                Panel::Media => self.build_media(&mut frame, text, content, ct),
                 Panel::Trash => self.build_trash(&mut frame, text, content, ct),
                 Panel::Wall => self.build_wall(&mut frame, text, content, ct),
                 Panel::Wifi => self.build_wifi(&mut frame, text, content, ct),
@@ -3048,7 +3152,7 @@ impl Ui {
                         text.layout_to(&mut frame.content, l, px2, pill.x + self.s(16.0), cy + (asc - desc) * 0.5, col);
                     }
                 }
-                Panel::None | Panel::Calendar | Panel::Disks | Panel::Menu(_) | Panel::Clip | Panel::Trash | Panel::Wall | Panel::Wifi | Panel::Audio | Panel::Monitor | Panel::Bluetooth | Panel::NotifHist => {}
+                Panel::None | Panel::Calendar | Panel::Disks | Panel::Menu(_) | Panel::Clip | Panel::Trash | Panel::Wall | Panel::Wifi | Panel::Audio | Panel::Monitor | Panel::Bluetooth | Panel::NotifHist | Panel::Media => {}
             }
         }
         frame
@@ -3176,6 +3280,7 @@ impl Ui {
                                         r: Rect::new(ix, iy, dw, dh),
                                         path: it.icon.clone(),
                                         color: [1.0, 1.0, 1.0, pa],
+                                        radius: 0.0,
                                     });
                                 }
                             }
@@ -3246,6 +3351,122 @@ impl Ui {
         }
     }
 
+    /// Panel „Práve hrá“: obal vľavo; vpravo názov, interpret, album, pozícia a ovládanie; vpravo hore zbalenie.
+    fn build_media(&mut self, frame: &mut Frame, text: &mut Text, pill: Rect, pa: f32) {
+        let Some(m) = self.data.media.clone() else { return };
+        let s = self.scale;
+        let t = self.theme;
+        let f = self.cfg.media_font;
+        let px = f * s;
+        let pad = MEDIA_PAD * s;
+        let art = self.cfg.media_art * s;
+        let (_, panel_h) = self.media_dims();
+        let col_h = panel_h * s - 2.0 * pad;
+
+        // ---- obal (alebo zástupný štvorec s notou)
+        let (ax, ay) = (pill.x + pad, pill.y + pad + (col_h - art) * 0.5);
+        if !(!m.art.is_empty() && self.push_icon(frame, &m.art, ax, ay, art, pa)) {
+            frame.content.push(Item::Rect { r: Rect::new(ax, ay, art, art), radius: 12.0 * s, soft: 0.8, color: fade(t.fg, 0.08 * pa) });
+            let g = &self.cfg.media_icon;
+            let gp = art * 0.4;
+            let gw = text.measure(g, gp);
+            let (ga, gd) = text.line_metrics(gp);
+            text.layout_to(&mut frame.content, g, gp, ax + (art - gw) * 0.5, ay + art * 0.5 + (ga - gd) * 0.5, fade(t.fg, 0.45 * pa));
+        }
+
+        // ---- pravý stĺpec
+        let x0 = ax + art + 16.0 * s;
+        let x1 = pill.x + pill.w - pad;
+        let tw = x1 - x0;
+        let top = pill.y + pad;
+        let (h_title, h_artist, h_album) = (px * 1.7, px * 1.45, px * 1.3);
+        let collapse_d = 26.0 * s;
+        let line = |text: &mut Text, out: &mut Vec<Item>, s_: &str, p: f32, y: f32, h: f32, w: f32, c: Color| {
+            let (a, d) = text.line_metrics(p);
+            let clipped = Self::ellipsize(text, s_, p, w);
+            text.layout_to(out, &clipped, p, x0, y + h * 0.5 + (a - d) * 0.5, c);
+        };
+        let title = if m.title.is_empty() { m.player.trim_start_matches("org.mpris.MediaPlayer2.").to_string() } else { m.title.clone() };
+        line(text, &mut frame.content, &title, px * 1.15, top, h_title, tw - collapse_d - 8.0 * s, fade(t.fg, pa));
+        if !m.artist.is_empty() {
+            line(text, &mut frame.content, &m.artist, px, top + h_title, h_artist, tw, fade(t.fg, 0.8 * pa));
+        }
+        if !m.album.is_empty() {
+            line(text, &mut frame.content, &m.album, px * 0.9, top + h_title + h_artist, h_album, tw, fade(t.fg, 0.55 * pa));
+        }
+
+        // ---- zbalenie (šípka hore)
+        let cr = Rect::new(x1 - collapse_d, top, collapse_d, collapse_d);
+        self.hits.push((cr, Hit::MediaCollapse));
+        let over = self.hover == Some(Hit::MediaCollapse);
+        let over_a = if over { 0.22 } else { 0.1 };
+        frame.content.push(Item::Rect { r: cr, radius: collapse_d * 0.5, soft: 0.8, color: fade(t.fg, over_a * pa) });
+        let up = "\u{f077}";
+        let uw = text.measure(up, px * 0.85);
+        let (ua, ud) = text.line_metrics(px * 0.85);
+        text.layout_to(&mut frame.content, up, px * 0.85, cr.x + (collapse_d - uw) * 0.5, cr.y + collapse_d * 0.5 + (ua - ud) * 0.5, fade(t.fg, pa));
+
+        // ---- ovládanie (zarovnané so spodkom obalu) a ukazovateľ pozície nad ním
+        let btn = MEDIA_BTN * s;
+        let by = pill.y + pad + col_h - btn;
+        let play_d = btn;
+        let side_d = btn * 0.85;
+        let gap = 10.0 * s;
+        let total = side_d * 2.0 + play_d + gap * 2.0;
+        let mut bx = x0 + (tw - total) * 0.5;
+        let controls = [
+            (Hit::MediaPrev, "\u{f048}", side_d, m.can_prev, false),
+            (Hit::MediaPlay, if m.playing { "\u{f04c}" } else { "\u{f04b}" }, play_d, m.can_play, true),
+            (Hit::MediaNext, "\u{f051}", side_d, m.can_next, false),
+        ];
+        for (hit, glyph, d, enabled, primary) in controls {
+            let r = Rect::new(bx, by + (btn - d) * 0.5, d, d);
+            let hv = enabled && self.hover == Some(hit);
+            let acc_a = if !enabled { 0.35 } else if hv { 1.0 } else { 0.9 };
+            let bg_a = if hv { 0.2 } else { 0.08 };
+            let fg_a = if enabled { 1.0 } else { 0.35 };
+            let (bg, fg) = if primary { (fade(t.accent, acc_a * pa), fade(t.on_accent, pa)) } else { (fade(t.fg, bg_a * pa), fade(t.fg, fg_a * pa)) };
+            if enabled {
+                self.hits.push((r, hit));
+            }
+            frame.content.push(Item::Rect { r, radius: d * 0.5, soft: 0.8, color: bg });
+            let gp = if primary { px * 1.05 } else { px * 0.9 };
+            let gw = text.measure(glyph, gp);
+            let (ga, gd) = text.line_metrics(gp);
+            // trojuholník „play“ je opticky posunutý doľava, preto malý posun doprava
+            let nudge = if primary && !m.playing { gp * 0.06 } else { 0.0 };
+            text.layout_to(&mut frame.content, glyph, gp, r.x + (d - gw) * 0.5 + nudge, r.y + d * 0.5 + (ga - gd) * 0.5, fg);
+            bx += d + gap;
+        }
+
+        // ukazovateľ pozície: čas | lišta | dĺžka
+        if m.length_us > 0 {
+            let py = by - 8.0 * s - MEDIA_BAR_H * s;
+            let ps = px * 0.78;
+            let fmt = |us: i64| {
+                let secs = (us.max(0) / 1_000_000) as u64;
+                format!("{}:{:02}", secs / 60, secs % 60)
+            };
+            let (cur, total_s) = (fmt(self.media_pos.min(m.length_us)), fmt(m.length_us));
+            let (pa_, pd_) = text.line_metrics(ps);
+            let cy = py + MEDIA_BAR_H * s * 0.5;
+            let tw_cur = text.measure("00:00", ps).max(text.measure(&cur, ps));
+            let tw_tot = text.measure("00:00", ps).max(text.measure(&total_s, ps));
+            text.layout_to(&mut frame.content, &cur, ps, x0, cy + (pa_ - pd_) * 0.5, fade(t.fg, 0.7 * pa));
+            let tot_w = text.measure(&total_s, ps);
+            text.layout_to(&mut frame.content, &total_s, ps, x1 - tot_w, cy + (pa_ - pd_) * 0.5, fade(t.fg, 0.7 * pa));
+            let (bx0, bx1) = (x0 + tw_cur + 8.0 * s, x1 - tw_tot - 8.0 * s);
+            if bx1 > bx0 + 20.0 * s {
+                let bh = 4.0 * s;
+                frame.content.push(Item::Rect { r: Rect::new(bx0, cy - bh * 0.5, bx1 - bx0, bh), radius: bh * 0.5, soft: 0.8, color: fade(t.fg, 0.2 * pa) });
+                let frac = (self.media_pos as f32 / m.length_us as f32).clamp(0.0, 1.0);
+                if frac > 0.0 {
+                    frame.content.push(Item::Rect { r: Rect::new(bx0, cy - bh * 0.5, ((bx1 - bx0) * frac).max(bh), bh), radius: bh * 0.5, soft: 0.8, color: fade(t.accent, pa) });
+                }
+            }
+        }
+    }
+
     /// Nakreslí PNG ikonu `path` do štvorca `size` (zachová pomer strán). `false` = ikonu sa nepodarilo načítať.
     fn push_icon(&mut self, frame: &mut Frame, path: &str, x: f32, y: f32, size: f32, alpha: f32) -> bool {
         let Some(ic) = self.icons.get(path) else { return false };
@@ -3256,6 +3477,8 @@ impl Ui {
             r: Rect::new(x + (size - dw) * 0.5, y + (size - dh) * 0.5, dw, dh),
             path: path.to_string(),
             color: [1.0, 1.0, 1.0, alpha.clamp(0.0, 1.0)],
+            // zaoblené rohy ikony / obalu úmerné veľkosti
+            radius: size * 0.14,
         });
         true
     }
@@ -4708,7 +4931,7 @@ impl Ui {
                     frame.content.push(Item::Rect { r: outer, radius: (crate::wallpaper::THUMB_RADIUS + g / s) * s, soft: 0.8, color: fade(ring, (if hov { 1.0 } else { 0.8 }) * pa) });
                 }
                 if e.ready {
-                    frame.content.push(Item::Image { r: cell, path: e.thumb.clone(), color: [1.0, 1.0, 1.0, pa] });
+                    frame.content.push(Item::Image { r: cell, path: e.thumb.clone(), color: [1.0, 1.0, 1.0, pa], radius: 0.0 });
                 } else {
                     frame.content.push(Item::Rect { r: cell, radius: crate::wallpaper::THUMB_RADIUS * s, soft: 0.8, color: fade(t.fg, 0.12 * pa) });
                 }

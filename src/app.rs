@@ -237,6 +237,7 @@ fn run_action(a: Action, cfg: &Config, disk_tx: &Option<Tx<DiskCmd>>, tx: &Tx<Ms
             });
         }
         Action::ClipCopy(line) => spawn_with_stdin(&cfg.clip_copy, line),
+        Action::Media(cmd) => crate::mpris::send(cmd),
         Action::HistLoad => {
             // súbor sa číta na pozadí, hlavná slučka dostane `Msg::NotifHist`
             let (path, tx) = (cfg.history_file.clone(), tx.clone());
@@ -368,6 +369,9 @@ pub fn run(cfg: Config) -> Result<(), String> {
     } else {
         None
     };
+    if cfg.modules.iter().any(|m| m == "media") {
+        crate::mpris::spawn(cfg.media_ignore.clone(), tx.clone());
+    }
     let mut history = if cfg.history_max > 0 { Some(History::open(cfg.history_file.clone(), cfg.history_max)) } else { None };
 
     let mut dirty = true;

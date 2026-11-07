@@ -40,6 +40,23 @@ pub struct Notification {
     pub icon: String,
 }
 
+/// Prehrávač MPRIS: skladba, ktorá hrá (alebo je pozastavená).
+#[derive(Clone, Debug, PartialEq, Default)]
+pub struct MediaInfo {
+    /// meno na zbernici (`org.mpris.MediaPlayer2.fooyin`)
+    pub player: String,
+    pub title: String,
+    pub artist: String,
+    pub album: String,
+    pub playing: bool,
+    /// cesta k PNG s obalom (z `mpris:artUrl`, prekonvertované); prázdna = bez obalu
+    pub art: String,
+    pub length_us: i64,
+    pub can_next: bool,
+    pub can_prev: bool,
+    pub can_play: bool,
+}
+
 /// Pripojené externé médium (UDisks2).
 #[derive(Clone, Debug, PartialEq, Default)]
 pub struct DiskInfo {
@@ -122,6 +139,10 @@ pub enum Msg {
     Disks(Vec<DiskInfo>),
     /// história schránky (najnovšie prvé)
     Clip(Vec<ClipEntry>),
+    /// prehrávač MPRIS (`None` = žiadny nehrá ani nie je pozastavený)
+    Media(Option<MediaInfo>),
+    /// pozícia v skladbe (mikrosekundy), príde iba kým je panel „Práve hrá“ otvorený
+    MediaPos(i64),
     /// história notifikácií (najnovšie prvé)
     NotifHist(Vec<crate::history::HistEntry>),
     /// obsah koša zo všetkých diskov (najnovšie prvé) + hláška o práve dokončenej obnove / vyprázdnení (inak prázdna)
@@ -191,6 +212,8 @@ pub struct Data {
     pub custom: Vec<CustomOut>,
     pub disks: Vec<DiskInfo>,
     pub clock: String,
+    /// prehrávač MPRIS, ktorý sa práve zobrazuje (`None` = žiadny)
+    pub media: Option<MediaInfo>,
 }
 
 /// Pango/HTML entity z tooltipov (napr. z waybar-eject.py) -> obyčajný text.

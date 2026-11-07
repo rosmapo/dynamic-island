@@ -1,8 +1,20 @@
 # Skopíruj do ~/.config/dynamic-island/config.toml. Zmena súboru = automatický reštart.
 # Farby sa berú z matugen súboru (colors_file) a menia sa ŽIVO bez reštartu.
 
-# poradie modulov (ako group/island vo waybare)
-modules = ["network", "vpn", "radio", "clock", "keyboard", "audio", "capslock", "inhibitor", "recorder", "off", "disks"]
+# poradie modulov v kapsule
+modules = ["network", "vpn", "radio", "media", "clock", "keyboard", "audio", "capslock", "inhibitor", "recorder", "off", "disks"]
+
+# Práve hrá (MPRIS: fooyin, mpv s mpris, prehliadač…). Ikona sa ukáže, kým je nejaký prehrávač aktívny.
+# Klik = panel (neukončí sa odchodom myši, zbalí sa šípkou), pravý = play/pauza, stredný = ďalšia skladba.
+# Akcie: media, media-play-pause, media-next, media-prev (v menu s predponou module:).
+[media]
+# icon = "\uf001"             # ikona pri prehrávaní
+# icon_paused = "\uf04c"      # ikona pri pozastavení
+# tooltip = "{artist} – {title}"   # + {album}
+# ignore = ["chromium"]       # prehrávače, ktoré sa majú preskočiť (podreťazec mena na zbernici)
+# panel_width = 460
+# art_size = 128              # veľkosť obalu (80–256 px)
+# font_size = 16
 
 [island]
 colors_file = "~/.config/dynamic-island/colors.css"   # @define-color surface / primary ...
@@ -40,7 +52,7 @@ interface = "wlan0"
 on_click = "~/.config/wayfire/scripts/VPN_switcher.sh"
 on_click_right = "foot bash -c 'mega-cmd; exec bash'"
 on_click_middle = "anydesk"
-# icons = [...]  icon_ethernet  icon_disconnected   (predvolene Nerd Font ako vo waybare)
+# icons = [...]  icon_ethernet  icon_disconnected   (predvolene Nerd Font)
 # Tooltipy (zástupné symboly: {ssid} {ifname} {ip} {gateway} {signal} {dbm} {freq}; \n = nový riadok):
 # tooltip_wifi = "SSID: {ssid}\nIP adresa: {ip}\nSila signálu: {signal}% ({dbm} dBm)"
 tooltip_wifi = ""
@@ -175,9 +187,9 @@ tooltip = ""
 file = "/tmp/RECORDING"
 on_click = "~/.config/wayfire/scripts/recorder.sh"
 
-# Ľubovoľný externý modul (waybar „custom“): trvalý proces (interval = 0) alebo periodický.
+# Ľubovoľný externý modul: trvalý proces (interval = 0) alebo periodický.
 # Výstup: JSON {"text","tooltip","class"} alebo čistý text (json = false).
-# Externé disky a flash kľúče (náhrada udiskie + waybar-eject.py): UDisks2 cez D-Bus.
+# Externé disky a flash kľúče (UDisks2) cez D-Bus.
 # Modul sa zobrazí, len keď je niečo pripojené. Ľavý klik = pri jednom disku ho rovno odpojí, pri viacerých otvorí menu (klik na riadok odpojí a vysunie),
 # pravý klik = odpojiť všetko. Menu sa zavrie, keď odídeš myšou.
 [disks]

@@ -22,7 +22,12 @@ pub fn cache_dir() -> PathBuf {
 
 /// Zmaže súbory ikon staršie ako `days` dní (volá sa raz pri štarte).
 pub fn cleanup(days: u64) {
-    let Ok(rd) = std::fs::read_dir(cache_dir()) else { return };
+    cleanup_dir(&cache_dir(), days);
+}
+
+/// Zmaže súbory v adresári `dir` staršie ako `days` dní.
+pub fn cleanup_dir(dir: &Path, days: u64) {
+    let Ok(rd) = std::fs::read_dir(dir) else { return };
     let limit = std::time::Duration::from_secs(days * 86400);
     for e in rd.flatten() {
         let old = e.metadata().and_then(|m| m.modified()).ok().and_then(|t| t.elapsed().ok()).map(|a| a > limit).unwrap_or(false);
@@ -101,7 +106,7 @@ pub fn to_rgba(w: usize, h: usize, stride: usize, channels: usize, data: &[u8]) 
     Some(out)
 }
 
-fn fnv(data: &[u8], w: u32, h: u32) -> u64 {
+pub fn fnv(data: &[u8], w: u32, h: u32) -> u64 {
     let mut x: u64 = 0xcbf2_9ce4_8422_2325;
     for b in w.to_le_bytes().iter().chain(h.to_le_bytes().iter()).chain(data.iter()) {
         x ^= *b as u64;
