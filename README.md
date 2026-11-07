@@ -41,7 +41,7 @@ Obsah:
 | `[[custom]]` | ľubovoľný text/skript/tlačidlo | vlastný príkaz |
 
 **Panely** (rozbalia sa v kapsule; otvárajú sa kliknutím na modul alebo akciou v menu): kalendár, zoznam diskov,
-schránka (cliphist), kôš, tapety, Wi-Fi, Bluetooth, zvuk, monitor (DDC/CI), kontajner `hardware` so záložkami
+schránka (cliphist), história notifikácií, kôš, tapety, Wi-Fi, Bluetooth, zvuk, monitor (DDC/CI), kontajner `hardware` so záložkami
 (audio/bluetooth/wifi/monitor/vlastné menu), vlastné `[[menu]]` (ikony / text / dashboard).
 
 **Ďalšie funkcie:** notifikačný server (`org.freedesktop.Notifications`) so zobrazením priamo v kapsule a históriou,
@@ -171,6 +171,7 @@ procesy (`track`) aj `pactl subscribe`. Zmena farebného súboru (`colors_file`)
 | `~/.config/dynamic-island/config.toml` | konfigurácia |
 | `~/.config/dynamic-island/icons/` | PNG ikony pre menu (položka s `icon = "meno.png"`) |
 | `~/.config/dynamic-island/notifications.log` | história notifikácií (JSON riadky); zmeniteľné `[notifications] history_file` |
+| `~/.cache/dynamic-island/notif-icons/` | PNG ikony vyrobené z `image-data` (názov = hash obrázka); súbory staršie ako 90 dní sa pri štarte mažú |
 | `$XDG_RUNTIME_DIR/dynamic-island/hud` | rúra pre `--hud`/`--brightness` → HUD (záloha `/tmp`) |
 | `~/.cache/wallpaper-chooser/` | stav tapiet (`current`, `applied-theme`) a náhľady `thumbs/` |
 | `~/.idle_inhibit` | súbor-príznak inhibítora nečinnosti (len sa sleduje jeho existencia) |
@@ -239,7 +240,7 @@ cez frontu s `eventfd`.
 | `providers.rs` | vlákna zdrojov: sieť/VPN, zvuk, „fast“ poll (caps, inhibitor, recorder, rozloženie), `[[custom]]` |
 | `wayfire.rs` | Wayfire IPC (rozloženie klávesnice, autohide) |
 | `dbus.rs` | vlastný D-Bus klient (session aj system bus) |
-| `notify.rs`, `history.rs` | notifikačný server, história |
+| `notify.rs`, `nicons.rs`, `history.rs` | notifikačný server, ikony notifikácií (PNG z `image-data`/téme ikon), história a jej načítanie pre panel |
 | `disks.rs` | UDisks2 (automount, odpojenie) |
 | `wifi.rs`, `bluetooth.rs` | NetworkManager, BlueZ |
 | `audio.rs`, `monitor.rs` | panel zvuku (`pactl`), panel monitora (`ddcutil`, `wlsunset`) |
@@ -489,7 +490,7 @@ Hodnota je **vstavaná akcia** alebo **shell príkaz**. Prázdna hodnota = nič.
 | Akcia | Účinok |
 |---|---|
 | `calendar` | kalendár (koliesko = zmena mesiaca) |
-| `clipboard`, `trash`, `wallpaper`, `wifi`, `bluetooth`, `audio`, `monitor` | príslušný panel |
+| `clipboard`, `notifications`, `trash`, `wallpaper`, `wifi`, `bluetooth`, `audio`, `monitor` | príslušný panel (`notifications` = história notifikácií) |
 | `hardware`, `hardware:audio` / `:bluetooth` / `:wifi` / `:monitor` / `:menu:NAZOV` | kontajner záložiek (posledná / konkrétna záložka) |
 | `menu` | zoznam diskov (modul `disks`) |
 | *názov `[[menu]]`* | vlastné menu |
@@ -504,7 +505,7 @@ Predvolené akcie: `clock` → `calendar`; `audio` → `audio-mute`; `keyboard` 
 `inhibit-toggle`; `radio` → `track-stop:radio`; `disks` → ľavé `menu`, pravé `eject-all`; ostatné nič.
 
 V `command` položky `[[menu.item]]` sa vstavané akcie volajú s predponou **`module:`** (`module:calendar`,
-`module:power` = iné menu, `module:disks`, `module:clipboard`, `module:trash`, `module:wallpaper`, `module:wifi`,
+`module:power` = iné menu, `module:disks`, `module:clipboard`, `module:notifications`, `module:trash`, `module:wallpaper`, `module:wifi`,
 `module:hardware`, `module:hardware:wifi`, `module:audio-mute`, `module:layout-toggle`, `module:inhibit-toggle`,
 `module:eject-all`, `module:track-stop:radio`). Bez predpony je `command` vždy shell príkaz. Neznámy názov sa ignoruje.
 
@@ -786,6 +787,10 @@ command = "module:track-stop:radio"
 | `history` | `true` | zapisovať históriu |
 | `history_max` | `1000` | najviac uložených záznamov (`0` = bez histórie) |
 | `history_file` | `notifications.log` vedľa configu | cesta k histórii |
+| `icons` | `true` | ikony notifikácií (vo vyskakovacom okne aj v paneli histórie) |
+| `panel_width` | `480` (240–1400) | šírka panela histórie |
+| `panel_height` | `520` (200–1600) | výška panela histórie |
+| `panel_lines` | `3` (≥1) | najviac riadkov tela na kartu v paneli histórie |
 | `[notifications.urgent]` `timeout_ms` | `0` | trvanie urgentných (0 = kým sa nezavrú) |
 | `[notifications.urgent]` `border_size` | `2` | hrúbka červeného rámika |
 
@@ -817,17 +822,34 @@ Vyžaduje Wayfire IPC (pozri 5.1). Bez neho nastav `enabled = false`; `SIGUSR1`/
 
 ## 7. Notifikácie
 
-Ostrovček je sám serverom `org.freedesktop.Notifications` (vlastný D-Bus klient): oznamuje schopnosti **`body`** a
-**`actions`**; bez ikon aplikácií, bez režimu „nerušiť“ a bez „restore“. Notifikácia sa zobrazí priamo v kapsule (nahradí
+Ostrovček je sám serverom `org.freedesktop.Notifications` (vlastný D-Bus klient): oznamuje schopnosti **`body`**,
+**`actions`** a **`icon-static`**; bez režimu „nerušiť“ a bez „restore“. Notifikácia sa zobrazí priamo v kapsule (nahradí
 jej obsah ako HUD), ďalšie čakajúce sú označené `+N`, urgentné majú rámik `urgent_border`. Ľavý klik = akcia `default`
 + zavrieť, pravý = zavrieť, stredný = zavrieť všetky (konfigurovateľné, pozri 6.21).
 
 Ak je meno `org.freedesktop.Notifications` obsadené iným démonom, ostrovček to vypíše a každých 5 s to skúša znova —
 ďalší notifikačný démon preto nesmie bežať.
 
+**Ikony** (`src/nicons.rs`, beží vo vlákne D-Bus servera): poradie podľa špecifikácie `image-data` (aj `image_data`,
+`icon_data`) → `image-path` → `app_icon`. Surové pixely z `image-data` (8 bit, 3 alebo 4 zložky, rozmer ≤ 1024 px) sa uložia
+ako PNG do `~/.cache/dynamic-island/notif-icons/` (názov = hash, rovnaký obrázok sa neukladá dvakrát), aby sa dali
+zobraziť aj v histórii po čase. Cesta (`/abs/cesta.png`, `file://…`) sa použije priamo; **názov ikony** sa hľadá v
+`~/.local/share/icons`, `~/.icons`, `/usr/local/share/icons`, `/usr/share/icons` (najprv `hicolor`, potom ostatné témy;
+rozmery 64 → 24 px, adresárové rozloženie `téma/rozmer/kontext/` aj `téma/kontext/rozmer/`) a v `/usr/share/pixmaps`.
+**Podporuje sa len PNG** (renderer nemá rasterizér SVG; väčšina tém Adwaita/Papirus má ikony ako SVG, preto sa pri nich
+ikona nenájde). Notifikácia bez použiteľnej ikony zobrazí v paneli histórie kruh s prvým písmenom aplikácie, vo
+vyskakovacom okne nič. Vypnutie: `[notifications] icons = false`.
+
 **História:** každá notifikácia sa zapíše ako JSON riadok do `notifications.log`
-(polia `time` (unixový čas), `id`, `app`, `urgency`, `summary`, `body`); výpis `dynamic-island --history 20`,
-spracovanie napr. cez `jq`.
+(polia `time` (unixový čas), `id`, `app`, `urgency`, `summary`, `body`, `icon` = cesta k PNG); výpis
+`dynamic-island --history 20`, spracovanie napr. cez `jq`. Staršie riadky bez poľa `icon` sa načítajú bez ikony.
+
+**Panel histórie** (akcia `notifications`; v configu `on_click* = "notifications"` na module alebo
+`command = "module:notifications"` v položke menu): karty v tvare notifikácie – ikona, názov aplikácie, čas
+(„Dnes 14:32“, „Včera 21:05“, inak „05.11. 14:32“, s rokom pre staršie), súhrn a najviac `panel_lines` riadkov tela;
+urgentné majú červený pásik vľavo. Koliesko/touchpad posúva po kartách (najnovšie hore), nabehnutím na kartu sa namiesto
+času ukáže **×** (odstráni záznam zo súboru), tlačidlo **Vymazať** v hlavičke zmaže celú históriu. Načíta sa najviac
+300 posledných záznamov pri každom otvorení. Panel sa zatvorí, keď príde nová notifikácia (jej okno ho nahradí).
 
 ---
 

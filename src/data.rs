@@ -36,6 +36,8 @@ pub struct Notification {
     /// 0 nízka, 1 normálna, 2 kritická
     pub urgency: u8,
     pub timeout_ms: i32,
+    /// cesta k PNG ikone (z `image-data`, `image-path` alebo `app_icon`); prázdna = bez ikony
+    pub icon: String,
 }
 
 /// Pripojené externé médium (UDisks2).
@@ -120,6 +122,8 @@ pub enum Msg {
     Disks(Vec<DiskInfo>),
     /// história schránky (najnovšie prvé)
     Clip(Vec<ClipEntry>),
+    /// história notifikácií (najnovšie prvé)
+    NotifHist(Vec<crate::history::HistEntry>),
     /// obsah koša zo všetkých diskov (najnovšie prvé) + hláška o práve dokončenej obnove / vyprázdnení (inak prázdna)
     Trash(Vec<crate::trash::TrashEntry>, String),
     /// zoznam obrázkov modulu wallpaper + cesta k aktuálnemu pozadiu

@@ -19,6 +19,7 @@ const PATH: &str = "/org/freedesktop/Notifications";
 
 pub fn spawn(tx: Tx<Msg>, rx: Receiver<NotifCmd>, waker: Arc<Waker>) {
     std::thread::spawn(move || {
+        crate::nicons::cleanup(90);
         let mut next_id = 1u32;
         loop {
             if let Err(e) = session(&tx, &rx, &waker, &mut next_id) {
@@ -135,19 +136,31 @@ fn handle(c: &mut Conn, m: &Message, tx: &Tx<Msg>, next_id: &mut u32) -> std::io
                     }
                 }
                 let mut urgency = 1u8;
+                let mut image_path = String::new();
+                let mut image_data: Option<&V> = None;
                 if let V::Arr(h) = &v[6] {
                     for e in h {
                         if let V::Dict(k, val) = e {
-                            if k.as_str() == Some("urgency") {
-                                if let V::Var(inner) = &**val {
+                            let V::Var(inner) = &**val else { continue };
+                            match k.as_str() {
+                                Some("urgency") => {
                                     if let V::Byte(b) = **inner {
                                         urgency = b.min(2);
                                     }
                                 }
+                                Some("image-path") | Some("image_path") => image_path = inner.as_str().unwrap_or("").to_string(),
+                                // `image-data` (1.2), `image_data` (1.1), `icon_data` (1.0)
+                                Some("image-data") | Some("image_data") | Some("icon_data") => {
+                                    if image_data.is_none() {
+                                        image_data = Some(&**inner);
+                                    }
+                                }
+                                _ => {}
                             }
                         }
                     }
                 }
+                let icon = crate::nicons::resolve(v[2].as_str().unwrap_or(""), &image_path, image_data);
                 tx.send(Msg::Notif(Notification {
                     id,
                     app: v[0].as_str().unwrap_or("").to_string(),
@@ -156,6 +169,7 @@ fn handle(c: &mut Conn, m: &Message, tx: &Tx<Msg>, next_id: &mut u32) -> std::io
                     actions,
                     urgency,
                     timeout_ms: v[7].as_i32().unwrap_or(-1),
+                    icon,
                 }));
                 let mut w = W::default();
                 w.u32(id);
@@ -167,6 +181,7 @@ fn handle(c: &mut Conn, m: &Message, tx: &Tx<Msg>, next_id: &mut u32) -> std::io
             w.array(4, |w| {
                 w.string("body");
                 w.string("actions");
+                w.string("icon-static");
             });
             reply(m, "as", w.b)
         }

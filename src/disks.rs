@@ -211,6 +211,7 @@ fn notice(tx: &Tx<Msg>, ids: &mut u32, timeout_ms: i32, summary: &str, body: &st
         actions: Vec::new(),
         urgency,
         timeout_ms,
+        icon: String::new(),
     }));
 }
 

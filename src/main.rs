@@ -16,6 +16,7 @@ mod icons;
 mod json;
 mod monitor;
 mod notify;
+mod nicons;
 mod providers;
 mod render;
 mod snapshot;

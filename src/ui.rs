@@ -40,6 +40,12 @@ pub enum Action {
     ClipLoad,
     /// skopírovať položku histórie (celý riadok z `cliphist list`)
     ClipCopy(String),
+    /// načítať históriu notifikácií zo súboru (výsledok príde ako `Msg::NotifHist`)
+    HistLoad,
+    /// odstrániť jeden záznam histórie notifikácií (čas, id)
+    HistRemove(i64, u32),
+    /// vymazať celú históriu notifikácií
+    HistClear,
     /// načítať kôš zo všetkých diskov (výsledok príde ako `Msg::Trash`)
     TrashLoad,
     /// obnoviť vybrané položky koša na pôvodné miesto
@@ -69,6 +75,8 @@ enum Panel {
     Disks,
     Menu(usize),
     Clip,
+    /// história notifikácií
+    NotifHist,
     Trash,
     Wall,
     Wifi,
@@ -86,6 +94,12 @@ enum Hit {
     DiskAll,
     MenuItem(usize),
     ClipItem(usize),
+    /// karta v histórii notifikácií (index do `hist`)
+    HistCard(usize),
+    /// krížik na karte: odstrániť záznam
+    HistDel(usize),
+    /// tlačidlo „Vymazať“ v hlavičke histórie
+    HistClear,
     /// riadok koša (index do `trash`) – klik prepne jeho výber
     TrashRow(usize),
     /// zaškrtávacie políčko v hlavičke zoznamu: vybrať všetko / zrušiť výber
@@ -144,6 +158,8 @@ struct NotifItem {
     summary: String,
     lines: Vec<String>,
     h: f32,
+    /// má ikonu, ktorú sa podarilo načítať (zistí sa pri rozložení)
+    has_icon: bool,
 }
 
 struct ItemState {
@@ -281,6 +297,11 @@ pub struct Ui {
     clip_query: String,
     clip_view: Vec<usize>,
     clip_sel: Option<usize>,
+    /// panel histórie notifikácií: záznamy (najnovšie prvé), prvá viditeľná karta, nazbieraný posun kolieska
+    hist: Vec<crate::history::HistEntry>,
+    hist_loaded: bool,
+    hist_scroll: usize,
+    hist_acc: f32,
     /// modul trash: položky (najnovšie zmazané prvé), prvý viditeľný riadok, nazbieraný posun kolieska,
     /// vybrané položky (podľa cesty `.trashinfo`, prežijú opätovné načítanie), hláška a zapnuté potvrdenie vyprázdnenia
     trash: Vec<crate::trash::TrashEntry>,
@@ -529,6 +550,10 @@ impl Ui {
             clip_query: String::new(),
             clip_view: Vec::new(),
             clip_sel: None,
+            hist: Vec::new(),
+            hist_loaded: false,
+            hist_scroll: 0,
+            hist_acc: 0.0,
             trash: Vec::new(),
             trash_loaded: false,
             trash_scroll: 0,
@@ -635,6 +660,11 @@ impl Ui {
                         }
                     }
                 }
+            }
+            Msg::NotifHist(v) => {
+                self.hist = v;
+                self.hist_loaded = true;
+                self.hist_scroll = self.hist_scroll.min(self.hist.len().saturating_sub(1));
             }
             Msg::Clip(v) => {
                 self.clip = v;
@@ -978,7 +1008,7 @@ impl Ui {
         let expires = if timeout > 0 { Some(now + Duration::from_millis(timeout as u64)) } else { None };
         // rovnaké id (replaces_id) alebo rovnaký súhrn z tej istej aplikácie = nahradí staršiu
         self.notifs.retain(|x| x.n.id != n.id && !(x.n.app == n.app && x.n.summary == n.summary));
-        self.notifs.insert(0, NotifItem { n, expires, summary: String::new(), lines: Vec::new(), h: 0.0 });
+        self.notifs.insert(0, NotifItem { n, expires, summary: String::new(), lines: Vec::new(), h: 0.0, has_icon: false });
         while self.notifs.len() > 20 {
             if let Some(old) = self.notifs.pop() {
                 self.events.push(NotifEvent::Closed(old.n.id, 1));
@@ -1051,14 +1081,20 @@ impl Ui {
         let px = self.cfg.notif_font * s;
         let width = self.cfg.notif_width * s;
         let pad = 12.0 * s;
-        let inner = width - 2.0 * pad;
         let line_h = px * 1.4;
         let max_lines = self.cfg.notif_lines;
         let extra = self.notifs.len() > 1;
+        // ikona vľavo (veľkosť ≈ dva riadky textu); berie sa iba ak sa dá načítať
+        let icon_path = self.notifs[0].n.icon.clone();
+        let has_icon = self.cfg.notif_icons && !icon_path.is_empty() && self.icons.get(&icon_path).is_some();
+        let icon_w = if has_icon { line_h * 2.1 + 10.0 * s } else { 0.0 };
+        let inner = width - 2.0 * pad - icon_w;
         let n = &mut self.notifs[0];
+        n.has_icon = has_icon;
         n.summary = Self::ellipsize(text, &n.n.summary, px * 1.05, inner);
         n.lines = Self::wrap(text, &n.n.body, px, inner, max_lines);
-        n.h = pad * 2.0 + line_h * 1.1 + line_h * n.lines.len() as f32 + if extra { 16.0 * s } else { 0.0 };
+        let text_h = pad * 2.0 + line_h * 1.1 + line_h * n.lines.len() as f32;
+        n.h = if has_icon { text_h.max(pad * 2.0 + line_h * 2.1) } else { text_h } + if extra { 16.0 * s } else { 0.0 };
         self.notif_urgent = n.n.urgency == 2;
         let (w, h) = (width, n.h);
         if self.notif_t.x < 0.02 {
@@ -1076,7 +1112,7 @@ impl Ui {
     /// Notifikácia nahradí obsah ostrovčeka (ako HUD).
     fn build_notif(&mut self, frame: &mut Frame, text: &mut Text, pill: Rect, nt: f32) {
         let Some(top) = self.notifs.first() else { return };
-        let (summary, lines) = (top.summary.clone(), top.lines.clone());
+        let (summary, lines, has_icon, icon_path) = (top.summary.clone(), top.lines.clone(), top.has_icon, top.n.icon.clone());
         let more = self.notifs.len() - 1;
         let s = self.scale;
         let t = self.theme;
@@ -1089,15 +1125,23 @@ impl Ui {
         if self.hover == Some(Hit::Notif(0)) {
             frame.content.push(Item::Rect { r: pill, radius: 14.0 * s, soft: 0.8, color: fade(t.accent, 0.08 * nt) });
         }
+        let icon_sz = line_h * 2.1;
+        let icon_w = if has_icon { icon_sz + 10.0 * s } else { 0.0 };
+        // text bez dlhého tela sa zvisle vycentruje voči ikone
+        let text_h = line_h * 1.1 + line_h * lines.len() as f32;
+        let voff = if has_icon && icon_sz > text_h { (icon_sz - text_h) * 0.5 } else { 0.0 };
+        if has_icon {
+            self.push_icon(frame, &icon_path, pill.x + pad, pill.y + pad, icon_sz, nt);
+        }
         let place = |text: &mut Text, out: &mut Vec<Item>, s_: &str, p: f32, cy: f32, c: Color| {
             let w = text.measure(s_, p);
-            let x = if center { pill.x + (pill.w - w) * 0.5 } else { pill.x + pad };
+            let x = if center { pill.x + pad + icon_w + (pill.w - 2.0 * pad - icon_w - w) * 0.5 } else { pill.x + pad + icon_w };
             let (a, d) = text.line_metrics(p);
             text.layout_to(out, s_, p, x, cy + (a - d) * 0.5, c);
         };
-        place(text, &mut frame.content, &summary, px * 1.05, pill.y + pad + line_h * 0.55, fade(col, nt));
+        place(text, &mut frame.content, &summary, px * 1.05, pill.y + pad + voff + line_h * 0.55, fade(col, nt));
         for (j, l) in lines.iter().enumerate() {
-            place(text, &mut frame.content, l, px, pill.y + pad + line_h * 1.1 + line_h * (j as f32 + 0.5), fade(col, 0.85 * nt));
+            place(text, &mut frame.content, l, px, pill.y + pad + voff + line_h * 1.1 + line_h * (j as f32 + 0.5), fade(col, 0.85 * nt));
         }
         if more > 0 {
             let label = format!("+{more}");
@@ -1204,6 +1248,7 @@ impl Ui {
                 let h = 2.0 * CLIP_PAD + self.clip_rows() as f32 * row_h;
                 (self.cfg.clip_width * self.scale, h * self.scale)
             }
+            Panel::NotifHist => (self.cfg.hist_w * self.scale, self.cfg.hist_h * self.scale),
             Panel::Trash => {
                 let f = self.cfg.trash.font;
                 let row_h = f + CLIP_ROW_EXTRA;
@@ -1392,6 +1437,12 @@ impl Ui {
             self.clip_refilter();
             self.queued.push(Action::ClipLoad);
         }
+        if p == Panel::NotifHist {
+            // pri každom otvorení znova načítať históriu (staré karty ostanú viditeľné, kým nepríde nový zoznam)
+            self.hist_scroll = 0;
+            self.hist_acc = 0.0;
+            self.queued.push(Action::HistLoad);
+        }
         if p == Panel::Trash {
             // pri každom otvorení znova načítať kôš (staré položky ostanú viditeľné, kým nepríde nový zoznam)
             self.trash_scroll = 0;
@@ -1407,7 +1458,7 @@ impl Ui {
                 self.panel_w.set(0.0);
                 self.panel_a.set(0.0);
             }
-            Panel::Calendar | Panel::Disks | Panel::Menu(_) | Panel::Clip | Panel::Trash | Panel::Wall | Panel::Wifi | Panel::Audio | Panel::Monitor | Panel::Bluetooth => {
+            Panel::Calendar | Panel::Disks | Panel::Menu(_) | Panel::Clip | Panel::Trash | Panel::Wall | Panel::Wifi | Panel::Audio | Panel::Monitor | Panel::Bluetooth | Panel::NotifHist => {
                 if p == Panel::Calendar {
                     self.rebuild_cal();
                 }
@@ -1446,7 +1497,7 @@ impl Ui {
     }
 
     fn is_big(p: Panel) -> bool {
-        matches!(p, Panel::Calendar | Panel::Disks | Panel::Menu(_) | Panel::Clip | Panel::Trash | Panel::Wall | Panel::Wifi | Panel::Audio | Panel::Monitor | Panel::Bluetooth)
+        matches!(p, Panel::Calendar | Panel::Disks | Panel::Menu(_) | Panel::Clip | Panel::Trash | Panel::Wall | Panel::Wifi | Panel::Audio | Panel::Monitor | Panel::Bluetooth | Panel::NotifHist)
     }
 
     // ------------------------------------------- kontajner hardware
@@ -1872,6 +1923,14 @@ impl Ui {
         }
     }
 
+    fn toggle_hist(&mut self) {
+        if self.panel == Panel::NotifHist {
+            self.set_panel(Panel::None);
+        } else {
+            self.set_panel(Panel::NotifHist);
+        }
+    }
+
     fn toggle_clip(&mut self) {
         if self.panel == Panel::Clip {
             self.set_panel(Panel::None);
@@ -2152,7 +2211,7 @@ impl Ui {
             return;
         }
         match self.panel {
-            Panel::Calendar | Panel::Disks | Panel::Menu(_) | Panel::Clip | Panel::Trash | Panel::Wall | Panel::Wifi | Panel::Audio | Panel::Monitor | Panel::Bluetooth => {
+            Panel::Calendar | Panel::Disks | Panel::Menu(_) | Panel::Clip | Panel::Trash | Panel::Wall | Panel::Wifi | Panel::Audio | Panel::Monitor | Panel::Bluetooth | Panel::NotifHist => {
                 self.collapse_at = Some(now + Duration::from_millis(self.cfg.collapse_ms))
             }
             Panel::Tip => self.collapse_at = Some(now + Duration::from_millis(200)),
@@ -2162,7 +2221,7 @@ impl Ui {
 
     fn action_for(cmd: &str) -> Option<Action> {
         match cmd {
-            "" | "calendar" | "menu" | "clipboard" | "trash" | "wallpaper" | "wifi" | "audio" | "monitor" | "bluetooth" => None,
+            "" | "calendar" | "menu" | "clipboard" | "notifications" | "trash" | "wallpaper" | "wifi" | "audio" | "monitor" | "bluetooth" => None,
             c if Self::hardware_cmd(c).is_some() => None,
             "eject-all" => Some(Action::DiskEjectAll),
             "inhibit-toggle" => Some(Action::InhibitToggle),
@@ -2193,6 +2252,10 @@ impl Ui {
             }
             "clipboard" => {
                 self.set_panel(Panel::Clip);
+                None
+            }
+            "notifications" => {
+                self.set_panel(Panel::NotifHist);
                 None
             }
             "trash" => {
@@ -2325,6 +2388,11 @@ impl Ui {
                     self.toggle_clip();
                     self.collapse_at = None;
                     self.start_grace(now);
+                } else if cmd == "notifications" {
+                    self.tip_pending = None;
+                    self.toggle_hist();
+                    self.collapse_at = None;
+                    self.start_grace(now);
                 } else if cmd == "trash" {
                     self.tip_pending = None;
                     self.toggle_trash();
@@ -2383,6 +2451,23 @@ impl Ui {
                     }
                     self.set_panel(Panel::None);
                     self.collapse_at = None;
+                }
+            }
+            Hit::HistCard(_) => {}
+            Hit::HistDel(i) => {
+                if button == BTN_LEFT && i < self.hist.len() {
+                    let e = self.hist.remove(i);
+                    out.push(Action::HistRemove(e.time, e.id));
+                    self.hist_scroll = self.hist_scroll.min(self.hist.len().saturating_sub(1));
+                    self.hover = None;
+                }
+            }
+            Hit::HistClear => {
+                if button == BTN_LEFT {
+                    self.hist.clear();
+                    self.hist_scroll = 0;
+                    out.push(Action::HistClear);
+                    self.hover = None;
                 }
             }
             Hit::TrashRow(i) => {
@@ -2715,6 +2800,13 @@ impl Ui {
             let max_start = self.trash.len().saturating_sub(self.cfg.trash.rows) as f32;
             self.trash_scroll = (self.trash_scroll as f32 + rows).clamp(0.0, max_start) as usize;
         }
+        if self.panel == Panel::NotifHist && self.hover.is_some() {
+            self.hist_acc += value;
+            let rows = (self.hist_acc / CLIP_SCROLL_UNIT).trunc();
+            self.hist_acc -= rows * CLIP_SCROLL_UNIT;
+            let max_start = self.hist.len().saturating_sub(1) as f32;
+            self.hist_scroll = (self.hist_scroll as f32 + rows).clamp(0.0, max_start) as usize;
+        }
         if self.panel == Panel::Clip && self.hover.is_some() {
             // koliesko aj touchpad: posun sa zbiera a každá celá jednotka = jeden riadok
             self.clip_acc += value;
@@ -2928,6 +3020,7 @@ impl Ui {
                 Panel::Disks => self.build_disks(&mut frame, text, content, ct),
                 Panel::Menu(mi) => self.build_menu(&mut frame, text, content, mi, ct),
                 Panel::Clip => self.build_clip(&mut frame, text, content, ct),
+                Panel::NotifHist => self.build_hist(&mut frame, text, content, ct),
                 Panel::Trash => self.build_trash(&mut frame, text, content, ct),
                 Panel::Wall => self.build_wall(&mut frame, text, content, ct),
                 Panel::Wifi => self.build_wifi(&mut frame, text, content, ct),
@@ -2955,7 +3048,7 @@ impl Ui {
                         text.layout_to(&mut frame.content, l, px2, pill.x + self.s(16.0), cy + (asc - desc) * 0.5, col);
                     }
                 }
-                Panel::None | Panel::Calendar | Panel::Disks | Panel::Menu(_) | Panel::Clip | Panel::Trash | Panel::Wall | Panel::Wifi | Panel::Audio | Panel::Monitor | Panel::Bluetooth => {}
+                Panel::None | Panel::Calendar | Panel::Disks | Panel::Menu(_) | Panel::Clip | Panel::Trash | Panel::Wall | Panel::Wifi | Panel::Audio | Panel::Monitor | Panel::Bluetooth | Panel::NotifHist => {}
             }
         }
         frame
@@ -3150,6 +3243,149 @@ impl Ui {
                     y += sep_h;
                 }
             }
+        }
+    }
+
+    /// Nakreslí PNG ikonu `path` do štvorca `size` (zachová pomer strán). `false` = ikonu sa nepodarilo načítať.
+    fn push_icon(&mut self, frame: &mut Frame, path: &str, x: f32, y: f32, size: f32, alpha: f32) -> bool {
+        let Some(ic) = self.icons.get(path) else { return false };
+        let (iw, ih) = (ic.w.max(1) as f32, ic.h.max(1) as f32);
+        let sc = (size / iw).min(size / ih);
+        let (dw, dh) = (iw * sc, ih * sc);
+        frame.content.push(Item::Image {
+            r: Rect::new(x + (size - dw) * 0.5, y + (size - dh) * 0.5, dw, dh),
+            path: path.to_string(),
+            color: [1.0, 1.0, 1.0, alpha.clamp(0.0, 1.0)],
+        });
+        true
+    }
+
+    /// Panel histórie notifikácií: karty ako skutočné notifikácie (ikona, aplikácia, čas, súhrn, telo).
+    /// Karty majú rôznu výšku, kreslia sa od `hist_scroll`, kým sa celé zmestia.
+    fn build_hist(&mut self, frame: &mut Frame, text: &mut Text, pill: Rect, pa: f32) {
+        let s = self.scale;
+        let t = self.theme;
+        let f = self.cfg.notif_font;
+        let px = f * s;
+        let px_s = px * 0.8;
+        let pad = 14.0 * s;
+        let gap = 8.0 * s;
+        let x0 = pill.x + pad;
+        let w_in = pill.w - 2.0 * pad;
+
+        // ---- hlavička: nadpis s počtom | Vymazať
+        let btn_h = (f + 14.0) * s;
+        let by = pill.y + pad;
+        let n = self.hist.len();
+        let title = if n > 0 { format!("Notifikácie · {n}") } else { "Notifikácie".to_string() };
+        let (ta, td) = text.line_metrics(px * 1.1);
+        text.layout_to(&mut frame.content, &title, px * 1.1, x0 + 4.0 * s, by + btn_h * 0.5 + (ta - td) * 0.5, fade(t.fg, pa));
+        if n > 0 {
+            let bw = text.measure("Vymazať", px) + 36.0 * s;
+            self.trash_button(frame, text, x0 + w_in - bw, by, btn_h, px, "Vymazať", (t.alert, t.on_alert), Some(Hit::HistClear), pa);
+        }
+
+        let top = by + btn_h + gap;
+        let bottom = pill.y + pill.h - pad;
+        if n == 0 {
+            let msg = if self.cfg.history_max == 0 {
+                "História notifikácií je vypnutá"
+            } else if self.hist_loaded {
+                "Žiadne notifikácie"
+            } else {
+                "Načítavam…"
+            };
+            let tw = text.measure(msg, px);
+            let (a, d) = text.line_metrics(px);
+            let cy = (top + bottom) * 0.5;
+            text.layout_to(&mut frame.content, msg, px, pill.x + (pill.w - tw) * 0.5, cy + (a - d) * 0.5, fade(t.fg, 0.7 * pa));
+            return;
+        }
+
+        // ---- karty
+        let av = 38.0 * s; // ikona / avatar
+        let cpad = 12.0 * s;
+        let tx = x0 + cpad + av + 10.0 * s;
+        let tw = x0 + w_in - cpad - tx;
+        let lh = px * 1.4;
+        let lh_s = px_s * 1.4;
+        let (asc_s, desc_s) = text.line_metrics(px_s);
+        let (asc, desc) = text.line_metrics(px);
+        let start = self.hist_scroll.min(n - 1);
+        let mut y = top;
+        let mut shown = 0usize;
+        for i in start..n {
+            let e = self.hist[i].clone();
+            let summary = if e.summary.trim().is_empty() { e.app.clone() } else { e.summary.clone() };
+            let summary = Self::ellipsize(text, &summary, px * 1.05, tw);
+            let body = Self::wrap(text, &e.body, px, tw, self.cfg.hist_lines);
+            let content_h = lh_s + lh * 1.1 + lh * body.len() as f32;
+            let card_h = content_h.max(av) + 2.0 * cpad;
+            if y + card_h > bottom && shown > 0 {
+                break;
+            }
+            let card = Rect::new(x0, y, w_in, card_h);
+            self.hits.push((card, Hit::HistCard(i)));
+            let hov = self.hover == Some(Hit::HistCard(i)) || self.hover == Some(Hit::HistDel(i));
+            let bg_a = if hov { 0.15 } else { 0.08 };
+            frame.content.push(Item::Rect { r: card, radius: 16.0 * s, soft: 0.8, color: fade(t.fg, bg_a * pa) });
+            if e.urgency == 2 {
+                frame.content.push(Item::Rect { r: Rect::new(x0 + 4.0 * s, y + 12.0 * s, 3.0 * s, card_h - 24.0 * s), radius: 1.5 * s, soft: 0.8, color: fade(t.urgent_border, pa) });
+            }
+
+            // ikona aplikácie, inak kruh s prvým písmenom
+            let (ix, iy) = (x0 + cpad, y + cpad);
+            let drawn = self.cfg.notif_icons && !e.icon.is_empty() && self.push_icon(frame, &e.icon, ix, iy, av, pa);
+            if !drawn {
+                frame.content.push(Item::Rect { r: Rect::new(ix, iy, av, av), radius: av * 0.5, soft: 0.8, color: fade(t.accent, 0.22 * pa) });
+                let letter: String = e.app.chars().chain(e.summary.chars()).find(|c| c.is_alphanumeric()).map(|c| c.to_uppercase().collect::<String>()).unwrap_or_else(|| "•".to_string());
+                let lp = px * 1.2;
+                let (la, ld) = text.line_metrics(lp);
+                let lw = text.measure(&letter, lp);
+                text.layout_to(&mut frame.content, &letter, lp, ix + (av - lw) * 0.5, iy + av * 0.5 + (la - ld) * 0.5, fade(t.accent, pa));
+            }
+
+            // riadok 1: aplikácia vľavo, čas vpravo (pri hoveri krížik na zmazanie)
+            let cy1 = y + cpad + lh_s * 0.5;
+            let right = x0 + w_in - cpad;
+            if hov {
+                let d = 22.0 * s;
+                let r = Rect::new(right - d, y + cpad + (lh_s - d) * 0.5, d, d);
+                self.hits.push((r, Hit::HistDel(i)));
+                let over = self.hover == Some(Hit::HistDel(i));
+                frame.content.push(Item::Rect { r, radius: d * 0.5, soft: 0.8, color: if over { fade(t.alert, pa) } else { fade(t.fg, 0.18 * pa) } });
+                let xw = text.measure("×", px);
+                let (xa, xd) = text.line_metrics(px);
+                text.layout_to(&mut frame.content, "×", px, r.x + (d - xw) * 0.5, r.y + d * 0.5 + (xa - xd) * 0.5, if over { fade(t.on_alert, pa) } else { fade(t.fg, pa) });
+            } else {
+                let when = crate::history::when_label(e.time);
+                let ww = text.measure(&when, px_s);
+                text.layout_to(&mut frame.content, &when, px_s, right - ww, cy1 + (asc_s - desc_s) * 0.5, fade(t.fg, 0.55 * pa));
+            }
+            let app = if e.app.is_empty() { "Notifikácia".to_string() } else { e.app.clone() };
+            let app = Self::ellipsize(text, &app, px_s, (tw - 60.0 * s).max(40.0 * s));
+            text.layout_to(&mut frame.content, &app, px_s, tx, cy1 + (asc_s - desc_s) * 0.5, fade(t.fg, 0.6 * pa));
+
+            // súhrn a telo
+            let sum_col = if e.urgency == 2 { t.urgent_text } else { t.fg };
+            let cy2 = y + cpad + lh_s + lh * 0.55;
+            text.layout_to(&mut frame.content, &summary, px * 1.05, tx, cy2 + (asc - desc) * 0.5, fade(sum_col, pa));
+            for (j, l) in body.iter().enumerate() {
+                let cy = y + cpad + lh_s + lh * 1.1 + lh * (j as f32 + 0.5);
+                text.layout_to(&mut frame.content, l, px, tx, cy + (asc - desc) * 0.5, fade(t.fg, 0.8 * pa));
+            }
+
+            y += card_h + gap;
+            shown += 1;
+        }
+
+        // posuvník v pravom okraji
+        if shown < n {
+            let list_h = bottom - top;
+            let thumb_h = (list_h * shown as f32 / n as f32).max(16.0 * s).min(list_h);
+            let frac = (start as f32 / (n - shown).max(1) as f32).clamp(0.0, 1.0);
+            let w = 4.0 * s;
+            frame.content.push(Item::Rect { r: Rect::new(pill.x + pill.w - pad * 0.5 - w * 0.5, top + (list_h - thumb_h) * frac, w, thumb_h), radius: w * 0.5, soft: 0.8, color: fade(t.fg, 0.35 * pa) });
         }
     }
 

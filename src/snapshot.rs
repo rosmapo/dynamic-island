@@ -58,7 +58,7 @@ pub fn run(cfg: Config, dir: &str) -> Result<(), String> {
     ui.preview("hide");
     shot(&mut ui, "6_hidden", &mut text, &mut renderer)?;
     ui.apply(Msg::Show, now);
-    let mk = |id: u32, app: &str, sum: &str, body: &str, urg: u8| Notification { id, app: app.into(), summary: sum.into(), body: body.into(), actions: vec![("default".into(), "Open".into())], urgency: urg, timeout_ms: 0 };
+    let mk = |id: u32, app: &str, sum: &str, body: &str, urg: u8| Notification { id, app: app.into(), summary: sum.into(), body: body.into(), actions: vec![("default".into(), "Open".into())], urgency: urg, timeout_ms: 0, icon: String::new() };
     ui.apply(Msg::Notif(mk(1, "mail", "Nová správa od Janka", "Ahoj, posielam podklady k zajtrajšej schôdzi. Pozri si ich prosím pred obedom a daj mi vedieť, či je to v poriadku alebo treba niečo doplniť.", 1)), now);
     ui.apply(Msg::Notif(mk(2, "system", "Batéria takmer vybitá", "Zostáva 5 %. Pripoj nabíjačku.", 2)), now);
     shot(&mut ui, "7_notif", &mut text, &mut renderer)?;

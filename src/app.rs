@@ -164,6 +164,8 @@ fn spawn_with_stdin(cmd: &str, input: String) {
 
 /// Najdlhší čas, ktorý má príkaz `exec` položky menu na dokončenie; potom sa ukončí a výstup ostane prázdny.
 const MENU_EXEC_TIMEOUT: Duration = Duration::from_secs(5);
+/// najviac záznamov, ktoré načíta panel histórie notifikácií
+const HIST_PANEL_MAX: usize = 300;
 
 /// Spustí `cmd` cez `sh -c` a vráti jeho štandardný výstup (blokuje, volať z vlákna). Pri prekročení `timeout`
 /// príkaz ukončí a vráti prázdny reťazec.
@@ -235,6 +237,19 @@ fn run_action(a: Action, cfg: &Config, disk_tx: &Option<Tx<DiskCmd>>, tx: &Tx<Ms
             });
         }
         Action::ClipCopy(line) => spawn_with_stdin(&cfg.clip_copy, line),
+        Action::HistLoad => {
+            // súbor sa číta na pozadí, hlavná slučka dostane `Msg::NotifHist`
+            let (path, tx) = (cfg.history_file.clone(), tx.clone());
+            std::thread::spawn(move || {
+                tx.send(Msg::NotifHist(crate::history::load(&path, HIST_PANEL_MAX)));
+            });
+        }
+        Action::HistRemove(time, id) => {
+            crate::history::remove(&cfg.history_file, time, id);
+        }
+        Action::HistClear => {
+            crate::history::clear(&cfg.history_file);
+        }
         Action::TrashLoad => {
             let tx = tx.clone();
             std::thread::spawn(move || {

@@ -199,6 +199,12 @@ pub struct Config {
     pub notif_width: f32,
     pub notif_max: usize,
     pub notif_lines: usize,
+    /// zobrazovať ikony notifikácií (vo vyskakovacom okne aj v histórii)
+    pub notif_icons: bool,
+    /// panel histórie notifikácií: šírka, výška (px), najviac riadkov tela na kartu
+    pub hist_w: f32,
+    pub hist_h: f32,
+    pub hist_lines: usize,
     pub notif_font: f32,
     pub notif_timeout: i32,
     pub notif_urgent_timeout: i32,
@@ -530,6 +536,10 @@ impl Config {
             notif_width: nt.f64_or("width", 450.0) as f32,
             notif_max: nt.f64_or("max_visible", 3.0).max(1.0) as usize,
             notif_lines: nt.f64_or("max_lines", 3.0).max(1.0) as usize,
+            notif_icons: nt.bool_or("icons", true),
+            hist_w: nt.f64_or("panel_width", 480.0).clamp(240.0, 1400.0) as f32,
+            hist_h: nt.f64_or("panel_height", 520.0).clamp(200.0, 1600.0) as f32,
+            hist_lines: nt.f64_or("panel_lines", 3.0).max(1.0) as usize,
             notif_font: nt.f64_or("font_size", 15.0) as f32,
             notif_timeout: nt.f64_or("timeout_ms", 10000.0) as i32,
             notif_urgent_timeout: nt.sub("urgent").f64_or("timeout_ms", 0.0) as i32,

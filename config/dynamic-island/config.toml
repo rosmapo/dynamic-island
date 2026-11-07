@@ -221,6 +221,11 @@ align = "center"          # "center" alebo "left"
 timeout_ms = 10000        # ak aplikácia nepošle vlastný; 0 = nevyprší
 on_click = "default-action"   # akcia "default" aplikácie + zavrieť; "dismiss"; alebo príkaz (napr. tvoj mako_action.sh)
 on_click_right = "update.sh"    # stredné tlačidlo zavrie všetky
+icons = true              # ikony notifikácií (image-data / image-path / app_icon; len PNG, inak písmeno aplikácie)
+# Panel histórie notifikácií (otvorí ho akcia "notifications": on_click* modulu alebo command = "module:notifications"):
+panel_width = 480
+panel_height = 520
+panel_lines = 3           # najviac riadkov tela na kartu
 [notifications.urgent]
 timeout_ms = 0            # urgentné nevyprší, kým ich nezavrieš
 border_size = 2
