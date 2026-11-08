@@ -1,4 +1,4 @@
-//! Modul monitor: jas, kontrast, teplota farieb, vstup a nočný režim cez ddcutil + wlsunset.
+//! Modul monitor: jas, kontrast, teplota farieb a vstup cez ddcutil; nočný režim cez skript z configu.
 //! Bus a mapovania sú konfigurovateľné v sekcii `[monitor]`.
 use crate::data::Msg;
 use crate::sys::Tx;
@@ -22,8 +22,11 @@ pub struct MonitorCfg {
     /// VCP kódy pre vstupy
     pub inputs: Vec<u8>,
     pub input_labels: Vec<String>,
-    /// teplota pre wlsunset (nočný režim)
-    pub night_temp: u32,
+    /// príkaz / skript, ktorý prepne nočný režim (toggle); prázdny = prepínač sa nezobrazí
+    pub night_switcher: String,
+    /// voliteľný príkaz zisťujúci stav: kód 0 = nočný režim beží (bez neho si ostrovček stav pamätá sám)
+    pub night_state: String,
+    pub night_label: String,
 }
 
 impl MonitorCfg {
@@ -69,7 +72,9 @@ impl MonitorCfg {
             preset_labels,
             inputs,
             input_labels,
-            night_temp: t.f64_or("night_temp", 4500.0).clamp(1000.0, 6500.0) as u32,
+            night_switcher: t.str_or("night_switcher", "").trim().to_string(),
+            night_state: t.str_or("night_state", "").trim().to_string(),
+            night_label: t.str_or("night_label", "Nočný režim"),
         }
     }
 }
@@ -94,7 +99,7 @@ pub enum MonitorCmd {
     Contrast(u32),
     Preset(usize),
     Input(usize),
-    /// explicitné zapnutie/vypnutie nočného režimu (nie toggle podľa pgrep)
+    /// prepnutie nočného režimu; hodnota = očakávaný stav po prepnutí
     SetNight(bool),
 }
 
@@ -145,42 +150,21 @@ fn set_vcp(bus: &str, feature: u8, value: u32) {
     );
 }
 
-fn night_running() -> bool {
-    Command::new("pgrep")
-        .args(["-x", "wlsunset"])
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .status()
-        .map(|s| s.success())
-        .unwrap_or(false)
-}
-
-/// wlsunset musí bežať mimo process group / cgroup ostrovčeka, inak
-/// ostane visieť a `killall` zvonku nefunguje, kým ostrovček žije.
-/// Preto všetko ide cez `sh -c '… &'` + nohup (shell hneď skončí).
-fn set_night(enable: bool, temp: u32) {
-    let script = if enable {
-        format!(
-            "pkill -x wlsunset >/dev/null 2>&1 || true; \
-             sleep 0.08; \
-             pkill -9 -x wlsunset >/dev/null 2>&1 || true; \
-             sleep 0.05; \
-             nohup wlsunset -t {temp} -T {t1} >/dev/null 2>&1 &",
-            t1 = temp + 1
-        )
-    } else {
-        "pkill -x wlsunset >/dev/null 2>&1 || true; \
-         sleep 0.08; \
-         pkill -9 -x wlsunset >/dev/null 2>&1 || true"
-            .into()
-    };
-    // .status() – počkáme len na shell (okamžite skončí po &), nie na wlsunset
-    let _ = Command::new("sh")
-        .args(["-c", &script])
-        .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .status();
+/// Stav nočného režimu podľa `night_state` (kód 0 = zapnutý). Bez príkazu vráti `None`.
+fn night_running(cfg: &MonitorCfg) -> Option<bool> {
+    if cfg.night_state.is_empty() {
+        return None;
+    }
+    Some(
+        Command::new("sh")
+            .args(["-c", &cfg.night_state])
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status()
+            .map(|s| s.success())
+            .unwrap_or(false),
+    )
 }
 
 fn load_state(cfg: &MonitorCfg) -> MonitorState {
@@ -212,7 +196,7 @@ fn load_state(cfg: &MonitorCfg) -> MonitorState {
         contrast,
         preset,
         input,
-        night: night_running(),
+        night: night_running(cfg).unwrap_or(false),
         error: String::new(),
         loaded: true,
     }
@@ -287,11 +271,14 @@ pub fn run(cmd: MonitorCmd, cfg: MonitorCfg, tx: Tx<Msg>) {
         }
         MonitorCmd::SetNight(enable) => {
             thread::spawn(move || {
-                set_night(enable, cfg.night_temp);
-                thread::sleep(Duration::from_millis(120));
+                if !cfg.night_switcher.is_empty() {
+                    // skript môže bežať natrvalo (napr. wlsunset v popredí) – spustí sa oddelene a nečaká sa naň
+                    crate::app::spawn_detached(&cfg.night_switcher);
+                }
+                thread::sleep(Duration::from_millis(300));
                 let mut st = load_state(&cfg);
-                // dôveruj požadovanému stavu, pgrep môže ešte chvíľu lagovať
-                st.night = enable;
+                // bez `night_state` (alebo kým stav ešte laguje) platí očakávaný stav
+                st.night = night_running(&cfg).unwrap_or(enable);
                 tx.send(Msg::Monitor(st));
             });
         }

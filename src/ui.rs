@@ -765,6 +765,11 @@ impl Ui {
                 self.audio_loaded = true;
             }
             Msg::Monitor(st) => {
+                let mut st = st;
+                if self.cfg.monitor.night_state.is_empty() {
+                    // bez `night_state` stav nevieme zistiť – pamätáme si ho
+                    st.night = self.monitor.night;
+                }
                 if self.monitor_drag.is_none() {
                     self.monitor = st;
                 } else {
@@ -1277,8 +1282,8 @@ impl Ui {
                     + label + row          // jas
                     + gap + label + row    // kontrast
                     + gap + label + row    // teplota
-                    + gap + label + row    // vstup
-                    + gap + row;           // nočný režim
+                    + gap + label + row;   // vstup
+                let h = if c.night_switcher.is_empty() { h } else { h + gap + row }; // nočný režim
                 (c.width * self.scale, h * self.scale)
             }
             Panel::Bluetooth => {
@@ -4848,10 +4853,11 @@ impl Ui {
 
         y += gap;
 
-        // --- nočný režim
-        {
+        // --- nočný režim (len ak je nastavený `night_switcher`)
+        if !self.cfg.monitor.night_switcher.is_empty() {
             let cy = y + row_h * 0.5;
-            let label = "Nočný režim (4500 K)";
+            let label = self.cfg.monitor.night_label.clone();
+            let label = label.as_str();
             text.layout_to(
                 &mut frame.content,
                 label,

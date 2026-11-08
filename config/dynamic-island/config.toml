@@ -126,7 +126,8 @@ panel_rows = 10
 bus = "10"
 width = 350
 font_size = 16
-night_temp = 4500
+night_switcher = "~/.config/dynamic-island/scripts/bluelight.sh"   # prepína nočný režim; prázdne/chýba = prepínač sa nezobrazí
+night_state = "pgrep -x wlsunset"   # voliteľné: kód 0 = nočný režim beží
 # voliteľné (predvolené sú pre tvoj Iiyama):
 # presets = [5, 6, 8]
 # preset_labels = ["6500 K", "7500 K", "9300 K"]

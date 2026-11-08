@@ -105,7 +105,7 @@ Voliteľné programy podľa používaných modulov (podrobnosti v [5.3](#53-exte
 | `network-manager` | (D-Bus), `nmcli`, `nm-connection-editor` | panel Wi-Fi, záložný zisťovač SSID |
 | `bluez`, `bluez-tools` | (D-Bus), `bt-agent`, `bluetoothctl` | panel Bluetooth (párovanie) |
 | `udisks2` | (D-Bus) | modul `disks` |
-| `ddcutil`, `wlsunset` | `ddcutil`, `wlsunset`, `pgrep`, `pkill` | panel monitor (jas, kontrast, vstup, nočný režim) |
+| `ddcutil` | `ddcutil` | panel monitor (jas, kontrast, vstup); nočný režim rieši tvoj skript (`night_switcher`) |
 | `imagemagick` | `magick` / `convert` | náhľady tapiet, obaly v module `media` |
 | `wl-clipboard`, `cliphist` | `wl-paste`, `wl-copy`, `cliphist` | panel schránky, vloženie hesla Wi-Fi |
 | `mpv` (len podľa configu) | `mpv` | položky menu s rádiom |
@@ -247,7 +247,7 @@ cez frontu s `eventfd`.
 | `notify.rs`, `nicons.rs`, `history.rs` | notifikačný server, ikony notifikácií (PNG z `image-data`/téme ikon), história a jej načítanie pre panel |
 | `disks.rs` | UDisks2 (automount, odpojenie) |
 | `wifi.rs`, `bluetooth.rs` | NetworkManager, BlueZ |
-| `audio.rs`, `monitor.rs` | panel zvuku (`pactl`), panel monitora (`ddcutil`, `wlsunset`) |
+| `audio.rs`, `monitor.rs` | panel zvuku (`pactl`), panel monitora (`ddcutil`) |
 | `wallpaper.rs`, `trash.rs`, `quickset.rs` | panely tapiet, koša, kontajner záložiek |
 | `icons.rs`, `json.rs`, `sys.rs`, `snapshot.rs` | PNG ikony, JSON parser, tenká vrstva nad libc, `--snapshot` |
 
@@ -341,7 +341,7 @@ Spúšťajú sa podľa **názvu** (cez `PATH`), v konfigurácii sa **nedajú** z
 | `iw` (aj `/usr/sbin/iw`) | `providers.rs` | SSID, frekvencia, signál | záložne `iwgetid`, `nmcli` |
 | `ip` | `providers.rs` | IPv4 adresa, predvolená brána | štandard (`iproute2`) |
 | `ddcutil` | `monitor.rs` | jas (VCP 0x10), kontrast (0x12), teplotný preset (0x14), vstup (0x60), cez I²C `bus` | bus a kódy sa nastavujú v `[monitor]` |
-| `wlsunset` (+ `pgrep`, `pkill`, `sh`, `nohup`) | `monitor.rs` | nočný režim (`-t TEPLOTA -T TEPLOTA+1`) | pevné; iný nástroj (gammastep) = zmena kódu |
+| *(tvoj skript)* | `monitor.rs` | nočný režim: `night_switcher` (toggle) a voliteľne `night_state` | ľubovoľný nástroj (wlsunset, gammastep, hyprsunset…) |
 | `bt-agent` / `bluetoothctl` (+ `pgrep`, `sh`) | `bluetooth.rs` | agent párovania (NoInputNoOutput) | bez agenta párovanie nových zariadení často zlyhá |
 | `magick` / `convert` | `wallpaper.rs`, `mpris.rs` | náhľady tapiet; prevod obalov (`mpris:artUrl`, najčastejšie JPEG) na PNG | ImageMagick 6 aj 7 |
 | `wl-paste` | `wifi.rs` | vloženie hesla (Ctrl+V) | `wl-clipboard` |
@@ -692,7 +692,9 @@ pravý klik zabudne uloženú sieť. Hlavička: prepínač rádia, obnovenie, n�
 | `preset_labels` | `["6500 K","7500 K","9300 K"]` | popisy (rovnaký počet ako `presets`, inak `0xNN`) |
 | `inputs` | `[15, 17]` | VCP hodnoty vstupu (VCP 0x60; 0x0F = DisplayPort, 0x11 = HDMI) |
 | `input_labels` | `["DisplayPort","HDMI"]` | popisy |
-| `night_temp` | `4500` (1000–6500) | teplota nočného režimu pre `wlsunset` (K) |
+| `night_switcher` | *(prázdne)* | príkaz alebo skript, ktorý **prepne** nočný režim (toggle). Spúšťa sa oddelene a ostrovček naň nečaká, takže môže bežať aj natrvalo (napr. `wlsunset` v popredí). Ak chýba, prepínač sa v paneli nezobrazí |
+| `night_state` | *(prázdne)* | voliteľný príkaz zisťujúci stav: návratový kód 0 = nočný režim beží (napr. `pgrep -x wlsunset`). Bez neho si ostrovček stav pamätá sám (po štarte „vypnuté“) |
+| `night_label` | `"Nočný režim"` | popis prepínača |
 
 Predvolené `presets`/`inputs` sú pre monitor **Iiyama PL2493H**; iný monitor môže mať iné kódy.
 
