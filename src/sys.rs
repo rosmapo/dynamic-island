@@ -303,6 +303,12 @@ pub fn kill_group(pgid: i32) {
         unsafe { kill(-pgid, 9) };
     }
 }
+/// SIGINT procesu `pid` (napr. `wf-recorder` dokončí súbor).
+pub fn interrupt(pid: i32) {
+    if pid > 1 {
+        unsafe { kill(pid, 2) };
+    }
+}
 pub fn new_session() {
     unsafe { setsid() };
 }

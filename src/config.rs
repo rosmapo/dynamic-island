@@ -209,6 +209,8 @@ pub struct Config {
     pub audio_panel: crate::audio::AudioCfg,
     /// panel monitor – `[monitor]`
     pub monitor: crate::monitor::MonitorCfg,
+    /// panel capture (snímka / nahrávanie obrazovky) – `[capture]`
+    pub capture: crate::capture::CaptureCfg,
     /// panel bluetooth – `[bluetooth]`
     pub bluetooth: crate::bluetooth::BtCfg,
     /// kontajner so záložkami audio / bluetooth / wifi / monitor – `[quickset]`
@@ -627,6 +629,7 @@ BUILTIN_MODULES.map(String::from).to_vec()
             wifi: crate::wifi::WifiCfg::from_table(&t.sub("wifi")),
             audio_panel: crate::audio::AudioCfg::from_table(&audio),
             monitor: crate::monitor::MonitorCfg::from_table(&t.sub("monitor")),
+            capture: crate::capture::CaptureCfg::from_table(&t.sub("capture"), &expand(&rec.str_or("file", "/tmp/RECORDING"))),
             bluetooth: crate::bluetooth::BtCfg::from_table(&t.sub("bluetooth")),
             hw: crate::quickset::HwCfg::from_table(&{
                 // `[quickset]`; starý názov `[quickset]` sa ešte číta, ak `[quickset]` chýba

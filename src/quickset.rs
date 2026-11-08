@@ -6,7 +6,7 @@ use crate::toml::{Table, TableExt, Value};
 /// Záložky predvolene (bez `tab1` … v configu).
 pub const MODULES: [&str; 4] = ["audio", "bluetooth", "wifi", "monitor"];
 /// Všetky panely, ktoré môžu byť záložkou (okrem `menu:NAZOV`). Nie `media` (lepkavý panel) a kalendár.
-pub const ALLOWED: [&str; 8] = ["audio", "bluetooth", "wifi", "monitor", "clipboard", "trash", "notifications", "wallpaper"];
+pub const ALLOWED: [&str; 9] = ["audio", "bluetooth", "wifi", "monitor", "clipboard", "trash", "notifications", "wallpaper", "capture"];
 /// Najviac záložiek (`tab1` … `tab8`).
 const MAX_TABS: usize = 8;
 
@@ -96,6 +96,7 @@ pub fn default_icon(module: &str) -> &'static str {
         "trash" => "\u{f1f8}",
         "notifications" => "\u{f0f3}",
         "wallpaper" => "\u{f03e}",
+        "capture" => "\u{f030}",
         m if m.starts_with(MENU_PREFIX) => "\u{f0493}",
         _ => "\u{f0379}",
     }

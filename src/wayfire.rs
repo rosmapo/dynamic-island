@@ -115,6 +115,73 @@ fn geo(j: &Json) -> Option<Geo> {
     })
 }
 
+// ---------------------------------------------------------------- snímanie obrazovky (modul capture)
+
+/// Prienik obdĺžnika `g` (súradnice výstupu) s výstupom `out`, prepočítaný na globálne súradnice (celé px).
+fn to_global(g: Geo, out: Geo) -> Option<(i32, i32, i32, i32)> {
+    let x0 = (g.x + out.x).max(out.x);
+    let y0 = (g.y + out.y).max(out.y);
+    let x1 = (g.x + out.x + g.w).min(out.x + out.w);
+    let y1 = (g.y + out.y + g.h).min(out.y + out.h);
+    (x1 - x0 >= 1.0 && y1 - y0 >= 1.0).then(|| (x0.round() as i32, y0.round() as i32, (x1 - x0).round() as i32, (y1 - y0).round() as i32))
+}
+
+/// Názov aktívneho výstupu (pre `grim -o` / `wf-recorder -o`).
+pub fn focused_output_name() -> Option<String> {
+    let mut ipc = Ipc::connect()?;
+    let j = ipc.call("window-rules/get-focused-output", "").ok()?;
+    j.path(&["info", "name"]).or_else(|| j.get("name")).and_then(|n| n.as_str()).filter(|n| !n.is_empty()).map(str::to_string)
+}
+
+fn focused_output_geo(ipc: &mut Ipc) -> Option<Geo> {
+    let j = ipc.call("window-rules/get-focused-output", "").ok()?;
+    j.path(&["info", "geometry"]).or_else(|| j.get("geometry")).and_then(geo)
+}
+
+/// Geometria aktívneho okna v globálnych súradnicích (pre `grim -g`), orezaná na aktívny výstup.
+pub fn focused_window_global() -> Option<(i32, i32, i32, i32)> {
+    let mut ipc = Ipc::connect()?;
+    let og = focused_output_geo(&mut ipc)?;
+    let j = ipc.call("window-rules/get-focused-view", "").ok()?;
+    let info = j.get("info").unwrap_or(&j);
+    if matches!(info, Json::Null) {
+        return None;
+    }
+    if info.get("type").and_then(|t| t.as_str()).map_or(false, |t| t != "toplevel") {
+        return None;
+    }
+    if info.get("mapped").and_then(|t| t.as_bool()) == Some(false) {
+        return None;
+    }
+    to_global(info.get("geometry").and_then(geo)?, og)
+}
+
+/// Viditeľné okná aktívneho výstupu v globálnych súradnicích (výber klikom, keď aktívne okno nie je známe).
+pub fn window_rects_global() -> Vec<(i32, i32, i32, i32)> {
+    let Some(mut ipc) = Ipc::connect() else { return Vec::new() };
+    let Some(og) = focused_output_geo(&mut ipc) else { return Vec::new() };
+    let Ok(views) = ipc.call("window-rules/list-views", "") else { return Vec::new() };
+    let mut out = Vec::new();
+    for v in views.as_arr().unwrap_or(&[]) {
+        if v.get("type").and_then(|t| t.as_str()) != Some("toplevel") {
+            continue;
+        }
+        if v.get("mapped").and_then(|t| t.as_bool()) != Some(true) || v.get("minimized").and_then(|t| t.as_bool()) == Some(true) {
+            continue;
+        }
+        let Some(g) = v.get("geometry").and_then(geo) else { continue };
+        let (cx, cy) = (g.x + g.w / 2.0, g.y + g.h / 2.0);
+        let sticky = v.get("sticky").and_then(|s| s.as_bool()) == Some(true);
+        if !(sticky || (cx >= 0.0 && cx < og.w && cy >= 0.0 && cy < og.h)) {
+            continue;
+        }
+        if let Some(r) = to_global(g, og) {
+            out.push(r);
+        }
+    }
+    out
+}
+
 /// Zasahuje niektoré okno aktívneho workspace do pásma ostrovčeka?
 fn obstructed(req: &mut Ipc, out: Geo, cfg: &AutoCfg) -> bool {
     let band = cfg.bar_height + cfg.margin;

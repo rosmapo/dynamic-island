@@ -35,14 +35,14 @@ Obsah:
 | `audio` | odznak len pri stlmení; HUD pri zmene hlasitosti | `wpctl`, `pactl subscribe` |
 | `capslock` | odznak pri zapnutom Caps Lock | `/sys/class/leds/*::capslock` |
 | `inhibitor` | ikona, kým existuje súbor `~/.idle_inhibit` | existencia súboru |
-| `recorder` | text zo súboru `/tmp/RECORDING` | obsah súboru |
+| `recorder` | odznak REC: text zo súboru `/tmp/RECORDING` (píše doň aj panel `capture`) | obsah súboru |
 | `radio` | ikona, kým beží sledovaný proces (položka menu s `track`) | vlastné sledovanie procesu |
 | `media` | ikona, kým je aktívny prehrávač (MPRIS); klik otvorí panel „Práve hrá“ | D-Bus `org.mpris.MediaPlayer2.*` |
 | `disks` | ikona USB s počtom pripojených médií, automount, odpojenie/vysunutie | UDisks2 (D-Bus) |
 | `[[custom]]` | ľubovoľný text/skript/tlačidlo | vlastný príkaz |
 
 **Panely** (rozbalia sa v kapsule; otvárajú sa kliknutím na modul alebo akciou v menu): kalendár, zoznam diskov,
-schránka (cliphist), história notifikácií, „Práve hrá“, kôš, tapety, Wi-Fi, Bluetooth, zvuk, monitor (DDC/CI), kontajner `quickset` so záložkami
+schránka (cliphist), história notifikácií, „Práve hrá“, kôš, tapety, Wi-Fi, Bluetooth, zvuk, monitor (DDC/CI), snímanie obrazovky (`capture`), kontajner `quickset` so záložkami
 (audio/bluetooth/wifi/monitor/vlastné menu), vlastné `[[menu]]` (ikony / text / dashboard).
 
 **Ďalšie funkcie:** notifikačný server (`org.freedesktop.Notifications`) so zobrazením priamo v kapsule a históriou,
@@ -106,6 +106,7 @@ Voliteľné programy podľa používaných modulov (podrobnosti v [5.3](#53-exte
 | `bluez`, `bluez-tools` | (D-Bus), `bt-agent`, `bluetoothctl` | panel Bluetooth (párovanie) |
 | `udisks2` | (D-Bus) | modul `disks` |
 | `ddcutil` | `ddcutil` | panel monitor (jas, kontrast, vstup); nočný režim rieši tvoj skript (`night_switcher`) |
+| `grim`, `slurp`, `wf-recorder` | `grim`, `slurp`, `wf-recorder` | panel `capture` (snímka / oblasť / nahrávanie videa); `notify-send` (`libnotify-bin`) pre notifikáciu po uložení |
 | `imagemagick` | `magick` / `convert` | náhľady tapiet, obaly v module `media` |
 | `wl-clipboard`, `cliphist` | `wl-paste`, `wl-copy`, `cliphist` | panel schránky, vloženie hesla Wi-Fi |
 | `mpv` (len podľa configu) | `mpv` | položky menu s rádiom |
@@ -248,6 +249,7 @@ cez frontu s `eventfd`.
 | `disks.rs` | UDisks2 (automount, odpojenie) |
 | `wifi.rs`, `bluetooth.rs` | NetworkManager, BlueZ |
 | `audio.rs`, `monitor.rs` | panel zvuku (`pactl`), panel monitora (`ddcutil`) |
+| `capture.rs` | panel snímania: `grim` / `slurp` / `wf-recorder`, odpočet, odznak REC; aktívne okno cez Wayfire IPC (`wayfire.rs`) |
 | `wallpaper.rs`, `trash.rs`, `quickset.rs` | panely tapiet, koša, kontajner záložiek |
 | `icons.rs`, `json.rs`, `sys.rs`, `snapshot.rs` | PNG ikony, JSON parser, tenká vrstva nad libc, `--snapshot` |
 
@@ -341,6 +343,7 @@ Spúšťajú sa podľa **názvu** (cez `PATH`), v konfigurácii sa **nedajú** z
 | `iw` (aj `/usr/sbin/iw`) | `providers.rs` | SSID, frekvencia, signál | záložne `iwgetid`, `nmcli` |
 | `ip` | `providers.rs` | IPv4 adresa, predvolená brána | štandard (`iproute2`) |
 | `ddcutil` | `monitor.rs` | jas (VCP 0x10), kontrast (0x12), teplotný preset (0x14), vstup (0x60), cez I²C `bus` | bus a kódy sa nastavujú v `[monitor]` |
+| `grim`, `slurp`, `wf-recorder` (+ `wl-copy`, `notify-send`, `pkill`) | `capture.rs` | snímka obrazovky / okna / oblasti, nahrávanie videa; aktívne okno a výstup z Wayfire IPC (`window-rules/get-focused-view`, `get-focused-output`) | iný nástroj = zmena kódu |
 | *(tvoj skript)* | `monitor.rs` | nočný režim: `night_switcher` (toggle) a voliteľne `night_state` | ľubovoľný nástroj (wlsunset, gammastep, hyprsunset…) |
 | `bt-agent` / `bluetoothctl` (+ `pgrep`, `sh`) | `bluetooth.rs` | agent párovania (NoInputNoOutput) | bez agenta párovanie nových zariadení často zlyhá |
 | `magick` / `convert` | `wallpaper.rs`, `mpris.rs` | náhľady tapiet; prevod obalov (`mpris:artUrl`, najčastejšie JPEG) na PNG | ImageMagick 6 aj 7 |
@@ -499,6 +502,8 @@ Hodnota je **vstavaná akcia** alebo **shell príkaz**. Prázdna hodnota = nič.
 |---|---|
 | `calendar` | kalendár (koliesko = zmena mesiaca) |
 | `clipboard`, `notifications`, `media`, `trash`, `wallpaper`, `wifi`, `bluetooth`, `audio`, `monitor` | príslušný panel (`notifications` = história notifikácií) |
+| `capture` | panel snímania ([6.14b](#614b-capture--snímka-obrazovky-a-nahrávanie)); ak práve beží odpočet alebo nahrávanie (svieti odznak REC), klik ich **ukončí** |
+| `capture-stop` | zrušiť odpočet / ukončiť nahrávanie (aj nahrávanie `wf-recorder` spustené mimo ostrovčeka) |
 | `quickset`, `quickset:audio` / `:bluetooth` / `:wifi` / `:monitor` / `:menu:NAZOV` (aj ostatné záložky; starý názov `hardware` ešte funguje) | kontajner záložiek (posledná / konkrétna záložka) |
 | `menu` | zoznam diskov (modul `disks`) |
 | *názov `[[menu]]`* | vlastné menu |
@@ -642,7 +647,7 @@ Modul sa zobrazí len keď je nejaké médium pripojené; počíta sa disk, nie 
 
 Kontajner so záložkami sa volá **quickset** (predtým `hardware`). Sekcia `[hardware]` a akcie `hardware…` sa ešte čítajú, ak `[quickset]` chýba, nové configy ich používať nemajú.
 
-Kontajner s lištou záložiek okolo panelov. Záložkou môže byť `audio`, `bluetooth`, `wifi`, `monitor`, `clipboard`, `trash`, `notifications` (história notifikácií), `wallpaper` alebo `menu:NAZOV`. Panely ostávajú otvárateľné aj samostatne.
+Kontajner s lištou záložiek okolo panelov. Záložkou môže byť `audio`, `bluetooth`, `wifi`, `monitor`, `capture`, `clipboard`, `trash`, `notifications` (história notifikácií), `wallpaper` alebo `menu:NAZOV`. Panely ostávajú otvárateľné aj samostatne.
 
 **Kritériá:** záložkou môže byť veľký panel s predvídateľnou veľkosťou, ktorý sa zatvára rovnako ako ostatné (odchodom myši, opakovaným klikom). Preto **nie** `media` (lepkavý panel, ktorý sa odchodom myši nezatvára) a nie kalendár. Výška okna kontajnera je výška najvyššej záložky; veľký panel (`wallpaper`) natiahne všetky, preto pri ňom nastav `width` / `height`.
 
@@ -658,7 +663,7 @@ Kontajner s lištou záložiek okolo panelov. Záložkou môže byť `audio`, `b
 | `inversetab1_icon` … | predvolená ikona panela, inak `f0e7` | Nerd Font glyf; veľkosť tlačidla a ikony sa preberá z `tab_size` a `icon_size` |
 | `width` / `height` | — (120–3000) | pevná celková veľkosť okna vrátane lišty; bez nich sa riadi obsahom |
 | `preload` | `true` | načítať údaje monitora (ddcutil je pomalý) už pri otvorení kontajnera |
-| `tab1` … `tab8` | štyri v poradí `audio, bluetooth, wifi, monitor` | modul: `audio`, `bluetooth`, `wifi`, `monitor`, `clipboard`, `trash`, `notifications`, `wallpaper` alebo `menu:NAZOV` (`NAZOV` = `name` z `[[menu]]`); neplatný názov sa preskočí |
+| `tab1` … `tab8` | štyri v poradí `audio, bluetooth, wifi, monitor` | modul: `audio`, `bluetooth`, `wifi`, `monitor`, `capture`, `clipboard`, `trash`, `notifications`, `wallpaper` alebo `menu:NAZOV` (`NAZOV` = `name` z `[[menu]]`); neplatný názov sa preskočí |
 | `tab1_icon` … | `f057e` audio, `f00af` bluetooth, `f0928` wifi, `f0379` monitor, `f0ea` schránka, `f1f8` kôš, `f0f3` notifikácie, `f03e` tapety, ozubené koleso `f0493` pre menu | Nerd Font glyf |
 
 Opakovaný klik na tú istú záložku kontajner zavrie. Záložka s menu: položky s `exec` sa spustia pri prepnutí,
@@ -697,6 +702,45 @@ pravý klik zabudne uloženú sieť. Hlavička: prepínač rádia, obnovenie, n�
 | `night_label` | `"Nočný režim"` | popis prepínača |
 
 Predvolené `presets`/`inputs` sú pre monitor **Iiyama PL2493H**; iný monitor môže mať iné kódy.
+
+### 6.14b `[capture]` — snímka obrazovky a nahrávanie
+
+Panel s voľbami **oblasť** (celá obrazovka / aktívne okno / región), **typ** (obrázok / video), **časovač**, prepínač
+**kurzor myši** (obrázok) alebo **zvuk** (video) a hlavné tlačidlo. Otvorí sa akciou `capture` (`module:capture` v menu,
+`on_click = "capture"`), ako záložka kontajnera (`tabN = "capture"`) alebo ako tlačidlo druhej lišty (`inversetabN`).
+
+Priebeh: panel sa zatvorí → pri **regióne** sa vyberie obdĺžnik (`slurp`, Esc = zrušiť) → odpočet → snímka (`grim`) alebo
+nahrávanie (`wf-recorder`). Pri **okne** sa aktívne okno určuje až po odpočte (Wayfire IPC `window-rules/get-focused-view`,
+súradnice sa prepočítajú na globálne podľa aktívneho výstupu); ak ho zistiť nejde, okno sa vyberie klikom (`slurp -r`).
+Nahrávanie okna / regiónu sníma pevný obdĺžnik zo štartu (pohyb okna sa nesleduje).
+
+**Odznak REC** (modul `recorder` musí byť v `modules`): používa sa ten istý súbor `[recorder] file`. Počas odpočtu v ňom
+je odpočet (`3`, `2`, `1`), počas nahrávania `REC m:ss`, po skončení sa súbor zmaže. Pôvodný spôsob (vlastný skript, ktorý
+do súboru píše) funguje ďalej a môže sa používať súbežne. Zastavenie: tlačidlo „Zastaviť“ v paneli, klik na odznak s
+`[recorder] on_click = "capture"`, alebo akcia `capture-stop` (pošle `wf-recorder` SIGINT, aby sa súbor korektne dokončil).
+
+Pri snímke sa ostrovček na okamih skryje (`hide_bar`), aby nebol na obrázku. Výsledok (uložený súbor / chyba) sa ukáže v
+dolnom riadku panela a — ak je nainštalovaný `notify-send` — aj ako notifikácia. Snímka sa predvolene skopíruje do
+schránky (`wl-copy`).
+
+| Kľúč | Predvolené | Popis |
+|---|---|---|
+| `dir` | `~/Pictures/Screenshots` | adresár snímok (vytvorí sa) |
+| `video_dir` | `~/Videos/Recordings` | adresár videí (vytvorí sa) |
+| `name` | `%Y-%m-%d_%H-%M-%S` | vzor názvu súboru (`strftime`); prípona sa doplní |
+| `delays` | `[0, 3, 5, 10]` | ponúkané časovače v sekundách (najviac 6; 0 = hneď) |
+| `mode` | `"region"` | predvolená oblasť: `screen` / `window` / `region` |
+| `kind` | `"image"` | predvolený typ: `image` / `video` |
+| `cursor` | `false` | kurzor myši na snímke (`grim -c`) |
+| `audio` | `false` | zvuk pri nahrávaní (`wf-recorder -a`) |
+| `format` | `"png"` | `png` / `jpeg` |
+| `video_ext` | `"mp4"` | prípona (kontajner) videa |
+| `recorder_args` | *(prázdne)* | ďalšie argumenty pre `wf-recorder` (napr. `-c h264_vaapi -d /dev/dri/renderD128`) |
+| `copy` | `true` | snímku skopírovať do schránky |
+| `notify` | `true` | po uložení poslať notifikáciu (`notify-send`) |
+| `hide_bar` | `true` | pri snímke dočasne skryť ostrovček |
+| `settle_ms` | `350` | pauza na zatvorenie panela / skrytie ostrovčeka pred snímkou |
+| `width`, `font_size` | `380`, `15` | rozmery panela |
 
 ### 6.15 `[wallpaper]`
 

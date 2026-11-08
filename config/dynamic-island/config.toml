@@ -207,8 +207,30 @@ on_click = ""
 tooltip = ""
 
 [recorder]
-file = "/tmp/RECORDING"
+file = "/tmp/RECORDING"   # odznak REC: píše doň aj panel capture (odpočet, "REC m:ss"); vlastný skript funguje ďalej
 on_click = "~/.config/wayfire/scripts/recorder.sh"
+# kým chceš klik na odznak využiť na zastavenie nahrávania z panela capture, daj:
+# on_click = "capture"    # odpočet/nahrávanie = zastaví; inak otvorí panel capture
+
+# Snímka obrazovky / nahrávanie videa (grim, slurp, wf-recorder). Otvorí sa akciou "capture"
+# (položka menu `module:capture`, záložka kontajnera `tab9 = "capture"`, tlačidlo `inversetab`).
+[capture]
+dir = "~/Pictures/Screenshots"
+video_dir = "~/Videos/Recordings"
+name = "%Y-%m-%d_%H-%M-%S"   # vzor názvu súboru (strftime)
+delays = [0, 3, 5, 10]       # ponúkané časovače v sekundách
+mode = "region"              # predvolená oblasť: screen | window | region
+kind = "image"               # predvolený typ: image | video
+width = 380
+font_size = 16
+# cursor = false             # kurzor myši na snímke
+# audio = false              # zvuk pri nahrávaní
+# format = "png"             # png | jpeg
+# video_ext = "mp4"          # mp4 | mkv | webm
+# recorder_args = ""         # ďalšie argumenty pre wf-recorder, napr. "-c h264_vaapi -d /dev/dri/renderD128"
+# copy = true                # snímku skopírovať do schránky (wl-copy)
+# notify = true              # po uložení poslať notifikáciu (notify-send)
+# hide_bar = true            # pri snímke dočasne skryť ostrovček
 
 # Ľubovoľný externý modul (waybar „custom“): trvalý proces (interval = 0) alebo periodický.
 # Výstup: JSON {"text","tooltip","class"} alebo čistý text (json = false).

@@ -4,6 +4,7 @@ mod anim;
 mod app;
 mod audio;
 mod bluetooth;
+mod capture;
 mod config;
 mod data;
 mod dbus;

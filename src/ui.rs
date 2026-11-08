@@ -65,6 +65,8 @@ pub enum Action {
     Audio(crate::audio::AudioCmd),
     Wifi(crate::wifi::WifiCmd),
     Monitor(crate::monitor::MonitorCmd),
+    /// snímka obrazovky / nahrávanie
+    Capture(crate::capture::CaptureCmd),
     Bluetooth(crate::bluetooth::BtCmd),
     /// vložiť schránku do poľa hesla
     WifiPaste,
@@ -88,8 +90,22 @@ enum Panel {
     Wifi,
     Audio,
     Monitor,
+    /// snímka obrazovky / nahrávanie videa
+    Capture,
     Bluetooth,
     Tip,
+}
+
+/// Stav snímania (panel capture).
+#[derive(Clone, Copy, PartialEq, Debug)]
+enum CapPhase {
+    Idle,
+    /// žiadosť odoslaná, vlákno sa rozbieha
+    Busy,
+    /// výber oblasti / okna (`slurp`)
+    Selecting,
+    Countdown(u32),
+    Recording(u32),
 }
 
 #[derive(Clone, Copy, PartialEq, Debug)]
@@ -139,6 +155,14 @@ enum Hit {
     MonInput(usize),
     /// prepínač nočného režimu
     MonNight,
+    /// panel capture: oblasť (index do `Mode::ALL`), typ (`Kind::ALL`), časovač (index do `delays`)
+    CapMode(usize),
+    CapKind(usize),
+    CapDelay(usize),
+    /// prepínač kurzora (obrázok) / zvuku (video)
+    CapToggle,
+    /// hlavné tlačidlo: snímať / nahrávať / zrušiť / zastaviť
+    CapGo,
     BtRow(usize),
     BtToggle,
     BtDiscoverable,
@@ -364,6 +388,17 @@ pub struct Ui {
     monitor_unsent: bool,
     /// dráhy posuvníkov z posledného kreslenia [jas, kontrast]
     monitor_rects: [Rect; 2],
+    /// panel capture: voľby, priebeh a posledná správa
+    cap_mode: crate::capture::Mode,
+    cap_kind: crate::capture::Kind,
+    cap_delay: usize,
+    cap_cursor: bool,
+    cap_audio: bool,
+    cap_phase: CapPhase,
+    cap_note: String,
+    cap_err: bool,
+    /// ostrovček je kvôli snímke dočasne skrytý
+    cap_hidden: bool,
     /// modul Bluetooth
     bluetooth: crate::bluetooth::BtState,
     bluetooth_loaded: bool,
@@ -468,6 +503,7 @@ fn menu_content_width(kind: MenuKind, icon_grid_w: f32, text_grid_w: f32, m: &cr
 
 impl Ui {
     pub fn new(cfg: Config, theme: Theme, scale: f32) -> Ui {
+        let cap_defaults = (cfg.capture.mode, cfg.capture.kind, cfg.capture.cursor, cfg.capture.audio);
         let mut items = Vec::new();
         for name in &cfg.modules {
             let id = match name.as_str() {
@@ -624,6 +660,15 @@ impl Ui {
             monitor_sent: Instant::now(),
             monitor_unsent: false,
             monitor_rects: [Rect::new(0.0, 0.0, 0.0, 0.0); 2],
+            cap_mode: cap_defaults.0,
+            cap_kind: cap_defaults.1,
+            cap_delay: 0,
+            cap_cursor: cap_defaults.2,
+            cap_audio: cap_defaults.3,
+            cap_phase: CapPhase::Idle,
+            cap_note: String::new(),
+            cap_err: false,
+            cap_hidden: false,
             bluetooth: Default::default(),
             bluetooth_loaded: false,
             bluetooth_scroll: 0,
@@ -763,6 +808,34 @@ impl Ui {
                     self.audio = st;
                 }
                 self.audio_loaded = true;
+            }
+            Msg::Capture(ev) => {
+                use crate::capture::CaptureEvent as E;
+                match ev {
+                    E::Selecting => self.cap_phase = CapPhase::Selecting,
+                    E::Countdown(n) => self.cap_phase = CapPhase::Countdown(n),
+                    E::Recording(s) => self.cap_phase = CapPhase::Recording(s),
+                    E::Hide(h) => self.cap_hidden = h,
+                    E::Done { path, video } => {
+                        self.cap_phase = CapPhase::Idle;
+                        self.cap_hidden = false;
+                        self.cap_err = false;
+                        let name = path.rsplit('/').next().unwrap_or(&path);
+                        self.cap_note = format!("{}: {name}", if video { "Nahrávka uložená" } else { "Snímka uložená" });
+                    }
+                    E::Cancelled => {
+                        self.cap_phase = CapPhase::Idle;
+                        self.cap_hidden = false;
+                        self.cap_err = false;
+                        self.cap_note.clear();
+                    }
+                    E::Failed(e) => {
+                        self.cap_phase = CapPhase::Idle;
+                        self.cap_hidden = false;
+                        self.cap_err = true;
+                        self.cap_note = e;
+                    }
+                }
             }
             Msg::Monitor(st) => {
                 let mut st = st;
@@ -1002,7 +1075,7 @@ impl Ui {
 
         // notifikácia / otvorený veľký panel (menu, kalendár, disky) ostrovček vždy vysunie
         // inak by autohide pri pohybe kurzorom k dolným položkám menu skryl celý ostrovček
-        let hidden = (self.manual_hidden || self.auto_hidden)
+        let hidden = (self.manual_hidden || self.auto_hidden || self.cap_hidden)
             && self.notifs.is_empty()
             && !self.big_open();
         self.hide.set(if hidden { 1.0 } else { 0.0 });
@@ -1270,6 +1343,10 @@ impl Ui {
                 let sec = |len: usize| AUDIO_LABEL + row + len.min(c.rows).max(1) as f32 * row;
                 let h = 2.0 * AUDIO_PAD + sec(self.audio.sinks.len()) + AUDIO_GAP + sec(self.audio.sources.len());
                 (c.width * self.scale, h * self.scale)
+            }
+            Panel::Capture => {
+                let c = &self.cfg.capture;
+                (c.width * self.scale, crate::capture::panel_height(c.font_size) * self.scale)
             }
             Panel::Monitor => {
                 let c = &self.cfg.monitor;
@@ -1552,7 +1629,7 @@ impl Ui {
                 self.panel_w.set(0.0);
                 self.panel_a.set(0.0);
             }
-            Panel::Calendar | Panel::Disks | Panel::Menu(_) | Panel::Clip | Panel::Trash | Panel::Wall | Panel::Wifi | Panel::Audio | Panel::Monitor | Panel::Bluetooth | Panel::NotifHist | Panel::Media => {
+            Panel::Calendar | Panel::Disks | Panel::Menu(_) | Panel::Clip | Panel::Trash | Panel::Wall | Panel::Wifi | Panel::Audio | Panel::Monitor | Panel::Capture | Panel::Bluetooth | Panel::NotifHist | Panel::Media => {
                 if p == Panel::Calendar {
                     self.rebuild_cal();
                 }
@@ -1591,7 +1668,7 @@ impl Ui {
     }
 
     fn is_big(p: Panel) -> bool {
-        matches!(p, Panel::Calendar | Panel::Disks | Panel::Menu(_) | Panel::Clip | Panel::Trash | Panel::Wall | Panel::Wifi | Panel::Audio | Panel::Monitor | Panel::Bluetooth | Panel::NotifHist | Panel::Media)
+        matches!(p, Panel::Calendar | Panel::Disks | Panel::Menu(_) | Panel::Clip | Panel::Trash | Panel::Wall | Panel::Wifi | Panel::Audio | Panel::Monitor | Panel::Capture | Panel::Bluetooth | Panel::NotifHist | Panel::Media)
     }
 
     // ------------------------------------------- kontajner quickset
@@ -1604,6 +1681,7 @@ impl Ui {
             "bluetooth" => Some(Panel::Bluetooth),
             "wifi" => Some(Panel::Wifi),
             "monitor" => Some(Panel::Monitor),
+            "capture" => Some(Panel::Capture),
             "clipboard" => Some(Panel::Clip),
             "trash" => Some(Panel::Trash),
             "notifications" => Some(Panel::NotifHist),
@@ -1614,7 +1692,7 @@ impl Ui {
 
     /// Panel môže byť obsahom kontajnera `quickset`.
     fn is_hw_inner(p: Panel) -> bool {
-        matches!(p, Panel::Audio | Panel::Bluetooth | Panel::Wifi | Panel::Monitor | Panel::Menu(_) | Panel::Clip | Panel::Trash | Panel::NotifHist | Panel::Wall)
+        matches!(p, Panel::Audio | Panel::Bluetooth | Panel::Wifi | Panel::Monitor | Panel::Capture | Panel::Menu(_) | Panel::Clip | Panel::Trash | Panel::NotifHist | Panel::Wall)
     }
 
     /// Veľký panel sa práve kreslí v kontajneri `quickset` (aj počas jeho zatvárania).
@@ -1635,7 +1713,7 @@ impl Ui {
 
     /// Názov vnútornej akcie ostrovčeka (panel, menu, kontajner, vstavaná akcia), nie shell príkaz.
     fn is_internal_action(&self, name: &str) -> bool {
-        matches!(name, "calendar" | "disks" | "clipboard" | "notifications" | "media" | "trash" | "wallpaper" | "wifi" | "audio" | "monitor" | "bluetooth")
+        matches!(name, "calendar" | "disks" | "clipboard" | "notifications" | "media" | "trash" | "wallpaper" | "wifi" | "audio" | "monitor" | "bluetooth" | "capture")
             || Self::quickset_cmd(name).is_some()
             || self.menu_index(name).is_some()
             || Self::action_for(name).map_or(false, |a| !matches!(a, Action::Run(_)))
@@ -2349,7 +2427,7 @@ impl Ui {
             return;
         }
         match self.panel {
-            Panel::Calendar | Panel::Disks | Panel::Menu(_) | Panel::Clip | Panel::Trash | Panel::Wall | Panel::Wifi | Panel::Audio | Panel::Monitor | Panel::Bluetooth | Panel::NotifHist | Panel::Media => {
+            Panel::Calendar | Panel::Disks | Panel::Menu(_) | Panel::Clip | Panel::Trash | Panel::Wall | Panel::Wifi | Panel::Audio | Panel::Monitor | Panel::Capture | Panel::Bluetooth | Panel::NotifHist | Panel::Media => {
                 self.collapse_at = Some(now + Duration::from_millis(self.cfg.collapse_ms))
             }
             Panel::Tip => self.collapse_at = Some(now + Duration::from_millis(200)),
@@ -2359,8 +2437,9 @@ impl Ui {
 
     fn action_for(cmd: &str) -> Option<Action> {
         match cmd {
-            "" | "calendar" | "menu" | "clipboard" | "notifications" | "media" | "trash" | "wallpaper" | "wifi" | "audio" | "monitor" | "bluetooth" => None,
+            "" | "calendar" | "menu" | "clipboard" | "notifications" | "media" | "trash" | "wallpaper" | "wifi" | "audio" | "monitor" | "bluetooth" | "capture" => None,
             c if Self::quickset_cmd(c).is_some() => None,
+            "capture-stop" => Some(Action::Capture(crate::capture::CaptureCmd::Stop)),
             "eject-all" => Some(Action::DiskEjectAll),
             "inhibit-toggle" => Some(Action::InhibitToggle),
             "layout-toggle" => Some(Action::LayoutToggle),
@@ -2426,6 +2505,15 @@ impl Ui {
             "bluetooth" => {
                 self.set_panel(Panel::Bluetooth);
                 None
+            }
+            // panel snímania; počas odpočtu / nahrávania (aj cudzieho, odznak REC svieti) akcia nahrávanie ukončí
+            "capture" => {
+                if self.cap_phase == CapPhase::Idle && self.data.rec.is_empty() {
+                    self.set_panel(Panel::Capture);
+                    None
+                } else {
+                    Some(Action::Capture(crate::capture::CaptureCmd::Stop))
+                }
             }
             // `quickset` = kontajner so záložkami (posledná záložka), `quickset:wifi` = rovno konkrétna záložka
             other if Self::quickset_cmd(other).is_some() => {
@@ -2746,6 +2834,55 @@ impl Ui {
                 if button == BTN_LEFT {
                     self.monitor.input = Some(i);
                     out.push(Action::Monitor(crate::monitor::MonitorCmd::Input(i)));
+                }
+            }
+            Hit::CapMode(i) => {
+                if button == BTN_LEFT && self.cap_phase == CapPhase::Idle {
+                    if let Some(m) = crate::capture::Mode::ALL.get(i) {
+                        self.cap_mode = *m;
+                    }
+                }
+            }
+            Hit::CapKind(i) => {
+                if button == BTN_LEFT && self.cap_phase == CapPhase::Idle {
+                    if let Some(k) = crate::capture::Kind::ALL.get(i) {
+                        self.cap_kind = *k;
+                    }
+                }
+            }
+            Hit::CapDelay(i) => {
+                if button == BTN_LEFT && self.cap_phase == CapPhase::Idle && i < self.cfg.capture.delays.len() {
+                    self.cap_delay = i;
+                }
+            }
+            Hit::CapToggle => {
+                if button == BTN_LEFT && self.cap_phase == CapPhase::Idle {
+                    if self.cap_kind == crate::capture::Kind::Image {
+                        self.cap_cursor = !self.cap_cursor;
+                    } else {
+                        self.cap_audio = !self.cap_audio;
+                    }
+                }
+            }
+            Hit::CapGo => {
+                if button == BTN_LEFT {
+                    if self.cap_phase == CapPhase::Idle {
+                        let req = crate::capture::Request {
+                            mode: self.cap_mode,
+                            kind: self.cap_kind,
+                            delay: self.cfg.capture.delays.get(self.cap_delay).copied().unwrap_or(0),
+                            cursor: self.cap_cursor,
+                            audio: self.cap_audio,
+                        };
+                        self.cap_phase = CapPhase::Busy;
+                        self.cap_note.clear();
+                        self.cap_err = false;
+                        // panel sa zatvorí, aby nebol na snímke / nahrávke
+                        self.set_panel(Panel::None);
+                        out.push(Action::Capture(crate::capture::CaptureCmd::Start(req)));
+                    } else {
+                        out.push(Action::Capture(crate::capture::CaptureCmd::Stop));
+                    }
                 }
             }
             Hit::MonNight => {
@@ -3194,6 +3331,7 @@ impl Ui {
                 Panel::Wifi => self.build_wifi(&mut frame, text, content, ct),
                 Panel::Audio => self.build_audio(&mut frame, text, content, ct),
                 Panel::Monitor => self.build_monitor(&mut frame, text, content, ct),
+                Panel::Capture => self.build_capture(&mut frame, text, content, ct),
                 Panel::Bluetooth => self.build_bluetooth(&mut frame, text, content, ct),
                 _ => self.build_calendar(&mut frame, text, pill, pill.y, ct),
             }
@@ -3216,7 +3354,7 @@ impl Ui {
                         text.layout_to(&mut frame.content, l, px2, pill.x + self.s(16.0), cy + (asc - desc) * 0.5, col);
                     }
                 }
-                Panel::None | Panel::Calendar | Panel::Disks | Panel::Menu(_) | Panel::Clip | Panel::Trash | Panel::Wall | Panel::Wifi | Panel::Audio | Panel::Monitor | Panel::Bluetooth | Panel::NotifHist | Panel::Media => {}
+                Panel::None | Panel::Calendar | Panel::Disks | Panel::Menu(_) | Panel::Clip | Panel::Trash | Panel::Wall | Panel::Wifi | Panel::Audio | Panel::Monitor | Panel::Capture | Panel::Bluetooth | Panel::NotifHist | Panel::Media => {}
             }
         }
         frame
@@ -4582,6 +4720,165 @@ impl Ui {
                 }
             }
             y += shown as f32 * row_h + AUDIO_GAP * s;
+        }
+    }
+
+    /// Jedno segmentové tlačidlo panela capture (vyplnená „pilulka“ s popisom).
+    #[allow(clippy::too_many_arguments)]
+    fn cap_seg(&mut self, frame: &mut Frame, text: &mut Text, r: Rect, label: &str, selected: bool, hit: Hit, enabled: bool, px: f32, pa: f32) {
+        let s = self.scale;
+        let t = self.theme;
+        let (a3, d3) = text.line_metrics(px);
+        let dim = if enabled { 1.0 } else { 0.45 };
+        if enabled {
+            self.hits.push((r, hit));
+        }
+        let hov = enabled && self.hover == Some(hit);
+        let bg = if selected {
+            fade(t.accent, (if enabled { 0.35 } else { 0.2 }) * pa)
+        } else if hov {
+            fade(t.menu_selected, pa)
+        } else {
+            fade(t.fg, 0.12 * dim * pa)
+        };
+        frame.content.push(Item::Rect { r, radius: r.h * 0.5, soft: 0.8, color: bg });
+        let fg = if selected && enabled {
+            t.on_accent
+        } else if hov {
+            t.menu_selected_text
+        } else {
+            fade(t.fg, dim)
+        };
+        let lab = Self::ellipsize(text, label, px, r.w - 10.0 * s);
+        let lw = text.measure(&lab, px);
+        text.layout_to(&mut frame.content, &lab, px, r.x + (r.w - lw) * 0.5, r.y + r.h * 0.5 + (a3 - d3) * 0.5, fade(fg, pa));
+    }
+
+    /// Panel snímania: oblasť (obrazovka / okno / región), typ (obrázok / video), časovač, kurzor / zvuk a hlavné tlačidlo.
+    /// Výška musí sedieť s `capture::panel_height`.
+    fn build_capture(&mut self, frame: &mut Frame, text: &mut Text, pill: Rect, pa: f32) {
+        use crate::capture::{Kind, Mode};
+        let s = self.scale;
+        let t = self.theme;
+        let c = self.cfg.capture.clone();
+        let f = c.font_size;
+        let px = f * s;
+        let px_small = px * 0.8;
+        let (asc, desc) = text.line_metrics(px);
+        let (a3, d3) = text.line_metrics(px_small);
+        let base = |cy: f32| cy + (asc - desc) * 0.5;
+        let pad = 14.0 * s;
+        let row_h = (f + 20.0) * s;
+        let label_h = 22.0 * s;
+        let gap = 12.0 * s;
+        let inset = 12.0 * s;
+        let x0 = pill.x + pad;
+        let w_in = pill.w - 2.0 * pad;
+        let mut y = pill.y + pad;
+        let idle = self.cap_phase == CapPhase::Idle;
+
+        // popisok sekcie
+        let section = |frame: &mut Frame, text: &mut Text, y: f32, label: &str| {
+            text.layout_to(&mut frame.content, label, px_small, x0 + inset, y + label_h * 0.5 + (a3 - d3) * 0.5, fade(t.fg, 0.6 * pa));
+        };
+        // rad segmentových tlačidiel: (popis, vybrané, hit)
+        let btn_gap = 8.0 * s;
+        let bh = (row_h * 0.85).min(32.0 * s);
+
+        // --- oblasť
+        section(frame, text, y, "Oblasť");
+        y += label_h;
+        {
+            let n = Mode::ALL.len() as f32;
+            let bw = ((w_in - 2.0 * inset - (n - 1.0) * btn_gap) / n).max(40.0 * s);
+            for (i, m) in Mode::ALL.iter().enumerate() {
+                let r = Rect::new(x0 + inset + i as f32 * (bw + btn_gap), y + (row_h - bh) * 0.5, bw, bh);
+                self.cap_seg(frame, text, r, m.label(), self.cap_mode == *m, Hit::CapMode(i), idle, px_small, pa);
+            }
+        }
+        y += row_h + gap;
+
+        // --- typ
+        section(frame, text, y, "Typ");
+        y += label_h;
+        {
+            let n = Kind::ALL.len() as f32;
+            let bw = ((w_in - 2.0 * inset - (n - 1.0) * btn_gap) / n).max(40.0 * s);
+            for (i, k) in Kind::ALL.iter().enumerate() {
+                let r = Rect::new(x0 + inset + i as f32 * (bw + btn_gap), y + (row_h - bh) * 0.5, bw, bh);
+                self.cap_seg(frame, text, r, k.label(), self.cap_kind == *k, Hit::CapKind(i), idle, px_small, pa);
+            }
+        }
+        y += row_h + gap;
+
+        // --- časovač
+        section(frame, text, y, "Časovač");
+        y += label_h;
+        {
+            let n = c.delays.len().max(1) as f32;
+            let bw = ((w_in - 2.0 * inset - (n - 1.0) * btn_gap) / n).max(30.0 * s);
+            for (i, d) in c.delays.iter().enumerate() {
+                let r = Rect::new(x0 + inset + i as f32 * (bw + btn_gap), y + (row_h - bh) * 0.5, bw, bh);
+                let lab = if *d == 0 { "Hneď".to_string() } else { format!("{d} s") };
+                self.cap_seg(frame, text, r, &lab, self.cap_delay == i, Hit::CapDelay(i), idle, px_small, pa);
+            }
+        }
+        y += row_h + gap;
+
+        // --- prepínač: kurzor myši (obrázok) / zvuk (video)
+        {
+            let cy = y + row_h * 0.5;
+            let (label, on) = if self.cap_kind == Kind::Image { ("Zobraziť kurzor myši", self.cap_cursor) } else { ("Nahrávať zvuk", self.cap_audio) };
+            let dim = if idle { 1.0 } else { 0.45 };
+            text.layout_to(&mut frame.content, label, px, x0 + inset, base(cy), fade(t.fg, dim * pa));
+            let tw = 44.0 * s;
+            let th = 24.0 * s;
+            let tog = Rect::new(x0 + w_in - tw, cy - th * 0.5, tw, th);
+            if idle {
+                self.hits.push((Rect::new(x0, y, w_in, row_h), Hit::CapToggle));
+            }
+            let track = if on { t.accent } else { t.fg };
+            frame.content.push(Item::Rect { r: tog, radius: th * 0.5, soft: 0.8, color: fade(track, (if on { 1.0 } else { 0.3 }) * dim * pa) });
+            let kn = th - 6.0 * s;
+            let kx = if on { tog.x + tog.w - 3.0 * s - kn } else { tog.x + 3.0 * s };
+            frame.content.push(Item::Rect { r: Rect::new(kx, tog.y + 3.0 * s, kn, kn), radius: kn * 0.5, soft: 0.8, color: fade(if on { t.on_accent } else { t.fg }, dim * pa) });
+        }
+        y += row_h + gap;
+
+        // --- hlavné tlačidlo
+        {
+            let video = self.cap_kind == Kind::Video;
+            let h = row_h + 4.0 * s;
+            let r = Rect::new(x0, y, w_in, h);
+            self.hits.push((r, Hit::CapGo));
+            let hov = self.hover == Some(Hit::CapGo);
+            let (label, bg, fg, dot) = match self.cap_phase {
+                CapPhase::Idle => (if video { "Nahrávať".to_string() } else { "Odfotiť".to_string() }, t.accent, t.on_accent, video),
+                CapPhase::Busy => ("Zrušiť".to_string(), t.fg, t.bg, false),
+                CapPhase::Selecting => ("Zrušiť výber".to_string(), t.fg, t.bg, false),
+                CapPhase::Countdown(n) => (format!("Zrušiť  ({n})"), t.fg, t.bg, false),
+                CapPhase::Recording(secs) => (format!("Zastaviť  {}", crate::capture::format_elapsed(secs)), t.alert, t.on_alert, true),
+            };
+            frame.content.push(Item::Rect { r, radius: h * 0.5, soft: 0.8, color: fade(bg, (if hov { 0.85 } else { 1.0 }) * pa) });
+            let lw = text.measure(&label, px);
+            let dot_d = 10.0 * s;
+            let total = lw + if dot { dot_d + 8.0 * s } else { 0.0 };
+            let mut lx = r.x + (r.w - total) * 0.5;
+            if dot {
+                // kotúčik: červený pri nahrávaní z pokoja, inak v farbe textu
+                let col = if matches!(self.cap_phase, CapPhase::Idle) { t.alert } else { fg };
+                frame.content.push(Item::Rect { r: Rect::new(lx, r.y + (r.h - dot_d) * 0.5, dot_d, dot_d), radius: dot_d * 0.5, soft: 0.8, color: fade(col, pa) });
+                lx += dot_d + 8.0 * s;
+            }
+            text.layout_to(&mut frame.content, &label, px, lx, base(r.y + r.h * 0.5), fade(fg, pa));
+            y += h + 6.0 * s;
+        }
+
+        // --- stavový riadok (posledný výsledok / chyba)
+        if !self.cap_note.is_empty() {
+            let note = Self::ellipsize(text, &self.cap_note, px_small, w_in - 2.0 * inset);
+            let col = if self.cap_err { t.alert } else { fade(t.fg, 0.6) };
+            text.layout_to(&mut frame.content, &note, px_small, x0 + inset, y + 11.0 * s + (a3 - d3) * 0.5, fade(col, pa));
         }
     }
 

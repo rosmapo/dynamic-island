@@ -167,6 +167,8 @@ pub enum Msg {
     AudioDev(crate::audio::AudioState),
     /// stav monitora (jas, kontrast, preset, vstup, nočný režim)
     Monitor(crate::monitor::MonitorState),
+    /// priebeh snímania obrazovky / nahrávania (modul capture)
+    Capture(crate::capture::CaptureEvent),
     /// stav Bluetooth (BlueZ)
     Bluetooth(crate::bluetooth::BtState),
     Notif(Notification),
