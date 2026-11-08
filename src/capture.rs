@@ -76,6 +76,8 @@ pub struct CaptureCfg {
     pub video_ext: String,
     /// ďalšie argumenty pre `wf-recorder` (oddelené medzerami)
     pub recorder_args: Vec<String>,
+    /// argumenty pre `slurp` (oddelené medzerami, bez úvodzoviek), napr. `-b #ffffff30 -w 0`
+    pub slurp_args: Vec<String>,
     /// skopírovať snímku do schránky (`wl-copy`)
     pub copy: bool,
     /// po uložení poslať notifikáciu (`notify-send`)
@@ -127,6 +129,7 @@ impl CaptureCfg {
             audio: t.bool_or("audio", false),
             format,
             video_ext: if video_ext.is_empty() { "mp4".into() } else { video_ext },
+            slurp_args: t.str_or("slurp_args", "-b #ffffff30 -w 0").split_whitespace().map(str::to_string).collect(),
             recorder_args: t.str_or("recorder_args", "").split_whitespace().map(str::to_string).collect(),
             copy: t.bool_or("copy", true),
             notify: t.bool_or("notify", true),
@@ -260,8 +263,9 @@ fn wait_ms(ms: u64) -> bool {
 }
 
 /// Výber oblasti `slurp`-om; `boxes` = vopred dané obdĺžniky (výber okna). `None` = zrušené / chyba.
-fn run_slurp(boxes: Option<&str>) -> Result<Option<String>, String> {
+fn run_slurp(cfg: &CaptureCfg, boxes: Option<&str>) -> Result<Option<String>, String> {
     let mut c = Command::new("slurp");
+    c.args(&cfg.slurp_args);
     if boxes.is_some() {
         c.arg("-r");
     }
@@ -287,7 +291,7 @@ enum Target {
     Geometry(String),
 }
 
-fn resolve_window() -> Result<Target, String> {
+fn resolve_window(cfg: &CaptureCfg) -> Result<Target, String> {
     if let Some((x, y, w, h)) = crate::wayfire::focused_window_global() {
         return Ok(Target::Geometry(geometry_arg(x, y, w, h)));
     }
@@ -296,7 +300,7 @@ fn resolve_window() -> Result<Target, String> {
     if rects.is_empty() {
         return Err("nepodarilo sa zistiť aktívne okno (Wayfire IPC)".into());
     }
-    match run_slurp(Some(&slurp_boxes(&rects)))? {
+    match run_slurp(cfg, Some(&slurp_boxes(&rects)))? {
         Some(g) => Ok(Target::Geometry(g)),
         None => Err(String::new()),
     }
@@ -414,7 +418,7 @@ fn job(cfg: CaptureCfg, req: Request, tx: Tx<Msg>) {
         let mut target = match req.mode {
             Mode::Region => {
                 send(CaptureEvent::Selecting);
-                match run_slurp(None)? {
+                match run_slurp(&cfg, None)? {
                     Some(g) => Some(Target::Geometry(g)),
                     None => return Ok(None),
                 }
@@ -436,7 +440,7 @@ fn job(cfg: CaptureCfg, req: Request, tx: Tx<Msg>) {
         // 3) okno / obrazovka sa určuje až po odpočte
         if target.is_none() {
             target = Some(match req.mode {
-                Mode::Window => match resolve_window() {
+                Mode::Window => match resolve_window(&cfg) {
                     Ok(t) => t,
                     Err(e) if e.is_empty() => return Ok(None),
                     Err(e) => return Err(e),
@@ -535,6 +539,7 @@ mod tests {
         assert_eq!(c.format, "png");
         assert_eq!(c.video_ext, "mp4");
         assert!(c.copy && c.notify && c.hide_bar);
+        assert_eq!(c.slurp_args, vec!["-b", "#ffffff30", "-w", "0"]);
         assert!(c.dir.ends_with("Pictures/Screenshots"));
     }
 

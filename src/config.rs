@@ -292,6 +292,25 @@ impl Config {
     }
 
     pub fn from_table(t: &Table, path: PathBuf) -> Config {
+        let mut c = Self::from_table_raw(t, path);
+        // `[island] font_scale`: jednotný násobiteľ všetkých veľkostí písma (kapsula aj panely)
+        let fs = t.sub("island").f64_or("font_scale", 1.0).clamp(0.5, 3.0) as f32;
+        if (fs - 1.0).abs() > 1e-3 {
+            c.font_size *= fs;
+            c.media_font *= fs;
+            c.notif_font *= fs;
+            c.clip_font *= fs;
+            c.wifi.font_size *= fs;
+            c.monitor.font_size *= fs;
+            c.capture.font_size *= fs;
+            c.bluetooth.font_size *= fs;
+            c.trash.font *= fs;
+            c.audio_panel.font_size *= fs;
+        }
+        c
+    }
+
+    fn from_table_raw(t: &Table, path: PathBuf) -> Config {
         let isl = t.sub("island");
         // presne to, čo je v konfigurácii (bez skrytých náhradných písem); chýbajúci kľúč = predvolené
         let font_family = font_list(&isl, "font_family", &["Adwaita Sans", "DejaVu Sans"]);

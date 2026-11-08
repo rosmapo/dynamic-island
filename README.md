@@ -456,6 +456,9 @@ V popisoch: **px** = logické pixely (pred násobením mierkou); hodnoty v zátv
 | `font_family` | `["Adwaita Sans","DejaVu Sans"]` | písma textu (pole alebo `"A, B"`) |
 | `icon_family` | `["Hack Nerd Font Propo"]` | písma ikon (Nerd Font) |
 | `font_size` | `17` | veľkosť písma (px) |
+| `font_scale` | `1.0` (0.5–3) | jednotný násobiteľ **všetkých** veľkostí písma (kapsula aj všetky panely); násobí sa po načítaní, takže geometria panelov (výška riadkov) sa prispôsobí. Výšku kapsuly (`height`) a ikony záložiek (`tab_size`, `icon_size`) neovplyvňuje |
+
+**Veľkosti písma.** Každá časť má vlastné základné písmo, nezávislé od `[island] font_size`: kapsula, tooltip, menu, kalendár, zoznam diskov a tapety používajú `[island] font_size` (menšie texty v nich sú jeho násobok 0,8–0,9, tooltip 0,85); panely majú vlastný kľúč — `[media] font_size` (16), `[notifications] font_size` (15), `[clipboard] font_size` (15), `[wifi]`, `[bluetooth]`, `[monitor]`, `[capture]` `font_size` (15), `[audio] panel_font_size` (15) a `[trash] text_size` (14). Vedľajšie texty v paneli (popisky, podnadpisy, stavové riadky) sú pevný pomer 0,78–0,9 písma toho panela, preto ich zväčšíš zväčšením `font_size` panela alebo celkovo cez `font_scale`.
 | `height` | `34` | výška zbalenej kapsule (px) |
 | `margin_top` | `6` | odstup od hornej hrany (px) |
 | `radius` | `17` | polomer zaoblenia zbalenej kapsule |
@@ -503,6 +506,7 @@ Hodnota je **vstavaná akcia** alebo **shell príkaz**. Prázdna hodnota = nič.
 | `calendar` | kalendár (koliesko = zmena mesiaca) |
 | `clipboard`, `notifications`, `media`, `trash`, `wallpaper`, `wifi`, `bluetooth`, `audio`, `monitor` | príslušný panel (`notifications` = história notifikácií) |
 | `capture` | panel snímania ([6.14b](#614b-capture--snímka-obrazovky-a-nahrávanie)); ak práve beží odpočet alebo nahrávanie (svieti odznak REC), klik ich **ukončí** |
+| `module:NAZOV` | aj v `on_click` modulu (nielen v menu): `module:capture`, `module:monitor`, `module:power` (iné menu)… |
 | `capture-stop` | zrušiť odpočet / ukončiť nahrávanie (aj nahrávanie `wf-recorder` spustené mimo ostrovčeka) |
 | `quickset`, `quickset:audio` / `:bluetooth` / `:wifi` / `:monitor` / `:menu:NAZOV` (aj ostatné záložky; starý názov `hardware` ešte funguje) | kontajner záložiek (posledná / konkrétna záložka) |
 | `menu` | zoznam diskov (modul `disks`) |
@@ -739,6 +743,7 @@ schránky (`wl-copy`).
 | `copy` | `true` | snímku skopírovať do schránky |
 | `notify` | `true` | po uložení poslať notifikáciu (`notify-send`) |
 | `hide_bar` | `true` | pri snímke dočasne skryť ostrovček |
+| `slurp_args` | `"-b #ffffff30 -w 0"` | argumenty `slurp` pre výber oblasti / okna (oddelené medzerami, bez úvodzoviek): `-b` farba pozadia `#RRGGBBAA` (nižšie AA = priehľadnejšie), `-c` farba okraja, `-s` výplň výberu, `-w` hrúbka okraja (`0` = bez okraja); prázdne = predvolený vzhľad |
 | `settle_ms` | `350` | pauza na zatvorenie panela / skrytie ostrovčeka pred snímkou |
 | `width`, `font_size` | `380`, `15` | rozmery panela |
 

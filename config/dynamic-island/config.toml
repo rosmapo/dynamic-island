@@ -26,6 +26,7 @@ colors_file = "~/.config/dynamic-island/colors.css"   # @define-color surface / 
 font_family = ["Inter"]
 icon_family = ["Symbols Nerd Font Mono"]
 font_size   = 17
+# font_scale = 1.0   # násobiteľ VŠETKÝCH písem (kapsula aj panely); napr. 1.15 = o 15 % väčšie
 height      = 34        # výška kompaktného ostrovčeka (px)
 margin_top  = 6
 radius      = 17        # zbalený (kapsula)
@@ -213,7 +214,7 @@ on_click = "~/.config/wayfire/scripts/recorder.sh"
 # on_click = "capture"    # odpočet/nahrávanie = zastaví; inak otvorí panel capture
 
 # Snímka obrazovky / nahrávanie videa (grim, slurp, wf-recorder). Otvorí sa akciou "capture"
-# (položka menu `module:capture`, záložka kontajnera `tab9 = "capture"`, tlačidlo `inversetab`).
+# (`on_click = "capture"` / `"module:capture"` na module, položka menu `module:capture`, záložka `tab9 = "capture"`, `inversetab`).
 [capture]
 dir = "~/Pictures/Screenshots"
 video_dir = "~/Videos/Recordings"
@@ -231,6 +232,7 @@ font_size = 16
 # copy = true                # snímku skopírovať do schránky (wl-copy)
 # notify = true              # po uložení poslať notifikáciu (notify-send)
 # hide_bar = true            # pri snímke dočasne skryť ostrovček
+# slurp_args = "-b #ffffff30 -w 0"   # vzhľad výberu: -b farba pozadia (RRGGBBAA), -c okraj, -s výplň výberu, -w hrúbka okraja; "" = predvolený vzhľad slurp
 
 # Ľubovoľný externý modul (waybar „custom“): trvalý proces (interval = 0) alebo periodický.
 # Výstup: JSON {"text","tooltip","class"} alebo čistý text (json = false).

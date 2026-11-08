@@ -2435,6 +2435,15 @@ impl Ui {
         }
     }
 
+    /// Cieľ `on_click` modulu, ktorý sa rieši cez `run_module`: `module:NAZOV` alebo panely bez vlastnej vetvy.
+    fn panel_target(cmd: &str) -> Option<&str> {
+        if let Some(n) = cmd.strip_prefix("module:") {
+            let n = n.trim();
+            return (!n.is_empty()).then_some(n);
+        }
+        matches!(cmd, "monitor" | "bluetooth" | "capture").then_some(cmd)
+    }
+
     fn action_for(cmd: &str) -> Option<Action> {
         match cmd {
             "" | "calendar" | "menu" | "clipboard" | "notifications" | "media" | "trash" | "wallpaper" | "wifi" | "audio" | "monitor" | "bluetooth" | "capture" => None,
@@ -2664,6 +2673,19 @@ impl Ui {
                 } else if let Some(mi) = self.menu_index(&cmd) {
                     self.tip_pending = None;
                     self.toggle_menu(mi);
+                    self.collapse_at = None;
+                    self.start_grace(now);
+                } else if let Some(target) = Self::panel_target(&cmd) {
+                    // `monitor`, `bluetooth`, `capture` a `module:NAZOV` (panel / menu / vstavaná akcia); otvorený panel sa zavrie
+                    self.tip_pending = None;
+                    let target = target.to_string();
+                    let open = matches!((target.as_str(), self.panel), ("monitor", Panel::Monitor) | ("bluetooth", Panel::Bluetooth) | ("capture", Panel::Capture));
+                    if open || self.panel == Panel::Tip {
+                        self.set_panel(Panel::None);
+                    }
+                    if !open {
+                        out.extend(self.run_module(&target));
+                    }
                     self.collapse_at = None;
                     self.start_grace(now);
                 } else if let Some(a) = Self::action_for(&cmd) {
