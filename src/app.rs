@@ -280,6 +280,20 @@ fn run_action(a: Action, cfg: &Config, disk_tx: &Option<Tx<DiskCmd>>, tx: &Tx<Ms
         Action::Wifi(cmd) => crate::wifi::run(cmd, tx.clone()),
         Action::Monitor(cmd) => crate::monitor::run(cmd, cfg.monitor.clone(), tx.clone()),
         Action::Capture(cmd) => crate::capture::run(cmd, cfg.capture.clone(), tx.clone()),
+        Action::DrunLoad(px) => {
+            // zoznam aplikácií a ikony (vrátane prvej rasterizácie SVG) sa pripravia na pozadí
+            let (d, tx) = (cfg.drun.clone(), tx.clone());
+            std::thread::spawn(move || {
+                let items: Vec<(crate::desktop::App, String)> = crate::desktop::load_all(&d.desktop)
+                    .into_iter()
+                    .map(|a| {
+                        let p = crate::desktop::icon_png(&a.icon, px, &d.icon_theme);
+                        (a, p)
+                    })
+                    .collect();
+                tx.send(Msg::Drun(items));
+            });
+        }
         Action::Bluetooth(cmd) => crate::bluetooth::run(cmd, cfg.bluetooth.clone(), tx.clone()),
         Action::WifiPaste => crate::wifi::paste(tx.clone()),
         Action::WallLoad => crate::wallpaper::load(cfg.wall.clone(), tx.clone()),

@@ -139,6 +139,8 @@ pub enum Msg {
     Disks(Vec<DiskInfo>),
     /// história schránky (najnovšie prvé)
     Clip(Vec<ClipEntry>),
+    /// aplikácie pre panel `drun` v ostrovčeku: (záznam, cesta k PNG ikone)
+    Drun(Vec<(crate::desktop::App, String)>),
     /// prehrávač MPRIS (`None` = žiadny nehrá ani nie je pozastavený)
     Media(Option<MediaInfo>),
     /// pozícia v skladbe (mikrosekundy), príde iba kým je panel „Práve hrá“ otvorený

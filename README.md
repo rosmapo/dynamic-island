@@ -107,6 +107,7 @@ Voliteľné programy podľa používaných modulov (podrobnosti v [5.3](#53-exte
 | `udisks2` | (D-Bus) | modul `disks` |
 | `ddcutil` | `ddcutil` | panel monitor (jas, kontrast, vstup); nočný režim rieši tvoj skript (`night_switcher`) |
 | `grim`, `slurp`, `wf-recorder` | `grim`, `slurp`, `wf-recorder` | panel `capture` (snímka / oblasť / nahrávanie videa); `notify-send` (`libnotify-bin`) pre notifikáciu po uložení |
+| `librsvg2-bin` | `rsvg-convert` | `--drun`: SVG ikony aplikácií (voliteľné; záloha je ImageMagick) |
 | `imagemagick` | `magick` / `convert` | náhľady tapiet, obaly v module `media` |
 | `wl-clipboard`, `cliphist` | `wl-paste`, `wl-copy`, `cliphist` | panel schránky, vloženie hesla Wi-Fi |
 | `mpv` (len podľa configu) | `mpv` | položky menu s rádiom |
@@ -249,6 +250,9 @@ cez frontu s `eventfd`.
 | `disks.rs` | UDisks2 (automount, odpojenie) |
 | `wifi.rs`, `bluetooth.rs` | NetworkManager, BlueZ |
 | `audio.rs`, `monitor.rs` | panel zvuku (`pactl`), panel monitora (`ddcutil`) |
+| `desktop.rs` | spúšťač `--drun`: čítanie `.desktop` súborov (NoDisplay, TryExec, duplicity), Exec, ikony (jedna téma, PNG + SVG cez cache), filtrovanie |
+| `grid.rs` | spúšťač `--drun`: geometria mriežky, zásah myšou, navigácia a posun |
+| `drun.rs` | spúšťač `--drun`: samostatné okno, vykreslenie, vstup, spustenie |
 | `capture.rs` | panel snímania: `grim` / `slurp` / `wf-recorder`, odpočet, odznak REC; aktívne okno cez Wayfire IPC (`wayfire.rs`) |
 | `wallpaper.rs`, `trash.rs`, `quickset.rs` | panely tapiet, koša, kontajner záložiek |
 | `icons.rs`, `json.rs`, `sys.rs`, `snapshot.rs` | PNG ikony, JSON parser, tenká vrstva nad libc, `--snapshot` |
@@ -780,6 +784,13 @@ História sa musí plniť externe (`wl-paste --watch cliphist store`). Panel má
 ↑/↓ (Tab, PgUp/PgDn, Home/End) výber, Backspace maže znak, Ctrl+U celý filter, Esc zavrie; viac slov musí sedieť naraz,
 bez ohľadu na veľkosť písmen.
 
+**Dva spôsoby spustenia** (rovnako ako `drun`): ako panel/modul ostrovčeka (`on_click = "clipboard"` alebo záložka
+`quickset`) a ako **samostatné okno v strede obrazovky** `dynamic-island --clip` (na klávesovú skratku, napr.
+`bindsym`/Wayfire `command_clip = dynamic-island --clip`). Samostatné okno je prepínač: druhé spustenie ho zatvorí.
+Používa rovnaké voľby `[clipboard]` a krytie `[island] opacity`; zaoblenie rohov nastavuje `window_radius` (24).
+Enter / klik skopíruje položku a okno sa zavrie. `search = false` skryje pole hľadania (písaním sa filtruje ďalej,
+len bez zobrazeného dotazu).
+
 ### 6.17 `[trash]`
 
 | Kľúč | Predvolené | Popis |
@@ -860,6 +871,78 @@ Neznámy zdroj zobrazí `?`, nedostupný údaj `n/a`. Desatinný oddeľovač ur�
 Skripty z `config/dynamic-island/scripts/` (`cpu.sh`, `ram.sh`, `net.sh`, `disk.sh`, `disk2.sh`, `temp.sh`) zostávajú v repozitári
 ako náhrada pre prípad, že by niečo bolo treba upraviť; vzorový config už používa `builtin:`. Pri migrácii na iný systém sú
 potrebné len `/proc` a `/sys` (Linux); žiadne externé programy.
+
+### 6.18c Spúšťač aplikácií `--drun`
+
+`dynamic-island --drun` otvorí mriežku aplikácií z `.desktop` súborov (náhrada `rofi -show drun`). Je to **samostatný
+proces so samostatným povrchom** v strede obrazovky: nepotrebuje bežiaci ostrovček a po spustení aplikácie, Esc alebo
+zatvorení povrchu skončí. Farby (`[colors]`, `colors.css`), písmo a tvar sú rovnaké ako v ostrovčeku.
+
+Wayfire (`wayfire.ini`, plugin `command`):
+
+```ini
+[command]
+binding_drun = <super> KEY_SPACE
+command_drun = dynamic-island --drun
+```
+
+`--drun` je **prepínač** (ako `pkill rofi || rofi`): ak spúšťač už beží, druhé spustenie ho zatvorí. Nič ako `pkill` netreba
+(`pkill dynamic-island` by zabilo aj ostrovček); PID bežiaceho spúšťača je v `$XDG_RUNTIME_DIR/dynamic-island-drun.pid`.
+
+**Z ostrovčeka:** akcia `drun` je **panel ostrovčeka** ako ostatné moduly (ostrovček sa rozbalí do mriežky aplikácií na
+svojom mieste, nie v strede obrazovky). Dá sa dať do `on_click*` ľubovoľného modulu, do položky menu (`module:drun`) alebo na
+tlačidlo druhej lišty kontajnera (`inversetab1 = "drun"`, predvolená ikona `\uf00a`); opätovný klik panel zavrie. Panel
+používa tie isté voľby `[drun]` (mriežka, `show`, `order`, `icon_theme`…) a rovnaké vykresľovanie; písaním sa filtruje,
+šípky menia výber, Enter spustí, Esc zavrie, koleso posúva. Ako záložka kontajnera `quickset` sa neponúka. Samostatný
+`dynamic-island --drun` (klávesová skratka) zostáva a otvára sa v strede obrazovky.
+
+**Zoradenie aplikácií** nerieši `order`: ten určuje len smer vypĺňania mriežky. Aplikácie sú zoradené podľa poľa `Name=`
+z `.desktop` súboru (anglický základný názov, bez lokalizovaných `Name[sk]`), bez ohľadu na veľkosť písmen. Pri písaní sa
+najprv radia zhody na začiatku názvu, potom ostatné (názov, všeobecný názov, kľúčové slová), vždy abecedne.
+
+| Kľúč `[drun]` | Predvolené | Popis |
+|---|---|---|
+| `columns`, `rows` | `5`, `4` | veľkosť mriežky (viditeľná stránka; ďalej sa posúva kolieskom a šípkami) |
+| `opacity` | *(ako `[island] opacity`)* | krytie pozadia samostatného `--drun` (0–1); v paneli ostrovčeka platí `[island] opacity` |
+| `order` | `"horizontal"` | zoraďovanie: `horizontal` = ďalšia aplikácia je **vedľa** predošlej (po riadkoch, posun po riadkoch); `vertical` = ďalšia je **pod** predošlou (po stĺpcoch, posun po stĺpcoch; koleso aj šípky idú po stĺpcoch) |
+| `show` | `"icon"` | `icon`, `name`, `icon+name-right` (názov vedľa ikony), `icon+name-below` (názov pod ikonou) |
+| `icon_size`, `name_size` | `64`, `14` | veľkosť ikony a názvu (px) |
+| `cell_width`, `cell_height` | `0` | rozmery bunky; `0` = podľa režimu a veľkostí |
+| `padding`, `radius`, `cell_radius` | `15`, `30`, `15` | okraj okna, zaoblenie okna a zvýraznenej bunky |
+| `hover` | `true` | zvýraznenie bunky pod ukazovateľom; `false` = zvýrazňuje sa len výber z klávesnice, spúšťa klik |
+| `search` | `false` | viditeľný riadok hľadania; písaním sa filtruje vždy |
+| `terminal` | `"foot"` | pre aplikácie s `Terminal=true` (`terminal príkaz`) |
+| `icon_theme` | `""` | téma ikon (s `Inherits=`); prázdne = téma z nastavení GTK (`gtk-icon-theme-name` v `~/.config/gtk-4.0/settings.ini`, potom `gtk-3.0`), inak `hicolor` |
+| `desktop` | `""` | názov prostredia pre `OnlyShowIn` / `NotShowIn` (`Wayfire`); prázdne = nekontrolovať |
+
+Ovládanie: písanie filtruje (všetky slová musia sedieť v názve, všeobecnom názve alebo kľúčových slovách; názvy
+začínajúce dotazom idú prvé), šípky / Tab pohybujú výberom (cyklicky), Page Up/Down, Home/End, Enter spustí vybranú
+(alebo prvú) aplikáciu, klik spustí bunku pod ukazovateľom, koleso posúva riadky, Ctrl+U zmaže dotaz, Esc zavrie.
+
+**Spustenie čohokoľvek (ako v rofi):** ak napísaný text nič nenájde (napr. aplikácia s `NoDisplay=true`, ako `gt6ct`),
+Enter ho spustí ako príkaz (`sh -c`). Ak niečo nájde, Enter spustí vybranú aplikáciu; **Ctrl+Enter** spustí napísaný text
+ako príkaz aj vtedy. Platí v samostatnom okne aj v paneli ostrovčeka; pri prázdnom výsledku sa zobrazí nápoveda.
+
+Zoznam sa číta z `$XDG_DATA_HOME/applications` a `$XDG_DATA_DIRS/*/applications` (štandardne `~/.local/share`,
+`/usr/local/share`, `/usr/share`). Preskočia sa záznamy s `NoDisplay=true` alebo `Hidden=true` (kdekoľvek v skupine
+`[Desktop Entry]`, aj `True`/`1`), s `TryExec` na neexistujúci program a podľa `OnlyShowIn`/`NotShowIn`. **Duplicity:**
+rovnaké ID súboru (napr. `firefox.desktop` v `/usr/local/share` aj `/usr/share`) sa berie raz a vyhráva adresár s vyššou
+prioritou (najprv `~/.local/share`, potom poradie v `XDG_DATA_DIRS`); navyše sa vynechá záznam s rovnakým názvom a príkazom
+pod iným ID. Polia `Exec` (`%f`, `%U`, …) sa odstránia, `%c` je názov.
+
+Ikony pochádzajú vždy z **jednej témy** (`icon_theme`, inak téma GTK; s dedičnosťou `Inherits=` a nakoniec `hicolor`),
+potom z `/usr/share/pixmaps`; až ako posledná záchrana z inej témy (kontrastné témy `HighContrast*` sa preskakujú). PNG sa
+použije priamo, SVG sa jednorazovo rasterizuje cez `rsvg-convert` (alebo ImageMagick) do
+`~/.cache/dynamic-island/app-icons/`; prvé otvorenie s mnohými SVG ikonami je preto o niečo pomalšie. Po zmene témy alebo
+pri zlej ikone zmaž priečinok `~/.cache/dynamic-island/app-icons/`.
+
+**Diagnostika:** `dynamic-island --drun-list` vypíše každý nájdený `.desktop` súbor a či sa zobrazí, alebo z akého
+dôvodu nie (`NoDisplay=true`, duplicita, `TryExec`, `OnlyShowIn`…), ku každej zobrazenej aplikácii aj súbor, z ktorého sa
+berie ikona, použitú tému ikon a ktoré rasterizéry SVG sú k dispozícii. SVG sa rasterizujú v poradí `rsvg-convert` →
+`inkscape` → ImageMagick (`magick` / `convert`); vstavaný renderer ImageMagicku nezvláda filtre, masky a niektoré farebné
+prechody, preto sa pri zložitejších ikonách (napr. Foliate, Secrets, OpenShot) bez `librsvg2-bin` môžu biele plochy
+vykresliť čierne. Odporúčané je mať nainštalovaný `rsvg-convert`.
+
 
 ### 6.19 Sledované procesy (`track`) a modul `radio`
 

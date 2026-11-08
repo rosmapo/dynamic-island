@@ -21,6 +21,27 @@ tooltip = ""			# tooltip = "{artist} – {title}"   # + {album}
 # decimal = ","            # desatinný oddeľovač vo výstupe ("," alebo ".")
 # net_interface = ""      # rozhranie pre net-down / net-up; prázdne = rozhranie s predvolenou trasou
 
+# Spúšťač aplikácií: dynamic-island --drun (samostatný proces, nezávislý od ostrovčeka; druhé spustenie ho zatvorí = prepínač).
+# Z ostrovčeka: on_click = "drun" / "module:drun" na module, položke menu alebo inversetabN = "drun" (otvorí sa ako panel ostrovčeka).
+[drun]
+# columns = 5
+# rows = 4
+# opacity = 0.7            # krytie pozadia samostatného --drun; predvolene ako [island] opacity
+# order = "horizontal"    # "horizontal" = ďalšia aplikácia vedľa predošlej, "vertical" = pod predošlou
+# show = "icon"           # "icon" | "name" | "icon+name-right" | "icon+name-below"
+# icon_size = 64
+# name_size = 14
+# cell_width = 0          # 0 = podľa režimu a veľkostí
+# cell_height = 0
+# padding = 15
+# radius = 30             # zaoblenie okna
+# cell_radius = 15        # zaoblenie zvýraznenej bunky
+# hover = true            # zvýraznenie bunky pod ukazovateľom
+# search = false          # riadok hľadania vždy viditeľný (písaním sa filtruje aj bez neho)
+# terminal = "foot"       # pre aplikácie s Terminal=true
+# icon_theme = ""         # prázdne = téma z nastavení GTK (gtk-icon-theme-name), inak hicolor; napr. "Papirus"
+# desktop = ""            # napr. "Wayfire" pre OnlyShowIn / NotShowIn; prázdne = nekontrolovať
+
 [island]
 colors_file = "~/.config/dynamic-island/colors.css"   # @define-color surface / primary ...
 font_family = ["Inter"]
@@ -160,6 +181,8 @@ width = 600       # šírka panela
 max_items = 200   # koľko najnovších položiek sa načíta
 # list_command = "cliphist list"
 # copy_command = "cliphist decode | wl-copy"
+# search = true        # false = skryje pole hľadania v okne `--clip` (písaním sa aj tak filtruje)
+# window_radius = 24   # zaoblenie okna samostatného režimu `dynamic-island --clip`
 
 [trash]
 width = 600

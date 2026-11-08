@@ -111,6 +111,64 @@ pub struct TrackerCfg {
 
 pub const BUILTIN_MODULES: [&str; 11] = ["network", "vpn", "clock", "keyboard", "audio", "capslock", "inhibitor", "recorder", "radio", "media", "disks"];
 
+/// Spúšťač aplikácií (`dynamic-island --drun`).
+#[derive(Clone, Debug, PartialEq)]
+pub struct DrunCfg {
+    pub columns: usize,
+    pub rows: usize,
+    /// "icon" | "name" | "icon+name-right" | "icon+name-below"
+    pub show: String,
+    pub icon_size: f32,
+    pub name_size: f32,
+    /// šírka / výška jednej bunky (0 = podľa režimu a veľkostí)
+    pub cell_w: f32,
+    pub cell_h: f32,
+    pub padding: f32,
+    pub radius: f32,
+    pub cell_radius: f32,
+    /// zoraďovanie (`order = "vertical"`): ďalšia položka je pod predošlou (po stĺpcoch), inak vedľa nej (po riadkoch)
+    pub vertical: bool,
+    /// krytie pozadia samostatného spúšťača; záporné = ako `[island] opacity`
+    pub opacity: f32,
+    /// zvýraznenie bunky pod ukazovateľom
+    pub hover: bool,
+    /// riadok hľadania vždy viditeľný (písaním sa filtruje aj bez neho)
+    pub search: bool,
+    pub terminal: String,
+    pub icon_theme: String,
+    /// názov prostredia pre OnlyShowIn / NotShowIn (prázdne = nekontrolovať)
+    pub desktop: String,
+}
+
+impl DrunCfg {
+    pub fn from_table(d: &Table) -> DrunCfg {
+        let show = d.str_or("show", "icon");
+        let show = match show.as_str() {
+            "icon" | "name" | "icon+name-right" | "icon+name-below" => show,
+            _ => "icon".to_string(),
+        };
+        DrunCfg {
+            columns: d.f64_or("columns", 5.0).clamp(1.0, 20.0) as usize,
+            rows: d.f64_or("rows", 4.0).clamp(1.0, 20.0) as usize,
+            show,
+            icon_size: d.f64_or("icon_size", 64.0).clamp(16.0, 256.0) as f32,
+            name_size: d.f64_or("name_size", 14.0).clamp(8.0, 48.0) as f32,
+            cell_w: d.f64_or("cell_width", 0.0).clamp(0.0, 600.0) as f32,
+            cell_h: d.f64_or("cell_height", 0.0).clamp(0.0, 600.0) as f32,
+            padding: d.f64_or("padding", 15.0).clamp(0.0, 100.0) as f32,
+            radius: d.f64_or("radius", 30.0).clamp(0.0, 100.0) as f32,
+            cell_radius: d.f64_or("cell_radius", 15.0).clamp(0.0, 100.0) as f32,
+            opacity: d.f64_or("opacity", -1.0) as f32,
+            vertical: matches!(d.str_or("order", "horizontal").trim().to_lowercase().as_str(), "vertical" | "vertikalne" | "columns"),
+            hover: d.bool_or("hover", true),
+            search: d.bool_or("search", false),
+            terminal: d.str_or("terminal", "foot"),
+            icon_theme: d.str_or("icon_theme", ""),
+            desktop: d.str_or("desktop", ""),
+        }
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct Config {
     pub path: PathBuf,
@@ -201,6 +259,10 @@ pub struct Config {
     pub clip_max: usize,
     pub clip_list: String,
     pub clip_copy: String,
+    /// zaoblenie rohov samostatného okna `--clip`
+    pub clip_window_radius: f32,
+    /// zobraziť pole hľadania v samostatnom okne `--clip` (filtrovanie písaním funguje aj bez neho)
+    pub clip_search: bool,
     /// modul wallpaper – `[wallpaper]`
     pub wall: crate::wallpaper::WallCfg,
     /// modul Wi-Fi – `[wifi]`
@@ -226,6 +288,8 @@ pub struct Config {
     /// `[system]`: desatinný oddeľovač a rozhranie pre natívne zdroje `exec = "builtin:…"`
     pub sys_decimal: String,
     pub sys_net_iface: String,
+    /// `[drun]`: spúšťač aplikácií (`--drun`)
+    pub drun: DrunCfg,
     /// zobrazovať ikony notifikácií (vo vyskakovacom okne aj v histórii)
     pub notif_icons: bool,
     /// panel histórie notifikácií: šírka, výška (px), najviac riadkov tela na kartu
@@ -608,6 +672,7 @@ BUILTIN_MODULES.map(String::from).to_vec()
             notif_lines: nt.f64_or("max_lines", 3.0).max(1.0) as usize,
             sys_decimal: system.str_or("decimal", ","),
             sys_net_iface: system.str_or("net_interface", ""),
+            drun: DrunCfg::from_table(&t.sub("drun")),
             notif_icons: nt.bool_or("icons", true),
             hist_w: nt.f64_or("panel_width", 480.0).clamp(240.0, 1400.0) as f32,
             hist_h: nt.f64_or("panel_height", 520.0).clamp(200.0, 1600.0) as f32,
@@ -644,6 +709,8 @@ BUILTIN_MODULES.map(String::from).to_vec()
             clip_max: clip.f64_or("max_items", 200.0).clamp(1.0, 5000.0) as usize,
             clip_list: clip.str_or("list_command", "cliphist list"),
             clip_copy: clip.str_or("copy_command", "cliphist decode | wl-copy"),
+            clip_search: clip.bool_or("search", true),
+            clip_window_radius: clip.f64_or("window_radius", 24.0).clamp(0.0, 100.0) as f32,
             wall: crate::wallpaper::WallCfg::from_table(&t.sub("wallpaper")),
             wifi: crate::wifi::WifiCfg::from_table(&t.sub("wifi")),
             audio_panel: crate::audio::AudioCfg::from_table(&audio),

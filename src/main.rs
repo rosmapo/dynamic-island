@@ -5,12 +5,16 @@ mod app;
 mod audio;
 mod bluetooth;
 mod capture;
+mod clip;
 mod config;
 mod data;
 mod dbus;
+mod desktop;
 mod disks;
+mod drun;
 mod fonts;
 mod gl;
+mod grid;
 mod quickset;
 mod history;
 mod icons;
@@ -36,10 +40,13 @@ mod xkb;
 
 use std::path::PathBuf;
 
-const HELP: &str = "dynamic-island [--config CESTA] [--check] [--snapshot ADRESÁR] [--volume up|down|mute|get|N] [--brightness up|down|get|N] [--hud brightness %] [--history [N]]
+const HELP: &str = "dynamic-island [--config CESTA] [--check] [--snapshot ADRESÁR] [--volume up|down|mute|get|N] [--brightness up|down|get|N] [--hud brightness %] [--history [N]] [--drun] [--drun-list] [--clip]
 
   --config CESTA      konfigurácia (predvolene ~/.config/dynamic-island/config.toml)
   --check             skontroluje konfiguráciu a skončí
+  --drun-list         vypíše všetky nájdené .desktop súbory a prečo sa niektoré nezobrazia
+  --clip              samostatné okno histórie schránky (cliphist), druhé spustenie ho zatvorí
+  --drun              samostatný spúšťač aplikácií (ako rofi -show drun), nezávislý od ostrovčeka
   --history [N]       vypíše posledných N (predvolene 20) notifikácií z histórie
   --snapshot ADRESÁR  vykreslí ukážkové stavy bez kompozitora (surové RGBA súbory)
 
@@ -53,6 +60,9 @@ fn main() {
     let mut bright: Option<String> = None;
     let mut volume: Option<String> = None;
     let mut history: Option<usize> = None;
+    let mut drun = false;
+    let mut drun_list = false;
+    let mut clip = false;
     let mut i = 0;
     while i < args.len() {
         match args[i].as_str() {
@@ -65,6 +75,9 @@ fn main() {
                 snap = args.get(i).cloned();
             }
             "--check" => check = true,
+            "--drun" => drun = true,
+            "--drun-list" => drun_list = true,
+            "--clip" => clip = true,
             "--history" => {
                 let n = args.get(i + 1).and_then(|s| s.parse::<usize>().ok());
                 if n.is_some() {
@@ -137,6 +150,24 @@ fn main() {
     }
     if let Some(arg) = bright {
         std::process::exit(brightness(&cfg, &arg));
+    }
+    if clip {
+        if let Err(e) = clip::run(cfg) {
+            eprintln!("dynamic-island --clip: {e}");
+            std::process::exit(1);
+        }
+        return;
+    }
+    if drun_list {
+        desktop::print_list(&cfg.drun.desktop);
+        return;
+    }
+    if drun {
+        if let Err(e) = drun::run(cfg) {
+            eprintln!("dynamic-island --drun: {e}");
+            std::process::exit(1);
+        }
+        return;
     }
     sys::set_time_locale(&cfg.clock_locale);
     let res = match snap {

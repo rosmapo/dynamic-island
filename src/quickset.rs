@@ -131,6 +131,9 @@ pub fn parse_button_action(raw: &str) -> Option<String> {
 
 /// Predvolená ikona tlačidla: pre známy panel ikona záložky, inak blesk.
 fn button_default_icon(action: &str) -> &'static str {
+    if action.trim().eq_ignore_ascii_case("drun") {
+        return "\u{f00a}";
+    }
     if ALLOWED.contains(&action.to_lowercase().as_str()) {
         default_icon(&action.to_lowercase())
     } else {

@@ -82,6 +82,11 @@ pub struct Wl {
 
 impl Wl {
     pub fn new(width: u32, height: u32) -> Result<Wl, String> {
+        Wl::new_with(width, height, false, "dynamic-island")
+    }
+
+    /// `centered`: povrch bez kotvy (kompozitor ho vycentruje) s výhradnou klávesnicou – samostatný spúšťač `--drun`.
+    pub fn new_with(width: u32, height: u32, centered: bool, namespace: &str) -> Result<Wl, String> {
         let conn = Connection::connect_to_env().map_err(|e| format!("nepodarilo sa pripojiť k Waylandu: {e}"))?;
         let (globals, mut queue) = registry_queue_init::<WlState>(&conn).map_err(|e| format!("wl_registry: {e}"))?;
         let qh = queue.handle();
@@ -103,11 +108,11 @@ impl Wl {
             want.into_iter().map(|(name, ver)| globals.registry().bind::<WlOutput, _, _>(name, ver.min(3), &qh, ())).collect();
 
         let surface = compositor.create_surface(&qh, ());
-        let layer = shell.get_layer_surface(&surface, None, zwlr_layer_shell_v1::Layer::Overlay, "dynamic-island".to_string(), &qh, ());
+        let layer = shell.get_layer_surface(&surface, None, zwlr_layer_shell_v1::Layer::Overlay, namespace.to_string(), &qh, ());
         layer.set_size(width, height);
-        layer.set_anchor(Anchor::Top);
-        layer.set_exclusive_zone(0);
-        layer.set_keyboard_interactivity(KeyboardInteractivity::None);
+        layer.set_anchor(if centered { Anchor::empty() } else { Anchor::Top });
+        layer.set_exclusive_zone(if centered { -1 } else { 0 });
+        layer.set_keyboard_interactivity(if centered { KeyboardInteractivity::Exclusive } else { KeyboardInteractivity::None });
         surface.commit();
 
         let mut st = WlState {

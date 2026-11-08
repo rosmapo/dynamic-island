@@ -67,6 +67,8 @@ pub enum Action {
     Monitor(crate::monitor::MonitorCmd),
     /// snímka obrazovky / nahrávanie
     Capture(crate::capture::CaptureCmd),
+    /// načítať aplikácie a ikony pre panel `drun` (veľkosť ikony v px; výsledok príde ako `Msg::Drun`)
+    DrunLoad(u32),
     Bluetooth(crate::bluetooth::BtCmd),
     /// vložiť schránku do poľa hesla
     WifiPaste,
@@ -92,6 +94,8 @@ enum Panel {
     Monitor,
     /// snímka obrazovky / nahrávanie videa
     Capture,
+    /// spúšťač aplikácií (mriežka ikon)
+    Drun,
     Bluetooth,
     Tip,
 }
@@ -116,6 +120,8 @@ enum Hit {
     DiskAll,
     MenuItem(usize),
     ClipItem(usize),
+    /// bunka mriežky spúšťača (index do zoznamu nájdených)
+    DrunCell(usize),
     /// karta v histórii notifikácií (index do `hist`)
     HistCard(usize),
     /// krížik na karte: odstrániť záznam
@@ -327,6 +333,15 @@ pub struct Ui {
     menu_wait: Option<(usize, Instant)>,
     clip: Vec<ClipEntry>,
     clip_loaded: bool,
+    /// panel drun: aplikácie, ich ikony (PNG), dotaz, nájdené, výber a posun (v líniách)
+    drun_apps: Vec<crate::desktop::App>,
+    drun_icons: Vec<String>,
+    drun_loaded: bool,
+    drun_query: String,
+    drun_hits: Vec<usize>,
+    drun_sel: Option<usize>,
+    drun_scroll: usize,
+    drun_acc: f32,
     clip_scroll: usize,
     clip_acc: f32,
     /// filter písaný na klávesnici (bez políčka), indexy do `clip` vyhovujúce filtru a vybraná pozícia v nich
@@ -608,6 +623,14 @@ impl Ui {
             events: Vec::new(),
             clip: Vec::new(),
             clip_loaded: false,
+            drun_apps: Vec::new(),
+            drun_icons: Vec::new(),
+            drun_loaded: false,
+            drun_query: String::new(),
+            drun_hits: Vec::new(),
+            drun_sel: None,
+            drun_scroll: 0,
+            drun_acc: 0.0,
             clip_scroll: 0,
             clip_acc: 0.0,
             clip_query: String::new(),
@@ -749,6 +772,13 @@ impl Ui {
                 self.hist = v;
                 self.hist_loaded = true;
                 self.hist_scroll = self.hist_scroll.min(self.hist.len().saturating_sub(1));
+            }
+            Msg::Drun(items) => {
+                let (apps, icons): (Vec<_>, Vec<_>) = items.into_iter().unzip();
+                self.drun_apps = apps;
+                self.drun_icons = icons;
+                self.drun_loaded = true;
+                self.drun_refilter(false);
             }
             Msg::Clip(v) => {
                 self.clip = v;
@@ -1344,6 +1374,10 @@ impl Ui {
                 let h = 2.0 * AUDIO_PAD + sec(self.audio.sinks.len()) + AUDIO_GAP + sec(self.audio.sources.len());
                 (c.width * self.scale, h * self.scale)
             }
+            Panel::Drun => {
+                let (w, h) = self.drun_grid().size();
+                (w * self.scale, h * self.scale)
+            }
             Panel::Capture => {
                 let c = &self.cfg.capture;
                 (c.width * self.scale, crate::capture::panel_height(c.font_size) * self.scale)
@@ -1599,6 +1633,15 @@ impl Ui {
             self.wall_menu_scroll = 0;
             self.queued.push(Action::WallLoad);
         }
+        if p == Panel::Drun {
+            // aplikácie sa pri každom otvorení načítajú znova (nové .desktop súbory); staré ostanú viditeľné
+            self.drun_query.clear();
+            self.drun_sel = None;
+            self.drun_scroll = 0;
+            self.drun_acc = 0.0;
+            self.drun_refilter(false);
+            self.queued.push(Action::DrunLoad((self.cfg.drun.icon_size * self.scale).round() as u32));
+        }
         if p == Panel::Clip {
             // pri každom otvorení znova načítať históriu (staré položky ostanú viditeľné, kým nepríde nová)
             self.clip_scroll = 0;
@@ -1629,7 +1672,7 @@ impl Ui {
                 self.panel_w.set(0.0);
                 self.panel_a.set(0.0);
             }
-            Panel::Calendar | Panel::Disks | Panel::Menu(_) | Panel::Clip | Panel::Trash | Panel::Wall | Panel::Wifi | Panel::Audio | Panel::Monitor | Panel::Capture | Panel::Bluetooth | Panel::NotifHist | Panel::Media => {
+            Panel::Calendar | Panel::Disks | Panel::Menu(_) | Panel::Clip | Panel::Trash | Panel::Wall | Panel::Wifi | Panel::Audio | Panel::Monitor | Panel::Capture | Panel::Drun | Panel::Bluetooth | Panel::NotifHist | Panel::Media => {
                 if p == Panel::Calendar {
                     self.rebuild_cal();
                 }
@@ -1668,7 +1711,7 @@ impl Ui {
     }
 
     fn is_big(p: Panel) -> bool {
-        matches!(p, Panel::Calendar | Panel::Disks | Panel::Menu(_) | Panel::Clip | Panel::Trash | Panel::Wall | Panel::Wifi | Panel::Audio | Panel::Monitor | Panel::Capture | Panel::Bluetooth | Panel::NotifHist | Panel::Media)
+        matches!(p, Panel::Calendar | Panel::Disks | Panel::Menu(_) | Panel::Clip | Panel::Trash | Panel::Wall | Panel::Wifi | Panel::Audio | Panel::Monitor | Panel::Capture | Panel::Drun | Panel::Bluetooth | Panel::NotifHist | Panel::Media)
     }
 
     // ------------------------------------------- kontajner quickset
@@ -1713,7 +1756,7 @@ impl Ui {
 
     /// Názov vnútornej akcie ostrovčeka (panel, menu, kontajner, vstavaná akcia), nie shell príkaz.
     fn is_internal_action(&self, name: &str) -> bool {
-        matches!(name, "calendar" | "disks" | "clipboard" | "notifications" | "media" | "trash" | "wallpaper" | "wifi" | "audio" | "monitor" | "bluetooth" | "capture")
+        matches!(name, "calendar" | "disks" | "clipboard" | "notifications" | "media" | "trash" | "wallpaper" | "wifi" | "audio" | "monitor" | "bluetooth" | "capture" | "drun")
             || Self::quickset_cmd(name).is_some()
             || self.menu_index(name).is_some()
             || Self::action_for(name).map_or(false, |a| !matches!(a, Action::Run(_)))
@@ -1953,7 +1996,7 @@ impl Ui {
 
     /// Klávesnicu potrebujeme pri zadávaní hesla a pri otvorenom paneli schránky (filter).
     pub fn wants_keyboard(&self) -> bool {
-        self.typing_password() || self.panel == Panel::Clip
+        self.typing_password() || self.panel == Panel::Clip || self.panel == Panel::Drun
     }
 
     /// Klávesnicu sa nepodarilo použiť (chýba mapa kláves) – zadávanie hesla sa zruší
@@ -2009,6 +2052,104 @@ impl Ui {
         self.collapse_at = None;
     }
 
+    /// Mriežka panela `drun` podľa `[drun]` (logické px).
+    fn drun_grid(&self) -> crate::grid::Grid {
+        let d = &self.cfg.drun;
+        let (cw, ch) = crate::grid::cell_size(&d.show, d.icon_size, d.name_size, d.cell_w, d.cell_h);
+        let top = if d.search { (d.name_size * 2.0 + 12.0).round() } else { 0.0 };
+        crate::grid::Grid { cols: d.columns, rows: d.rows, cw, ch, pad: d.padding, top, vertical: d.vertical }
+    }
+
+    /// Prepočíta nájdené aplikácie; `reset` = výber a posun na začiatok (po zmene dotazu).
+    fn drun_refilter(&mut self, reset: bool) {
+        self.drun_hits = crate::desktop::filter(&self.drun_apps, &self.drun_query);
+        if reset {
+            self.drun_scroll = 0;
+            self.drun_sel = if self.drun_hits.is_empty() || self.drun_query.trim().is_empty() { None } else { Some(0) };
+        } else {
+            let n = self.drun_hits.len();
+            self.drun_sel = self.drun_sel.filter(|i| *i < n);
+        }
+        let g = self.drun_grid();
+        self.drun_scroll = self.drun_scroll.min(crate::grid::max_scroll(self.drun_hits.len(), g.line_len(), g.lines()));
+        // pri písaní panel nezatvárame, ani keď myš odišla
+        self.collapse_at = None;
+    }
+
+    fn drun_nav(&mut self, n: crate::grid::Nav) {
+        let g = self.drun_grid();
+        self.drun_sel = crate::grid::nav(self.drun_sel, n, g.line_len(), g.lines(), self.drun_hits.len());
+        if let Some(i) = self.drun_sel {
+            self.drun_scroll = crate::grid::scroll_for(self.drun_scroll, i, g.line_len(), g.lines(), self.drun_hits.len());
+        }
+        self.collapse_at = None;
+    }
+
+    /// Spustí `i`-tú nájdenú aplikáciu a zavrie panel.
+    fn drun_launch(&mut self, i: usize) -> Option<Action> {
+        let app = self.drun_apps.get(*self.drun_hits.get(i)?)?;
+        let cmd = crate::desktop::launch_cmd(app, &self.cfg.drun.terminal);
+        self.set_panel(Panel::None);
+        self.collapse_at = None;
+        Some(Action::Run(cmd))
+    }
+
+    /// Klávesy v paneli spúšťača: písanie filtruje, šípky menia výber (podľa `order` aj po stĺpcoch), Enter spustí, Esc zavrie.
+    fn drun_key(&mut self, k: &crate::wl::KeyEvent) -> Vec<Action> {
+        use crate::grid::Nav;
+        let v = self.cfg.drun.vertical;
+        let mut out = Vec::new();
+        match k.sym {
+            0xff1b => {
+                self.set_panel(Panel::None);
+                self.collapse_at = None;
+            }
+            0xff0d | 0xff8d => {
+                // Ctrl+Enter alebo žiadna zhoda: napísaný text sa spustí ako príkaz (ako v rofi)
+                let raw = self.drun_query.trim().to_string();
+                if !raw.is_empty() && (k.ctrl || self.drun_hits.is_empty()) {
+                    self.set_panel(Panel::None);
+                    self.collapse_at = None;
+                    out.push(Action::Run(raw));
+                } else {
+                    let pick = self.drun_sel.or(if self.drun_hits.is_empty() { None } else { Some(0) });
+                    if let Some(a) = pick.and_then(|i| self.drun_launch(i)) {
+                        out.push(a);
+                    }
+                }
+            }
+            0xff08 => {
+                if self.drun_query.pop().is_some() {
+                    self.drun_refilter(true);
+                }
+            }
+            // šípky sú fyzické: pri vertikálnom poradí (po stĺpcoch) sa vľavo/vpravo pohybuje po stĺpcoch
+            0xff51 => self.drun_nav(if v { Nav::Up } else { Nav::Left }),
+            0xff53 => self.drun_nav(if v { Nav::Down } else { Nav::Right }),
+            0xff52 => self.drun_nav(if v { Nav::Left } else { Nav::Up }),
+            0xff54 => self.drun_nav(if v { Nav::Right } else { Nav::Down }),
+            0xff55 => self.drun_nav(Nav::PageUp),
+            0xff56 => self.drun_nav(Nav::PageDown),
+            0xff50 => self.drun_nav(Nav::Home),
+            0xff57 => self.drun_nav(Nav::End),
+            0xff09 => self.drun_nav(Nav::Right),
+            0xfe20 => self.drun_nav(Nav::Left),
+            0x75 | 0x55 if k.ctrl => {
+                self.drun_query.clear();
+                self.drun_refilter(true);
+            }
+            _ if !k.ctrl => {
+                let before = self.drun_query.len();
+                self.drun_query.extend(k.text.chars().filter(|c| !c.is_control()));
+                if self.drun_query.len() != before {
+                    self.drun_refilter(true);
+                }
+            }
+            _ => {}
+        }
+        out
+    }
+
     /// Klávesy v otvorenom paneli schránky: písmená filtrujú, ↑/↓ menia výber, Enter skopíruje, Esc zavrie.
     fn clip_key(&mut self, k: &crate::wl::KeyEvent) -> Vec<Action> {
         let mut out = Vec::new();
@@ -2061,6 +2202,9 @@ impl Ui {
     pub fn key(&mut self, k: &crate::wl::KeyEvent) -> Vec<Action> {
         if self.panel == Panel::Clip {
             return self.clip_key(k);
+        }
+        if self.panel == Panel::Drun {
+            return self.drun_key(k);
         }
         self.wifi_pw_until = Some(Instant::now() + Duration::from_secs(WIFI_PW_IDLE_SECS));
         let mut out = Vec::new();
@@ -2423,11 +2567,11 @@ impl Ui {
             return;
         }
         // počas písania hesla panel nezatvárame (zavrie ho Esc / odoslanie); rovnako pri rozpísanom filtri schránky
-        if self.typing_password() || (self.panel == Panel::Clip && !self.clip_query.is_empty()) || (self.panel == Panel::Trash && self.trash_confirm) || self.audio_drag.is_some() || self.monitor_drag.is_some() {
+        if self.typing_password() || (self.panel == Panel::Clip && !self.clip_query.is_empty()) || (self.panel == Panel::Drun && !self.drun_query.is_empty()) || (self.panel == Panel::Trash && self.trash_confirm) || self.audio_drag.is_some() || self.monitor_drag.is_some() {
             return;
         }
         match self.panel {
-            Panel::Calendar | Panel::Disks | Panel::Menu(_) | Panel::Clip | Panel::Trash | Panel::Wall | Panel::Wifi | Panel::Audio | Panel::Monitor | Panel::Capture | Panel::Bluetooth | Panel::NotifHist | Panel::Media => {
+            Panel::Calendar | Panel::Disks | Panel::Menu(_) | Panel::Clip | Panel::Trash | Panel::Wall | Panel::Wifi | Panel::Audio | Panel::Monitor | Panel::Capture | Panel::Drun | Panel::Bluetooth | Panel::NotifHist | Panel::Media => {
                 self.collapse_at = Some(now + Duration::from_millis(self.cfg.collapse_ms))
             }
             Panel::Tip => self.collapse_at = Some(now + Duration::from_millis(200)),
@@ -2441,12 +2585,12 @@ impl Ui {
             let n = n.trim();
             return (!n.is_empty()).then_some(n);
         }
-        matches!(cmd, "monitor" | "bluetooth" | "capture").then_some(cmd)
+        matches!(cmd, "monitor" | "bluetooth" | "capture" | "drun").then_some(cmd)
     }
 
     fn action_for(cmd: &str) -> Option<Action> {
         match cmd {
-            "" | "calendar" | "menu" | "clipboard" | "notifications" | "media" | "trash" | "wallpaper" | "wifi" | "audio" | "monitor" | "bluetooth" | "capture" => None,
+            "" | "calendar" | "menu" | "clipboard" | "notifications" | "media" | "trash" | "wallpaper" | "wifi" | "audio" | "monitor" | "bluetooth" | "capture" | "drun" => None,
             c if Self::quickset_cmd(c).is_some() => None,
             "capture-stop" => Some(Action::Capture(crate::capture::CaptureCmd::Stop)),
             "eject-all" => Some(Action::DiskEjectAll),
@@ -2513,6 +2657,11 @@ impl Ui {
             }
             "bluetooth" => {
                 self.set_panel(Panel::Bluetooth);
+                None
+            }
+            // spúšťač aplikácií (mriežka ikon) priamo v ostrovčeku
+            "drun" => {
+                self.set_panel(Panel::Drun);
                 None
             }
             // panel snímania; počas odpočtu / nahrávania (aj cudzieho, odznak REC svieti) akcia nahrávanie ukončí
@@ -2679,7 +2828,7 @@ impl Ui {
                     // `monitor`, `bluetooth`, `capture` a `module:NAZOV` (panel / menu / vstavaná akcia); otvorený panel sa zavrie
                     self.tip_pending = None;
                     let target = target.to_string();
-                    let open = matches!((target.as_str(), self.panel), ("monitor", Panel::Monitor) | ("bluetooth", Panel::Bluetooth) | ("capture", Panel::Capture));
+                    let open = matches!((target.as_str(), self.panel), ("monitor", Panel::Monitor) | ("bluetooth", Panel::Bluetooth) | ("capture", Panel::Capture) | ("drun", Panel::Drun));
                     if open || self.panel == Panel::Tip {
                         self.set_panel(Panel::None);
                     }
@@ -2706,6 +2855,13 @@ impl Ui {
             Hit::DiskAll => {
                 if button == BTN_LEFT {
                     out.push(Action::DiskEjectAll);
+                }
+            }
+            Hit::DrunCell(i) => {
+                if button == BTN_LEFT {
+                    if let Some(a) = self.drun_launch(i) {
+                        out.push(a);
+                    }
                 }
             }
             Hit::ClipItem(i) => {
@@ -3133,6 +3289,14 @@ impl Ui {
             let max_start = self.hist.len().saturating_sub(1) as f32;
             self.hist_scroll = (self.hist_scroll as f32 + rows).clamp(0.0, max_start) as usize;
         }
+        if self.panel == Panel::Drun && self.hover.is_some() {
+            self.drun_acc += value;
+            let steps = (self.drun_acc / WALL_SCROLL_UNIT).trunc();
+            self.drun_acc -= steps * WALL_SCROLL_UNIT;
+            let g = self.drun_grid();
+            let max = crate::grid::max_scroll(self.drun_hits.len(), g.line_len(), g.lines()) as f32;
+            self.drun_scroll = (self.drun_scroll as f32 + steps).clamp(0.0, max) as usize;
+        }
         if self.panel == Panel::Clip && self.hover.is_some() {
             // koliesko aj touchpad: posun sa zbiera a každá celá jednotka = jeden riadok
             self.clip_acc += value;
@@ -3346,6 +3510,7 @@ impl Ui {
                 Panel::Disks => self.build_disks(&mut frame, text, content, ct),
                 Panel::Menu(mi) => self.build_menu(&mut frame, text, content, mi, ct),
                 Panel::Clip => self.build_clip(&mut frame, text, content, ct),
+                Panel::Drun => self.build_drun(&mut frame, text, content, ct),
                 Panel::NotifHist => self.build_hist(&mut frame, text, content, ct),
                 Panel::Media => self.build_media(&mut frame, text, content, ct),
                 Panel::Trash => self.build_trash(&mut frame, text, content, ct),
@@ -3376,7 +3541,7 @@ impl Ui {
                         text.layout_to(&mut frame.content, l, px2, pill.x + self.s(16.0), cy + (asc - desc) * 0.5, col);
                     }
                 }
-                Panel::None | Panel::Calendar | Panel::Disks | Panel::Menu(_) | Panel::Clip | Panel::Trash | Panel::Wall | Panel::Wifi | Panel::Audio | Panel::Monitor | Panel::Capture | Panel::Bluetooth | Panel::NotifHist | Panel::Media => {}
+                Panel::None | Panel::Calendar | Panel::Disks | Panel::Menu(_) | Panel::Clip | Panel::Trash | Panel::Wall | Panel::Wifi | Panel::Audio | Panel::Monitor | Panel::Capture | Panel::Drun | Panel::Bluetooth | Panel::NotifHist | Panel::Media => {}
             }
         }
         frame
@@ -3850,6 +4015,68 @@ impl Ui {
             let frac = (start as f32 / (n - shown).max(1) as f32).clamp(0.0, 1.0);
             let w = 4.0 * s;
             frame.content.push(Item::Rect { r: Rect::new(pill.x + pill.w - pad * 0.5 - w * 0.5, top + (list_h - thumb_h) * frac, w, thumb_h), radius: w * 0.5, soft: 0.8, color: fade(t.fg, 0.35 * pa) });
+        }
+    }
+
+    /// Panel spúšťača aplikácií: mriežka ikon (rovnaké vykresľovanie ako samostatný `--drun`).
+    fn build_drun(&mut self, frame: &mut Frame, text: &mut Text, pill: Rect, pa: f32) {
+        let s = self.scale;
+        let t = self.theme;
+        let d = self.cfg.drun.clone();
+        let g = self.drun_grid();
+        let start = frame.content.len();
+
+        if self.drun_hits.is_empty() {
+            let px = d.name_size * s;
+            let (asc, desc) = text.line_metrics(px);
+            let msg = if !self.drun_apps.is_empty() {
+                crate::drun::empty_message(&self.drun_query)
+            } else if self.drun_loaded {
+                "Nenašli sa žiadne aplikácie".to_string()
+            } else {
+                "Načítavam…".to_string()
+            };
+            let msg = Self::ellipsize(text, &msg, px, pill.w - 2.0 * g.pad * s);
+            let tw = text.measure(&msg, px);
+            text.layout_to(&mut frame.content, &msg, px, pill.x + (pill.w - tw) * 0.5, pill.y + pill.h * 0.5 + (asc - desc) * 0.5, fade(t.fg, 0.7 * pa));
+        }
+        if d.search {
+            let r = Rect::new(pill.x + g.pad * s, pill.y + g.pad * s * 0.6, pill.w - 2.0 * g.pad * s, (g.top - 6.0) * s);
+            crate::drun::draw_search(&mut frame.content, &d, &t, s, text, r, &self.drun_query);
+        }
+
+        // zvýraznená je bunka pod myšou (ak `hover`), inak vybraná klávesnicou
+        let hovered = match self.hover {
+            Some(Hit::DrunCell(i)) if d.hover => Some(i),
+            _ => None,
+        };
+        let line = g.line_len();
+        let mut cells = Vec::new();
+        for slot in 0..g.cols * g.rows {
+            let i = self.drun_scroll * line + slot;
+            let Some(&app_idx) = self.drun_hits.get(i) else { break };
+            let (cx, cy, cw, ch) = g.cell(slot);
+            self.hits.push((Rect::new(pill.x + cx * s, pill.y + cy * s, cw * s, ch * s), Hit::DrunCell(i)));
+            let selected = match hovered {
+                Some(h) => h == i,
+                None => self.drun_sel == Some(i),
+            };
+            cells.push((app_idx, selected));
+        }
+        let views: Vec<crate::drun::CellView> = cells
+            .iter()
+            .map(|&(a, selected)| crate::drun::CellView { app: &self.drun_apps[a], icon: self.drun_icons.get(a).cloned().unwrap_or_default(), selected })
+            .collect();
+        crate::drun::draw_cells(&mut frame.content, &g, &d, &t, s, text, pill.x, pill.y, &views);
+
+        // plynulé zjavenie panela: priehľadnosť všetkého, čo sa práve nakreslilo
+        if pa < 0.999 {
+            for it in &mut frame.content[start..] {
+                match it {
+                    Item::Rect { color, .. } | Item::Image { color, .. } => color[3] *= pa,
+                    Item::Glyph(q) => q.color[3] *= pa,
+                }
+            }
         }
     }
 
