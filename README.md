@@ -42,7 +42,7 @@ Obsah:
 | `[[custom]]` | ľubovoľný text/skript/tlačidlo | vlastný príkaz |
 
 **Panely** (rozbalia sa v kapsule; otvárajú sa kliknutím na modul alebo akciou v menu): kalendár, zoznam diskov,
-schránka (cliphist), história notifikácií, „Práve hrá“, kôš, tapety, Wi-Fi, Bluetooth, zvuk, monitor (DDC/CI), kontajner `hardware` so záložkami
+schránka (cliphist), história notifikácií, „Práve hrá“, kôš, tapety, Wi-Fi, Bluetooth, zvuk, monitor (DDC/CI), kontajner `quickset` so záložkami
 (audio/bluetooth/wifi/monitor/vlastné menu), vlastné `[[menu]]` (ikony / text / dashboard).
 
 **Ďalšie funkcie:** notifikačný server (`org.freedesktop.Notifications`) so zobrazením priamo v kapsule a históriou,
@@ -120,7 +120,7 @@ Viac písem = poradie náhrad; chýbajúci glyf sa nakreslí ako prázdny štvor
 - Predvolené: text `["Adwaita Sans", "DejaVu Sans"]`, ikony `["Hack Nerd Font Propo"]`.
 - Ikony v configu sú **Nerd Font glyfy** (zápis `""`, nad U+FFFF `"\U000f0493"`).
 - V repozitári je `config/fonty/Inter-Mini.ttf` (podmnožina písma). Ak používaš len podmnožinu Nerd Fontu, over, že
-  obsahuje všetky použité glyfy (pozri predvolené ikony záložiek v [6.12](#612-hardware-záložky)).
+  obsahuje všetky použité glyfy (pozri predvolené ikony záložiek v [6.12](#612-quickset-záložky)).
 
 ### 2.5 Inštalácia
 
@@ -248,7 +248,7 @@ cez frontu s `eventfd`.
 | `disks.rs` | UDisks2 (automount, odpojenie) |
 | `wifi.rs`, `bluetooth.rs` | NetworkManager, BlueZ |
 | `audio.rs`, `monitor.rs` | panel zvuku (`pactl`), panel monitora (`ddcutil`, `wlsunset`) |
-| `wallpaper.rs`, `trash.rs`, `hardware.rs` | panely tapiet, koša, kontajner záložiek |
+| `wallpaper.rs`, `trash.rs`, `quickset.rs` | panely tapiet, koša, kontajner záložiek |
 | `icons.rs`, `json.rs`, `sys.rs`, `snapshot.rs` | PNG ikony, JSON parser, tenká vrstva nad libc, `--snapshot` |
 
 Poznámky k návrhu:
@@ -499,7 +499,7 @@ Hodnota je **vstavaná akcia** alebo **shell príkaz**. Prázdna hodnota = nič.
 |---|---|
 | `calendar` | kalendár (koliesko = zmena mesiaca) |
 | `clipboard`, `notifications`, `media`, `trash`, `wallpaper`, `wifi`, `bluetooth`, `audio`, `monitor` | príslušný panel (`notifications` = história notifikácií) |
-| `hardware`, `hardware:audio` / `:bluetooth` / `:wifi` / `:monitor` / `:menu:NAZOV` | kontajner záložiek (posledná / konkrétna záložka) |
+| `quickset`, `quickset:audio` / `:bluetooth` / `:wifi` / `:monitor` / `:menu:NAZOV` (aj ostatné záložky; starý názov `hardware` ešte funguje) | kontajner záložiek (posledná / konkrétna záložka) |
 | `menu` | zoznam diskov (modul `disks`) |
 | *názov `[[menu]]`* | vlastné menu |
 | `eject-all` | odpojiť všetky disky |
@@ -514,7 +514,7 @@ Predvolené akcie: `clock` → `calendar`; `audio` → `audio-mute`; `keyboard` 
 
 V `command` položky `[[menu.item]]` sa vstavané akcie volajú s predponou **`module:`** (`module:calendar`,
 `module:power` = iné menu, `module:disks`, `module:clipboard`, `module:notifications`, `module:media`, `module:media-play-pause`, `module:media-next`, `module:media-prev`, `module:trash`, `module:wallpaper`, `module:wifi`,
-`module:hardware`, `module:hardware:wifi`, `module:audio-mute`, `module:layout-toggle`, `module:inhibit-toggle`,
+`module:quickset`, `module:quickset:wifi`, `module:audio-mute`, `module:layout-toggle`, `module:inhibit-toggle`,
 `module:eject-all`, `module:track-stop:radio`). Bez predpony je `command` vždy shell príkaz. Neznámy názov sa ignoruje.
 
 Zástupné symboly v tooltipoch: sieť `{ssid} {ifname} {ip} {gateway} {signal} {dbm} {freq}`; VPN `{ifname} {ip}`;
@@ -638,9 +638,13 @@ Pri inom nástroji (`brightnessctl`, `ddcutil`) uprav `get`/`set` tak, aby spĺ�
 
 Modul sa zobrazí len keď je nejaké médium pripojené; počíta sa disk, nie oddiel.
 
-### 6.12 `[hardware]` (záložky)
+### 6.12 `[quickset]` (záložky)
 
-Kontajner s lištou záložiek okolo panelov audio / bluetooth / wifi / monitor / vlastné menu. Panely ostávajú otvárateľné aj samostatne.
+Kontajner so záložkami sa volá **quickset** (predtým `hardware`). Sekcia `[hardware]` a akcie `hardware…` sa ešte čítajú, ak `[quickset]` chýba, nové configy ich používať nemajú.
+
+Kontajner s lištou záložiek okolo panelov. Záložkou môže byť `audio`, `bluetooth`, `wifi`, `monitor`, `clipboard`, `trash`, `notifications` (história notifikácií), `wallpaper` alebo `menu:NAZOV`. Panely ostávajú otvárateľné aj samostatne.
+
+**Kritériá:** záložkou môže byť veľký panel s predvídateľnou veľkosťou, ktorý sa zatvára rovnako ako ostatné (odchodom myši, opakovaným klikom). Preto **nie** `media` (lepkavý panel, ktorý sa odchodom myši nezatvára) a nie kalendár. Výška okna kontajnera je výška najvyššej záložky; veľký panel (`wallpaper`) natiahne všetky, preto pri ňom nastav `width` / `height`.
 
 | Kľúč | Predvolené | Popis |
 |---|---|---|
@@ -650,8 +654,8 @@ Kontajner s lištou záložiek okolo panelov audio / bluetooth / wifi / monitor 
 | `tab_gap` | `6` (0–64) | medzera medzi tlačidlami záložiek |
 | `width` / `height` | — (120–3000) | pevná celková veľkosť okna vrátane lišty; bez nich sa riadi obsahom |
 | `preload` | `true` | načítať údaje monitora (ddcutil je pomalý) už pri otvorení kontajnera |
-| `tab1` … `tab8` | všetky štyri v poradí `audio, bluetooth, wifi, monitor` | modul: `audio`/`bluetooth`/`wifi`/`monitor` alebo `menu:NAZOV` (`NAZOV` = `name` z `[[menu]]`) |
-| `tab1_icon` … | `f057e` audio, `f00af` bluetooth, `f0928` wifi, `f0379` monitor, ozubené koleso `f0493` pre menu | Nerd Font glyf |
+| `tab1` … `tab8` | štyri v poradí `audio, bluetooth, wifi, monitor` | modul: `audio`, `bluetooth`, `wifi`, `monitor`, `clipboard`, `trash`, `notifications`, `wallpaper` alebo `menu:NAZOV` (`NAZOV` = `name` z `[[menu]]`); neplatný názov sa preskočí |
+| `tab1_icon` … | `f057e` audio, `f00af` bluetooth, `f0928` wifi, `f0379` monitor, `f0ea` schránka, `f1f8` kôš, `f0f3` notifikácie, `f03e` tapety, ozubené koleso `f0493` pre menu | Nerd Font glyf |
 
 Opakovaný klik na tú istú záložku kontajner zavrie. Záložka s menu: položky s `exec` sa spustia pri prepnutí,
 `wait_exec` sa neuplatní, klik na položku vykoná `command` a zavrie okno. Ak menu neexistuje, záložka sa zobrazí, no nedá
@@ -809,7 +813,22 @@ skupine beží najviac jeden proces** (nový štart najprv ukončí celú skupin
 potom SIGKILL). Na koniec procesu sa blokujúco čaká v jednom vlákne — nič sa nezisťuje cyklicky.
 Modul s názvom skupiny **`radio`** ukáže ikonu, kým proces beží; klik ju ukončí. Ikona zmizne aj keď proces skončí sám.
 Pri reštarte ostrovčeka po zmene configu sa sledované procesy ukončia. Sleduje sa iba to, čo spustil ostrovček.
-Zabudovaný je **iba modul `radio`** (skupina `radio`); iné názvy skupín fungujú len ako „jeden proces naraz“ bez ikony.
+Ikonu pre ďalšie skupiny dá **modul sledovaného procesu**: ľubovoľný názov v `modules`, ktorý nie je vstavaný ani
+`[[custom]]` a má vlastnú sekciu `[názov]`. Ikona je vidieť, kým beží proces skupiny `track` (predvolene názov modulu).
+
+| Kľúč `[názov]` | Predvolené | Popis |
+|---|---|---|
+| `track` | názov modulu | skupina sledovaného procesu |
+| `icon` | `󰐹` | ikona / text v kapsule |
+| `on_click`, `on_click_right`, `on_click_middle` | `track-stop:SKUPINA`, –, – | akcie |
+| `tooltip` | `{name}\nKlik = vypnúť` | `{name}` = `label` položky menu |
+
+```toml
+modules = ["network", "clock", "radio", "tv"]
+
+[tv]
+icon = "TV"        # skupina je "tv": položky menu majú track = "tv"
+```
 
 ```toml
 [[menu.item]]

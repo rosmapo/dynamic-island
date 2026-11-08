@@ -1,22 +1,22 @@
 # Skopíruj do ~/.config/dynamic-island/config.toml. Zmena súboru = automatický reštart.
 # Farby sa berú z matugen súboru (colors_file) a menia sa ŽIVO bez reštartu.
 
-# poradie modulov v kapsule
-modules = ["network", "vpn", "radio", "media", "clock", "keyboard", "audio", "capslock", "inhibitor", "recorder", "off", "disks"]
+# poradie modulov (ako group/island vo waybare)
+modules = ["network", "vpn", "clock", "keyboard", "audio", "radio", "media", "capslock", "inhibitor", "recorder", "off", "disks"]
 
 # Práve hrá (MPRIS: fooyin, mpv s mpris, prehliadač…). Ikona sa ukáže, kým je nejaký prehrávač aktívny.
 # Klik = panel (neukončí sa odchodom myši, zbalí sa šípkou), pravý = play/pauza, stredný = ďalšia skladba.
 # Akcie: media, media-play-pause, media-next, media-prev (v menu s predponou module:).
 [media]
-# icon = "\uf001"             # ikona pri prehrávaní
-# icon_paused = "\uf04c"      # ikona pri pozastavení
-# tooltip = "{artist} – {title}"   # + {album}
+#icon = ""             # ikona pri prehrávaní
+#icon_paused = ""      # ikona pri pozastavení
+tooltip = ""			# tooltip = "{artist} – {title}"   # + {album}
 # ignore = ["chromium"]       # prehrávače, ktoré sa majú preskočiť (podreťazec mena na zbernici)
 # panel_width = 460
 # art_size = 128              # veľkosť obalu (80–256 px)
 # font_size = 16
 
-# Natívne zdroje menu (exec = "builtin:…")
+# Natívne zdroje dashboardu (exec = "builtin:…")
 [system]
 # decimal = ","            # desatinný oddeľovač vo výstupe ("," alebo ".")
 # net_interface = ""      # rozhranie pre net-down / net-up; prázdne = rozhranie s predvolenou trasou
@@ -57,18 +57,18 @@ interface = "wlan0"
 on_click = "~/.config/wayfire/scripts/VPN_switcher.sh"
 on_click_right = "foot bash -c 'mega-cmd; exec bash'"
 on_click_middle = "anydesk"
-# icons = [...]  icon_ethernet  icon_disconnected   (predvolene Nerd Font)
+# icons = [...]  icon_ethernet  icon_disconnected   (predvolene Nerd Font ako vo waybare)
 # Tooltipy (zástupné symboly: {ssid} {ifname} {ip} {gateway} {signal} {dbm} {freq}; \n = nový riadok):
 # tooltip_wifi = "SSID: {ssid}\nIP adresa: {ip}\nSila signálu: {signal}% ({dbm} dBm)"
 tooltip_wifi = ""
 # tooltip_ethernet = "Rozhranie: {ifname}\nIP adresa: {ip}\nBrána: {gateway}"
 # tooltip_disconnected = "Nepripojené"
 
-[hardware]
+[quickset]
 tabs_position = "left"   # left | right | top | bottom
 tab_size = 44            # strana tlačidla záložky (px)
 icon_size = 22           # veľkosť ikony (px)
-# tab_gap = 6            # medzera medzi tlačidlami záložiek (px, 0–64, predvolene 6)
+tab_gap = 10      # px, 0–64, predvolene 6
 width = 500            # celková šírka okna vrátane lišty; bez nej podľa aktívnej záložky
 # height = 420           # celková výška okna vrátane lišty; bez nej podľa najvyššej záložky
 preload = false        # predvolene true: údaje monitora sa načítajú už pri otvorení kontajnera (ddcutil je pomalý)
@@ -79,12 +79,14 @@ tab2 = "wifi"
 tab3 = "bluetooth"
 tab4 = "monitor"
 tab1 = "menu:settings"          # názov z [[menu]] name = "nastavenia"
+tab6 = "menu:radio"				# povolené sú aj clipboard, trash, notifications a wallpaper
 tab5_icon = ""
 tab2_icon = ""
 tab3_icon = ""
 tab4_icon = ""
 tab1_icon = ""          # ikona je voliteľná, predvolene ozubené koleso "\U000f0493" 
-
+tab6_icon = "" 		# 
+  
 [wifi]
 font_size = 16
 rows = 8
@@ -133,7 +135,7 @@ scan_ms = 4000
 [keyboard]
 on_click = "layout-toggle"
 on_click_right = "clipboard"
-on_click_middle = "radio"
+on_click_middle = "notifications"
 tooltip = ""
 [keyboard.names]
 Slovak = "SK"
@@ -149,9 +151,9 @@ max_items = 200   # koľko najnovších položiek sa načíta
 
 [trash]
 width = 600
-rows = 15
+rows = 10
 text_size = 18
-confirm_empty = true
+confirm_empty = false
 show_location = false
 show_date = true
 
@@ -174,17 +176,22 @@ button3_command = "qt5ct"
 button4_label = "qt6"
 button4_command = "qt6ct"
 
+[radio]                 # voliteľné
+icon = ""
+tooltip = "{name}"   # {name} = label položky
+on_click_right = "radio"
+
 [[custom]]
 name = "off"
 text = ""
 on_click = "power"
-on_click_right = "hardware"
+on_click_right = "quickset"
 
 [capslock]
 text = "CAPS"
 
 [inhibitor]            # ikona len zobrazuje existenciu súboru; vytvára/maže ho tvoj skript na Super+Z
-file = "~/.idle_inhibit"
+file = "/tmp/idleinhibit"
 on_click = ""
 tooltip = ""
 
@@ -192,9 +199,9 @@ tooltip = ""
 file = "/tmp/RECORDING"
 on_click = "~/.config/wayfire/scripts/recorder.sh"
 
-# Ľubovoľný externý modul: trvalý proces (interval = 0) alebo periodický.
+# Ľubovoľný externý modul (waybar „custom“): trvalý proces (interval = 0) alebo periodický.
 # Výstup: JSON {"text","tooltip","class"} alebo čistý text (json = false).
-# Externé disky a flash kľúče (UDisks2) cez D-Bus.
+# Externé disky a flash kľúče (náhrada udiskie + waybar-eject.py): UDisks2 cez D-Bus.
 # Modul sa zobrazí, len keď je niečo pripojené. Ľavý klik = pri jednom disku ho rovno odpojí, pri viacerých otvorí menu (klik na riadok odpojí a vysunie),
 # pravý klik = odpojiť všetko. Menu sa zavrie, keď odídeš myšou.
 [disks]
@@ -388,27 +395,30 @@ icon = "sysmonitor.png"
 command = "gnome-system-monitor"
 
 ### Radio menu #############################################################################
+### Radio menu #############################################################################
 # `track = "radio"`: ostrovček príkaz spustí sám, jeden proces na skupinu (nové rádio predošlé ukončí) a modul
 # `radio` v `modules` ukáže ikonu, kým beží; klik na ikonu ho vypne. Voliteľne `[radio]` s `icon`, `tooltip`.
 [[menu]]
 name = "radio"
-title = ""
-text_columns = 1
-rows = 5
+title = "Rádio"
+text_columns = 2
+#rows = 5
 text_size = 18
-cell_width = 120
-gap = 2
+cell_width = 180
+gap = 5
 padding = 12
 [[menu.item]]
-label = "Slovensko"
+separator = true
+[[menu.item]]
+label = "Rádio Slovensko"
 command = "mpv https://icecast.stv.livebox.sk/slovensko_128.mp3 --no-config"
 track = "radio"
 [[menu.item]]
-label = "Lumen"
+label = "Rádio Lumen"
 command = "mpv https://audio.lumen.sk/live128.mp3 --no-config"
 track = "radio"
 [[menu.item]]
-label = "Mária"
+label = "Rádio Mária"
 command = 'mpv "https://dreamsiteradiocp5.com/proxy/radiomariaslomp3?mp=/stream.mp3" --no-config'
 track = "radio"
 [[menu.item]]
@@ -416,7 +426,25 @@ label = "Rádio 7"
 command = "mpv https://play.radio7.sk/128 --no-config"
 track = "radio"
 [[menu.item]]
-label = ""
+separator = true
+[[menu.item]]
+label = "Fun 80.90.Roky"
+command = "mpv http://stream.funradio.sk:8000/80-90-128.mp3 --no-config"
+track = "radio"
+[[menu.item]]
+label = "Rádio Melody"
+command = "mpv https://stream.bauermedia.sk/melody-hi.mp3 --no-config"
+track = "radio"
+[[menu.item]]
+separator = true
+[[menu.item]]
+label = "Slobodný vysielač"
+command = "mpv https://vysielanie.online/radio/8020/SV128.mp3 --no-config"
+track = "radio"
+[[menu.item]]
+separator = true
+[[menu.item]]
+label = "  Vypnúť rádio"
 command = "module:track-stop:radio"
 
 ### Power menu #######################################################################

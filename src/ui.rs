@@ -23,6 +23,7 @@ pub enum ModId {
     Media,
     Disks,
     Custom(usize),
+    Tracker(usize),
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -143,7 +144,7 @@ enum Hit {
     BtDiscoverable,
     BtRefresh,
     BtEditor,
-    /// záložka kontajnera `hardware`
+    /// záložka kontajnera `quickset`
     HwTab(usize),
     Panel,
 }
@@ -210,7 +211,7 @@ const DISK_HEAD: f32 = 40.0;
 const DISK_ROW: f32 = 46.0;
 const DISK_BOTTOM: f32 = 12.0;
 
-// kontajner hardware (logické px)
+// kontajner quickset (logické px)
 const HW_BAR_PAD: f32 = 10.0; // okraj lišty okolo záložiek
 const HW_BAR_INSET: f32 = 6.0; // odsadenie podkladu lišty od okraja okna
 
@@ -256,7 +257,7 @@ pub struct Ui {
     panel: Panel,       // cieľový panel
     panel_shown: Panel, // panel, ktorý sa práve kreslí (kým sa zatvára)
     big: Panel,         // veľký panel nahrádzajúci ostrovček (kalendár / disky)
-    /// kontajner `hardware`: `big` je panel aktívnej záložky (`hw_tab`), okolo neho sa kreslí lišta;
+    /// kontajner `quickset`: `big` je panel aktívnej záložky (`hw_tab`), okolo neho sa kreslí lišta;
     /// rozmery okna sa menia pružinami, aby sa prepnutie záložky animovalo
     hw: bool,
     hw_tab: usize,
@@ -481,7 +482,10 @@ impl Ui {
                 "disks" => ModId::Disks,
                 other => match cfg.custom.iter().position(|c| c.name == other) {
                     Some(i) => ModId::Custom(i),
-                    None => continue,
+                    None => match cfg.trackers.iter().position(|c| c.name == other) {
+                        Some(i) => ModId::Tracker(i),
+                        None => continue,
+                    },
                 },
             };
             let btn = match id {
@@ -497,6 +501,7 @@ impl Ui {
                 ModId::Media => cfg.media.clone(),
                 ModId::Disks => cfg.disks.clone(),
                 ModId::Custom(i) => cfg.custom[i].btn.clone(),
+                ModId::Tracker(i) => cfg.trackers[i].btn.clone(),
             };
             items.push(ItemState {
                 id,
@@ -914,6 +919,13 @@ impl Ui {
                 Some((_, name)) => (c.radio_icon.clone(), None, None, fill(&c.radio.tooltip, &[("name", name.clone())]), 10.0),
                 None => none,
             },
+            ModId::Tracker(i) => {
+                let tr = &c.trackers[i];
+                match d.tracked.get(&tr.group) {
+                    Some((_, name)) => (tr.icon.clone(), None, None, fill(&tr.btn.tooltip, &[("name", name.clone())]), 10.0),
+                    None => none,
+                }
+            }
             ModId::Media => match &d.media {
                 Some(m) => {
                     let vars = [("artist", m.artist.clone()), ("title", m.title.clone()), ("album", m.album.clone())];
@@ -1229,7 +1241,7 @@ impl Ui {
         self.cal_names = (0..7).map(|d| sys::strftime_str("%a", &sys::make_tm(2024, 0, 1 + d)).chars().take(2).collect()).collect();
     }
 
-    /// Veľkosť veľkého panela: pri kontajneri `hardware` okno s lištou, inak samotný panel.
+    /// Veľkosť veľkého panela: pri kontajneri `quickset` okno s lištou, inak samotný panel.
     fn cal_size(&self) -> (f32, f32) {
         if self.hw_view() {
             return (self.hw_w.x, self.hw_h.x);
@@ -1575,9 +1587,9 @@ impl Ui {
         matches!(p, Panel::Calendar | Panel::Disks | Panel::Menu(_) | Panel::Clip | Panel::Trash | Panel::Wall | Panel::Wifi | Panel::Audio | Panel::Monitor | Panel::Bluetooth | Panel::NotifHist | Panel::Media)
     }
 
-    // ------------------------------------------- kontajner hardware
+    // ------------------------------------------- kontajner quickset
 
-    /// Panel, ktorý patrí záložke: `audio` | `bluetooth` | `wifi` | `monitor`, alebo `menu:NAZOV` = vlastné `[[menu]]`
+    /// Panel, ktorý patrí záložke: `audio` | `bluetooth` | `wifi` | `monitor` | `clipboard` | `trash` | `notifications` | `wallpaper`, alebo `menu:NAZOV` = vlastné `[[menu]]`
     /// s daným názvom (neexistujúce menu = `None`, záložka sa nedá otvoriť).
     fn tab_panel(&self, name: &str) -> Option<Panel> {
         match name {
@@ -1585,27 +1597,32 @@ impl Ui {
             "bluetooth" => Some(Panel::Bluetooth),
             "wifi" => Some(Panel::Wifi),
             "monitor" => Some(Panel::Monitor),
-            _ => name.strip_prefix(crate::hardware::MENU_PREFIX).and_then(|m| self.menu_index(m)).map(Panel::Menu),
+            "clipboard" => Some(Panel::Clip),
+            "trash" => Some(Panel::Trash),
+            "notifications" => Some(Panel::NotifHist),
+            "wallpaper" => Some(Panel::Wall),
+            _ => name.strip_prefix(crate::quickset::MENU_PREFIX).and_then(|m| self.menu_index(m)).map(Panel::Menu),
         }
     }
 
-    /// Panel môže byť obsahom kontajnera `hardware`.
+    /// Panel môže byť obsahom kontajnera `quickset`.
     fn is_hw_inner(p: Panel) -> bool {
-        matches!(p, Panel::Audio | Panel::Bluetooth | Panel::Wifi | Panel::Monitor | Panel::Menu(_))
+        matches!(p, Panel::Audio | Panel::Bluetooth | Panel::Wifi | Panel::Monitor | Panel::Menu(_) | Panel::Clip | Panel::Trash | Panel::NotifHist | Panel::Wall)
     }
 
-    /// Veľký panel sa práve kreslí v kontajneri `hardware` (aj počas jeho zatvárania).
+    /// Veľký panel sa práve kreslí v kontajneri `quickset` (aj počas jeho zatvárania).
     fn hw_view(&self) -> bool {
         self.hw && Self::is_hw_inner(self.big)
     }
 
-    /// Príkaz `hardware` (posledná záložka) alebo `hardware:MODUL` (konkrétna záložka): `Some(modul)` / `Some(None)`.
-    fn hardware_cmd(cmd: &str) -> Option<Option<&str>> {
+    /// Príkaz `quickset` (posledná záložka) alebo `quickset:MODUL` (konkrétna záložka): `Some(modul)` / `Some(None)`.
+    fn quickset_cmd(cmd: &str) -> Option<Option<&str>> {
         let cmd = cmd.trim();
-        if cmd == "hardware" {
+        // starý názov `hardware` sa ešte akceptuje
+        if cmd == "quickset" || cmd == "hardware" {
             Some(None)
         } else {
-            cmd.strip_prefix("hardware:").map(|m| Some(m.trim()))
+            cmd.strip_prefix("quickset:").or_else(|| cmd.strip_prefix("hardware:")).map(|m| Some(m.trim()))
         }
     }
 
@@ -1621,13 +1638,13 @@ impl Ui {
         let inner_h = c.tabs.iter().filter_map(|t| self.tab_panel(&t.module)).map(|p| self.panel_dims(p).1).fold(0.0f32, f32::max);
         let inner_w = self.panel_dims(self.big).0;
         let tab = c.tab_size * s;
-        let bar_t = crate::hardware::bar_thickness(tab, HW_BAR_PAD * s);
-        let bar_l = crate::hardware::bar_length(c.tabs.len(), tab, c.tab_gap * s, HW_BAR_PAD * s);
-        crate::hardware::window_size(c.pos, (inner_w, inner_h), bar_t, bar_l, c.width.map(|w| w * s), c.height.map(|h| h * s))
+        let bar_t = crate::quickset::bar_thickness(tab, HW_BAR_PAD * s);
+        let bar_l = crate::quickset::bar_length(c.tabs.len(), tab, c.tab_gap * s, HW_BAR_PAD * s);
+        crate::quickset::window_size(c.pos, (inner_w, inner_h), bar_t, bar_l, c.width.map(|w| w * s), c.height.map(|h| h * s))
     }
 
-    /// Otvorí kontajner `hardware` na záložke `tab` (`None` = naposledy použitá) alebo prepne záložku.
-    fn open_hardware(&mut self, tab: Option<usize>) {
+    /// Otvorí kontajner `quickset` na záložke `tab` (`None` = naposledy použitá) alebo prepne záložku.
+    fn open_quickset(&mut self, tab: Option<usize>) {
         let n = self.cfg.hw.tabs.len();
         if n == 0 {
             return;
@@ -1656,12 +1673,12 @@ impl Ui {
     }
 
     /// Prepínač: otvorený kontajner (na tej istej záložke) zavrie, inak ho otvorí / prepne záložku.
-    fn toggle_hardware(&mut self, tab: Option<usize>) {
+    fn toggle_quickset(&mut self, tab: Option<usize>) {
         let open = self.hw && Self::is_hw_inner(self.panel);
         if open && tab.map_or(true, |t| t == self.hw_tab) {
             self.set_panel(Panel::None);
         } else {
-            self.open_hardware(tab);
+            self.open_quickset(tab);
         }
     }
 
@@ -2305,7 +2322,7 @@ impl Ui {
     fn action_for(cmd: &str) -> Option<Action> {
         match cmd {
             "" | "calendar" | "menu" | "clipboard" | "notifications" | "media" | "trash" | "wallpaper" | "wifi" | "audio" | "monitor" | "bluetooth" => None,
-            c if Self::hardware_cmd(c).is_some() => None,
+            c if Self::quickset_cmd(c).is_some() => None,
             "eject-all" => Some(Action::DiskEjectAll),
             "inhibit-toggle" => Some(Action::InhibitToggle),
             "layout-toggle" => Some(Action::LayoutToggle),
@@ -2372,10 +2389,10 @@ impl Ui {
                 self.set_panel(Panel::Bluetooth);
                 None
             }
-            // `hardware` = kontajner so záložkami (posledná záložka), `hardware:wifi` = rovno konkrétna záložka
-            other if Self::hardware_cmd(other).is_some() => {
-                let tab = Self::hardware_cmd(other).flatten().and_then(|m| self.hw_tab_index(m));
-                self.open_hardware(tab);
+            // `quickset` = kontajner so záložkami (posledná záložka), `quickset:wifi` = rovno konkrétna záložka
+            other if Self::quickset_cmd(other).is_some() => {
+                let tab = Self::quickset_cmd(other).flatten().and_then(|m| self.hw_tab_index(m));
+                self.open_quickset(tab);
                 None
             }
             other => match self.menu_index(other) {
@@ -2402,10 +2419,10 @@ impl Ui {
         if matches!(self.panel, Panel::Menu(_)) {
             if button == BTN_LEFT {
                 let hit = self.hit_at(x, y);
-                // menu otvorené ako záložka kontajnera `hardware`: lišta so záložkami ostáva ovládateľná
+                // menu otvorené ako záložka kontajnera `quickset`: lišta so záložkami ostáva ovládateľná
                 if let Some(Hit::HwTab(i)) = hit {
                     if self.hw && i != self.hw_tab {
-                        self.open_hardware(Some(i));
+                        self.open_quickset(Some(i));
                     }
                     return out;
                 }
@@ -2508,10 +2525,10 @@ impl Ui {
                     self.toggle_wall();
                     self.collapse_at = None;
                     self.start_grace(now);
-                } else if let Some(arg) = Self::hardware_cmd(&cmd) {
+                } else if let Some(arg) = Self::quickset_cmd(&cmd) {
                     self.tip_pending = None;
                     let tab = arg.and_then(|m| self.hw_tab_index(m));
-                    self.toggle_hardware(tab);
+                    self.toggle_quickset(tab);
                     self.collapse_at = None;
                     self.start_grace(now);
                 } else if let Some(mi) = self.menu_index(&cmd) {
@@ -2629,7 +2646,7 @@ impl Ui {
             }
             Hit::HwTab(i) => {
                 if button == BTN_LEFT && i != self.hw_tab {
-                    self.open_hardware(Some(i));
+                    self.open_quickset(Some(i));
                 }
             }
             Hit::WifiToggle => {
@@ -3117,7 +3134,7 @@ impl Ui {
         // ---- kalendár / disky / menu (nahrádza obsah ostrovčeka)
         if ct > 0.01 {
             self.hits.push((pill, Hit::Panel));
-            // v kontajneri `hardware` sa panel kreslí do zvyšku okna vedľa lišty so záložkami
+            // v kontajneri `quickset` sa panel kreslí do zvyšku okna vedľa lišty so záložkami
             let content = if self.hw_view() { self.build_hw_bar(&mut frame, text, pill, ct) } else { pill };
             match self.big {
                 Panel::Disks => self.build_disks(&mut frame, text, content, ct),
@@ -3158,9 +3175,9 @@ impl Ui {
         frame
     }
 
-    /// Lišta so záložkami kontajnera `hardware`; vráti obdĺžnik pre obsah (zvyšok okna).
+    /// Lišta so záložkami kontajnera `quickset`; vráti obdĺžnik pre obsah (zvyšok okna).
     fn build_hw_bar(&mut self, frame: &mut Frame, text: &mut Text, pill: Rect, pa: f32) -> Rect {
-        use crate::hardware as hw;
+        use crate::quickset as hw;
         let s = self.scale;
         let t = self.theme;
         let c = &self.cfg.hw;

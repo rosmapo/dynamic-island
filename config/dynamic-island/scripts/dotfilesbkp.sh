@@ -1,6 +1,6 @@
 #!/bin/bash
 
-rsync -avP --delete --exclude='/.*' /media/mm/backup/chroot/home/miro/ /home/mm/Linux/Software/sources/
+rsync -avP --delete --exclude='.*' /media/mm/backup/chroot/home/miro/ /home/mm/Linux/Software/sources/
 
 # Všeobecný zoznam vylúčených vecí pre ostatné priečinky
 EXCLUDE_LIST=$(cat << EOF

@@ -10,7 +10,7 @@ mod dbus;
 mod disks;
 mod fonts;
 mod gl;
-mod hardware;
+mod quickset;
 mod history;
 mod icons;
 mod json;

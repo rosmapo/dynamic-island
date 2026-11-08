@@ -1,10 +1,12 @@
-//! Modul „hardware“: kontajner so záložkami pre panely audio, bluetooth, wifi a monitor.
-//! Tu je len konfigurácia `[hardware]` a čistá geometria (obdĺžniky ako štvorice `(x, y, w, h)`);
+//! Modul „quickset“: kontajner so záložkami pre panely audio, bluetooth, wifi a monitor.
+//! Tu je len konfigurácia `[quickset]` a čistá geometria (obdĺžniky ako štvorice `(x, y, w, h)`);
 //! stav a kreslenie sú v `ui.rs`, kde kontajner obalí ten istý panel, ktorý sa dá otvoriť aj samostatne.
 use crate::toml::{Table, TableExt};
 
-/// Moduly, ktoré môže kontajner obsahovať.
+/// Záložky predvolene (bez `tab1` … v configu).
 pub const MODULES: [&str; 4] = ["audio", "bluetooth", "wifi", "monitor"];
+/// Všetky panely, ktoré môžu byť záložkou (okrem `menu:NAZOV`). Nie `media` (lepkavý panel) a kalendár.
+pub const ALLOWED: [&str; 8] = ["audio", "bluetooth", "wifi", "monitor", "clipboard", "trash", "notifications", "wallpaper"];
 /// Najviac záložiek (`tab1` … `tab8`).
 const MAX_TABS: usize = 8;
 
@@ -43,7 +45,7 @@ pub struct HwTab {
     pub icon: String,
 }
 
-/// Nastavenia sekcie `[hardware]`.
+/// Nastavenia sekcie `[quickset]`.
 #[derive(Clone, Debug)]
 pub struct HwCfg {
     pub tabs: Vec<HwTab>,
@@ -68,6 +70,10 @@ pub fn default_icon(module: &str) -> &'static str {
         "audio" => "\u{f057e}",
         "bluetooth" => "\u{f00af}",
         "wifi" => "\u{f0928}",
+        "clipboard" => "\u{f0ea}",
+        "trash" => "\u{f1f8}",
+        "notifications" => "\u{f0f3}",
+        "wallpaper" => "\u{f03e}",
         m if m.starts_with(MENU_PREFIX) => "\u{f0493}",
         _ => "\u{f0379}",
     }
@@ -85,7 +91,7 @@ pub fn parse_tab_name(raw: &str) -> Option<String> {
         return (!name.is_empty()).then(|| format!("{MENU_PREFIX}{name}"));
     }
     let lower = raw.to_lowercase();
-    MODULES.contains(&lower.as_str()).then_some(lower)
+    ALLOWED.contains(&lower.as_str()).then_some(lower)
 }
 
 impl HwCfg {
@@ -217,6 +223,18 @@ mod tests {
         // názov menu sa nelowercasuje, chýbajúca ikona = predvolená pre menu, prázdny názov menu sa preskočí
         assert_eq!(t, vec![("wifi", default_icon("wifi")), ("menu:Nastavenia", "X"), ("menu:Apps", default_icon("menu:Apps"))]);
         assert_eq!(default_icon("menu:Apps"), "\u{f0493}");
+    }
+
+    #[test]
+    fn more_panels_as_tabs() {
+        let src = "tab1=\"Trash\"\ntab2=\"clipboard\"\ntab3=\"notifications\"\ntab4=\"wallpaper\"\ntab5=\"media\"\ntab6=\"calendar\"\n";
+        let c = HwCfg::from_table(&toml::parse(src).unwrap());
+        let m: Vec<&str> = c.tabs.iter().map(|t| t.module.as_str()).collect();
+        // media a kalendár sa nepovoľujú
+        assert_eq!(m, vec!["trash", "clipboard", "notifications", "wallpaper"]);
+        assert_eq!(c.tabs[0].icon, "\u{f1f8}");
+        // predvolené záložky ostávajú štyri pôvodné
+        assert_eq!(HwCfg::from_table(&toml::parse("").unwrap()).tabs.len(), 4);
     }
 
     #[test]

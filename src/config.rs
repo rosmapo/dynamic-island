@@ -99,6 +99,18 @@ pub struct AutoCfg {
     pub ignore: Vec<String>,
 }
 
+/// Modul sledovaného procesu: ľubovoľný názov v `modules` so sekciou `[názov]` (okrem vstavaných a `custom`).
+/// Zobrazí sa, kým beží proces skupiny `group` (položka menu s `track`).
+#[derive(Clone, Debug)]
+pub struct TrackerCfg {
+    pub name: String,
+    pub group: String,
+    pub icon: String,
+    pub btn: Btn,
+}
+
+pub const BUILTIN_MODULES: [&str; 11] = ["network", "vpn", "clock", "keyboard", "audio", "capslock", "inhibitor", "recorder", "radio", "media", "disks"];
+
 #[derive(Clone, Debug)]
 pub struct Config {
     pub path: PathBuf,
@@ -180,6 +192,7 @@ pub struct Config {
     pub disks_timeout: i32,
 
     pub custom: Vec<CustomCfg>,
+    pub trackers: Vec<TrackerCfg>,
     pub menus: Vec<MenuCfg>,
     /// panel histórie schránky (cliphist) – `[clipboard]`
     pub clip_font: f32,
@@ -198,8 +211,8 @@ pub struct Config {
     pub monitor: crate::monitor::MonitorCfg,
     /// panel bluetooth – `[bluetooth]`
     pub bluetooth: crate::bluetooth::BtCfg,
-    /// kontajner so záložkami audio / bluetooth / wifi / monitor – `[hardware]`
-    pub hw: crate::hardware::HwCfg,
+    /// kontajner so záložkami audio / bluetooth / wifi / monitor – `[quickset]`
+    pub hw: crate::quickset::HwCfg,
     /// kôš (zoznam, obnova, vyprázdnenie) – `[trash]`
     pub trash: crate::trash::TrashCfg,
     pub auto: AutoCfg,
@@ -448,14 +461,23 @@ impl Config {
         }
 
         let mut modules = t.strs("modules").unwrap_or_else(|| {
-            ["network", "vpn", "clock", "keyboard", "audio", "capslock", "inhibitor", "recorder", "radio", "media", "disks"]
-                .map(String::from)
-                .to_vec()
+BUILTIN_MODULES.map(String::from).to_vec()
         });
         for c in &custom {
             if !modules.contains(&c.name) {
                 modules.push(c.name.clone());
             }
+        }
+
+        let mut trackers = Vec::new();
+        for name in &modules {
+            if BUILTIN_MODULES.contains(&name.as_str()) || custom.iter().any(|c| &c.name == name) {
+                continue;
+            }
+            let Some(sec) = t.get(name.as_str()).and_then(|v| v.as_table()) else { continue };
+            let group = sec.str_or("track", name);
+            let click = format!("track-stop:{group}");
+            trackers.push(TrackerCfg { name: name.clone(), icon: sec.str_or("icon", "\u{f0439}"), btn: btn(sec, &click, "", "{name}\nKlik = vypnúť"), group });
         }
 
         Config {
@@ -593,6 +615,7 @@ impl Config {
                 })
                 .unwrap_or_default(),
             custom,
+            trackers,
             menus,
             clip_font: clip.f64_or("font_size", 15.0).clamp(8.0, 64.0) as f32,
             clip_rows: clip.f64_or("rows", 8.0).clamp(1.0, 50.0) as usize,
@@ -605,7 +628,11 @@ impl Config {
             audio_panel: crate::audio::AudioCfg::from_table(&audio),
             monitor: crate::monitor::MonitorCfg::from_table(&t.sub("monitor")),
             bluetooth: crate::bluetooth::BtCfg::from_table(&t.sub("bluetooth")),
-            hw: crate::hardware::HwCfg::from_table(&t.sub("hardware")),
+            hw: crate::quickset::HwCfg::from_table(&{
+                // `[quickset]`; starý názov `[quickset]` sa ešte číta, ak `[quickset]` chýba
+                let q = t.sub("quickset");
+                if q.is_empty() { t.sub("hardware") } else { q }
+            }),
             trash: crate::trash::TrashCfg::from_table(&t.sub("trash")),
             auto: AutoCfg {
                 enabled: auto.bool_or("enabled", true),
@@ -763,6 +790,18 @@ mod tests {
         let t = toml::parse("[clipboard]\nfont_size=18\nrows=5\nwidth=500\n").unwrap();
         let c = Config::from_table(&t, PathBuf::new());
         assert_eq!((c.clip_font, c.clip_rows, c.clip_width), (18.0, 5, 500.0));
+    }
+
+    #[test]
+    fn tracker_module_from_unknown_section() {
+        let t = toml::parse("modules=[\"clock\",\"tv\",\"nothing\"]\n[tv]\nicon=\"TV\"\n[clock]\nformat=\"%H\"\n").unwrap();
+        let c = Config::from_table(&t, PathBuf::new());
+        assert_eq!(c.trackers.len(), 1);
+        assert_eq!((c.trackers[0].name.as_str(), c.trackers[0].group.as_str(), c.trackers[0].icon.as_str()), ("tv", "tv", "TV"));
+        assert_eq!(c.trackers[0].btn.click, "track-stop:tv");
+        let t = toml::parse("modules=[\"tv\"]\n[tv]\ntrack=\"video\"\n").unwrap();
+        let c = Config::from_table(&t, PathBuf::new());
+        assert_eq!((c.trackers[0].group.as_str(), c.trackers[0].btn.click.as_str()), ("video", "track-stop:video"));
     }
 
     #[test]
