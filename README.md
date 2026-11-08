@@ -652,6 +652,10 @@ Kontajner s lištou záložiek okolo panelov. Záložkou môže byť `audio`, `b
 | `tab_size` | `44` (24–120) | veľkosť tlačidla záložky (px) |
 | `icon_size` | `22` (8–64) | veľkosť ikony |
 | `tab_gap` | `6` (0–64) | medzera medzi tlačidlami záložiek |
+| `inversetab` | `false` | zapne druhú lištu na **opačnej** strane (`tabs_position = "left"` → vpravo, `top` → dole…); akceptuje aj `"true"` |
+| `inversetab_gap` | ako `tab_gap` (0–64) | medzera medzi tlačidlami druhej lišty |
+| `inversetab1` … `inversetab8` | — | tlačidlo druhej lišty: **príkaz** (`systemctl suspend`) alebo názov panela / menu / `module:NAZOV`, ktorý sa otvorí **samostatne** (nie v kontajneri; `menu:radio` a `radio` sú to isté). Po kliku sa kontajner zatvorí |
+| `inversetab1_icon` … | predvolená ikona panela, inak `f0e7` | Nerd Font glyf; veľkosť tlačidla a ikony sa preberá z `tab_size` a `icon_size` |
 | `width` / `height` | — (120–3000) | pevná celková veľkosť okna vrátane lišty; bez nich sa riadi obsahom |
 | `preload` | `true` | načítať údaje monitora (ddcutil je pomalý) už pri otvorení kontajnera |
 | `tab1` … `tab8` | štyri v poradí `audio, bluetooth, wifi, monitor` | modul: `audio`, `bluetooth`, `wifi`, `monitor`, `clipboard`, `trash`, `notifications`, `wallpaper` alebo `menu:NAZOV` (`NAZOV` = `name` z `[[menu]]`); neplatný názov sa preskočí |

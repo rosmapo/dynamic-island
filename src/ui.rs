@@ -146,6 +146,8 @@ enum Hit {
     BtEditor,
     /// záložka kontajnera `quickset`
     HwTab(usize),
+    /// tlačidlo druhej lišty kontajnera (`inversetabN`): príkaz alebo samostatný panel
+    HwBtn(usize),
     Panel,
 }
 
@@ -1626,6 +1628,31 @@ impl Ui {
         }
     }
 
+    /// Názov vnútornej akcie ostrovčeka (panel, menu, kontajner, vstavaná akcia), nie shell príkaz.
+    fn is_internal_action(&self, name: &str) -> bool {
+        matches!(name, "calendar" | "disks" | "clipboard" | "notifications" | "media" | "trash" | "wallpaper" | "wifi" | "audio" | "monitor" | "bluetooth")
+            || Self::quickset_cmd(name).is_some()
+            || self.menu_index(name).is_some()
+            || Self::action_for(name).map_or(false, |a| !matches!(a, Action::Run(_)))
+    }
+
+    /// Tlačidlo druhej lišty (`inversetabN`): kontajner sa zatvorí, potom sa otvorí panel / menu samostatne
+    /// alebo sa spustí príkaz.
+    fn run_quickset_button(&mut self, i: usize, now: Instant) -> Vec<Action> {
+        let Some(action) = self.cfg.hw.inverse.get(i).map(|b| b.action.clone()) else { return Vec::new() };
+        let mut out = Vec::new();
+        self.set_panel(Panel::None);
+        self.collapse_at = None;
+        self.tip_pending = None;
+        if self.is_internal_action(&action) {
+            out.extend(self.run_module(&action));
+            self.start_grace(now);
+        } else {
+            out.push(Action::Run(action));
+        }
+        out
+    }
+
     fn hw_tab_index(&self, module: &str) -> Option<usize> {
         self.cfg.hw.tabs.iter().position(|t| t.module == module)
     }
@@ -1639,8 +1666,14 @@ impl Ui {
         let inner_w = self.panel_dims(self.big).0;
         let tab = c.tab_size * s;
         let bar_t = crate::quickset::bar_thickness(tab, HW_BAR_PAD * s);
-        let bar_l = crate::quickset::bar_length(c.tabs.len(), tab, c.tab_gap * s, HW_BAR_PAD * s);
-        crate::quickset::window_size(c.pos, (inner_w, inner_h), bar_t, bar_l, c.width.map(|w| w * s), c.height.map(|h| h * s))
+        let mut bar_l = crate::quickset::bar_length(c.tabs.len(), tab, c.tab_gap * s, HW_BAR_PAD * s);
+        // druhá lišta na opačnej strane: hrúbka sa sčíta, dĺžka je väčšia z oboch
+        let mut bars_t = bar_t;
+        if !c.inverse.is_empty() {
+            bars_t += bar_t;
+            bar_l = bar_l.max(crate::quickset::bar_length(c.inverse.len(), tab, c.inverse_gap * s, HW_BAR_PAD * s));
+        }
+        crate::quickset::window_size(c.pos, (inner_w, inner_h), bars_t, bar_l, c.width.map(|w| w * s), c.height.map(|h| h * s))
     }
 
     /// Otvorí kontajner `quickset` na záložke `tab` (`None` = naposledy použitá) alebo prepne záložku.
@@ -2426,6 +2459,10 @@ impl Ui {
                     }
                     return out;
                 }
+                if let Some(Hit::HwBtn(i)) = hit {
+                    out.extend(self.run_quickset_button(i, now));
+                    return out;
+                }
                 let mut cmd = String::new();
                 // položka s `track`: skupina a zobrazovaný názov (label) sledovaného procesu
                 let (mut track, mut track_name) = (String::new(), String::new());
@@ -2647,6 +2684,11 @@ impl Ui {
             Hit::HwTab(i) => {
                 if button == BTN_LEFT && i != self.hw_tab {
                     self.open_quickset(Some(i));
+                }
+            }
+            Hit::HwBtn(i) => {
+                if button == BTN_LEFT {
+                    out.extend(self.run_quickset_button(i, now));
                 }
             }
             Hit::WifiToggle => {
@@ -3175,29 +3217,47 @@ impl Ui {
         frame
     }
 
-    /// Lišta so záložkami kontajnera `quickset`; vráti obdĺžnik pre obsah (zvyšok okna).
+    /// Lišty kontajnera `quickset`: záložky a (voliteľne) druhá lišta s tlačidlami na opačnej strane;
+    /// vráti obdĺžnik pre obsah (zvyšok okna).
     fn build_hw_bar(&mut self, frame: &mut Frame, text: &mut Text, pill: Rect, pa: f32) -> Rect {
         use crate::quickset as hw;
         let s = self.scale;
-        let t = self.theme;
-        let c = &self.cfg.hw;
-        let (pos, n, tab, active) = (c.pos, c.tabs.len(), c.tab_size * s, self.hw_tab);
-        let icon_px = c.icon_size * s;
-        let icons: Vec<String> = c.tabs.iter().map(|x| x.icon.clone()).collect();
+        let (pos, tab, active) = (self.cfg.hw.pos, self.cfg.hw.tab_size * s, self.hw_tab);
+        let (gap, igap) = (self.cfg.hw.tab_gap * s, self.cfg.hw.inverse_gap * s);
+        let icon_px = self.cfg.hw.icon_size * s;
+        let icons: Vec<String> = self.cfg.hw.tabs.iter().map(|x| x.icon.clone()).collect();
+        let inv_icons: Vec<String> = self.cfg.hw.inverse.iter().map(|x| x.icon.clone()).collect();
         let bar_t = hw::bar_thickness(tab, HW_BAR_PAD * s);
-        let ((bx, by, bw, bh), (cx, cy, cw, ch)) = hw::split(pos, (pill.x, pill.y, pill.w, pill.h), bar_t);
+        let win = (pill.x, pill.y, pill.w, pill.h);
+        let (bar1, mut content) = hw::split(pos, win, bar_t);
+        self.draw_hw_strip(frame, text, bar1, pos, tab, gap, icon_px, &icons, Some(active), Hit::HwTab, pa);
+        if !inv_icons.is_empty() {
+            let ipos = pos.opposite();
+            let (bar2, rest) = hw::split(ipos, content, bar_t);
+            content = rest;
+            self.draw_hw_strip(frame, text, bar2, ipos, tab, igap, icon_px, &inv_icons, None, Hit::HwBtn, pa);
+        }
+        Rect::new(content.0, content.1, content.2, content.3)
+    }
 
+    /// Jedna lišta tlačidiel (podklad + ikony); `active` = zvýraznená záložka, `mk` = typ zásahu.
+    #[allow(clippy::too_many_arguments)]
+    fn draw_hw_strip(&mut self, frame: &mut Frame, text: &mut Text, bar: crate::quickset::R, pos: crate::quickset::TabPos, tab: f32, gap: f32, icon_px: f32, icons: &[String], active: Option<usize>, mk: fn(usize) -> Hit, pa: f32) {
+        use crate::quickset as hw;
+        let s = self.scale;
+        let t = self.theme;
+        let (bx, by, bw, bh) = bar;
         // podklad lišty
         let inset = HW_BAR_INSET * s;
         let back = Rect::new(bx + inset, by + inset, (bw - 2.0 * inset).max(0.0), (bh - 2.0 * inset).max(0.0));
         frame.content.push(Item::Rect { r: back, radius: (tab * 0.5).min(back.w * 0.5).min(back.h * 0.5), soft: 0.8, color: fade(t.fg, 0.07 * pa) });
 
         let (asc, desc) = text.line_metrics(icon_px);
-        for (i, (rx, ry, rw, rh)) in hw::tab_rects(pos, (bx, by, bw, bh), n, tab, c.tab_gap * s, HW_BAR_PAD * s).into_iter().enumerate() {
+        for (i, (rx, ry, rw, rh)) in hw::tab_rects(pos, bar, icons.len(), tab, gap, HW_BAR_PAD * s).into_iter().enumerate() {
             let r = Rect::new(rx, ry, rw, rh);
-            self.hits.push((r, Hit::HwTab(i)));
-            let on = i == active;
-            let hov = self.hover == Some(Hit::HwTab(i));
+            self.hits.push((r, mk(i)));
+            let on = active == Some(i);
+            let hov = self.hover == Some(mk(i));
             let fg = if on {
                 frame.content.push(Item::Rect { r, radius: rh * 0.32, soft: 0.8, color: fade(t.menu_selected, pa) });
                 t.menu_selected_text
@@ -3211,7 +3271,6 @@ impl Ui {
             let iw = text.measure(icon, icon_px);
             text.layout_to(&mut frame.content, icon, icon_px, r.x + (r.w - iw) * 0.5, r.y + r.h * 0.5 + (asc - desc) * 0.5, fade(fg, pa));
         }
-        Rect::new(cx, cy, cw, ch)
     }
 
     fn build_menu(&mut self, frame: &mut Frame, text: &mut Text, pill: Rect, mi: usize, pa: f32) {

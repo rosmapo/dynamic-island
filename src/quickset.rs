@@ -1,7 +1,7 @@
 //! Modul „quickset“: kontajner so záložkami pre panely audio, bluetooth, wifi a monitor.
 //! Tu je len konfigurácia `[quickset]` a čistá geometria (obdĺžniky ako štvorice `(x, y, w, h)`);
 //! stav a kreslenie sú v `ui.rs`, kde kontajner obalí ten istý panel, ktorý sa dá otvoriť aj samostatne.
-use crate::toml::{Table, TableExt};
+use crate::toml::{Table, TableExt, Value};
 
 /// Záložky predvolene (bez `tab1` … v configu).
 pub const MODULES: [&str; 4] = ["audio", "bluetooth", "wifi", "monitor"];
@@ -32,6 +32,16 @@ impl TabPos {
         }
     }
 
+    /// Opačná strana: vľavo ↔ vpravo, hore ↔ dole.
+    pub fn opposite(self) -> TabPos {
+        match self {
+            TabPos::Left => TabPos::Right,
+            TabPos::Right => TabPos::Left,
+            TabPos::Top => TabPos::Bottom,
+            TabPos::Bottom => TabPos::Top,
+        }
+    }
+
     /// Lišta je zvislá (vľavo / vpravo), záložky sú pod sebou.
     pub fn vertical(self) -> bool {
         matches!(self, TabPos::Left | TabPos::Right)
@@ -42,6 +52,14 @@ impl TabPos {
 #[derive(Clone, Debug, PartialEq)]
 pub struct HwTab {
     pub module: String,
+    pub icon: String,
+}
+
+/// Tlačidlo druhej (opačnej) lišty `inversetabN`: nezobrazuje panel v kontajneri, ale spustí príkaz alebo otvorí
+/// panel samostatne (ako `on_click` modulu). `action` je príkaz, názov panela / menu alebo `module:NAZOV`.
+#[derive(Clone, Debug, PartialEq)]
+pub struct HwBtn {
+    pub action: String,
     pub icon: String,
 }
 
@@ -60,6 +78,10 @@ pub struct HwCfg {
     pub width: Option<f32>,
     /// celková výška okna vrátane lišty; `None` = podľa najvyššej záložky
     pub height: Option<f32>,
+    /// tlačidlá druhej lišty na opačnej strane (prázdne, ak `inversetab` nie je zapnuté)
+    pub inverse: Vec<HwBtn>,
+    /// medzera medzi tlačidlami druhej lišty (px)
+    pub inverse_gap: f32,
     /// pri otvorení kontajnera načítať údaje monitora hneď (aj keď je aktívna iná záložka), aby bol pripravený
     pub preload: bool,
 }
@@ -94,6 +116,27 @@ pub fn parse_tab_name(raw: &str) -> Option<String> {
     ALLOWED.contains(&lower.as_str()).then_some(lower)
 }
 
+/// Normalizuje akciu tlačidla druhej lišty: odstráni `module:` aj `menu:` (názov menu otvorí menu samostatne);
+/// prázdna akcia = `None`.
+pub fn parse_button_action(raw: &str) -> Option<String> {
+    let mut a = raw.trim();
+    for p in ["module:", MENU_PREFIX] {
+        if a.len() > p.len() && a.is_char_boundary(p.len()) && a[..p.len()].eq_ignore_ascii_case(p) {
+            a = a[p.len()..].trim();
+        }
+    }
+    (!a.is_empty()).then(|| a.to_string())
+}
+
+/// Predvolená ikona tlačidla: pre známy panel ikona záložky, inak blesk.
+fn button_default_icon(action: &str) -> &'static str {
+    if ALLOWED.contains(&action.to_lowercase().as_str()) {
+        default_icon(&action.to_lowercase())
+    } else {
+        "\u{f0e7}"
+    }
+}
+
 impl HwCfg {
     pub fn from_table(t: &Table) -> HwCfg {
         let mut tabs = Vec::new();
@@ -112,13 +155,30 @@ impl HwCfg {
         if !configured {
             tabs = MODULES.iter().map(|m| HwTab { module: m.to_string(), icon: default_icon(m).to_string() }).collect();
         }
+        let tab_gap = t.f64_or("tab_gap", 6.0).clamp(0.0, 64.0) as f32;
+        let inverse_on = match t.get("inversetab") {
+            Some(Value::Bool(b)) => *b,
+            Some(Value::Str(s)) => s.trim().eq_ignore_ascii_case("true"),
+            _ => false,
+        };
+        let mut inverse = Vec::new();
+        if inverse_on {
+            for i in 1..=MAX_TABS {
+                let Some(action) = parse_button_action(&t.str_or(&format!("inversetab{i}"), "")) else { continue };
+                let icon = t.str_or(&format!("inversetab{i}_icon"), "");
+                let icon = if icon.trim().is_empty() { button_default_icon(&action).to_string() } else { icon };
+                inverse.push(HwBtn { action, icon });
+            }
+        }
         let size = |k: &str| Some(t.f64_or(k, 0.0)).filter(|v| *v > 0.0).map(|v| v.clamp(120.0, 3000.0) as f32);
         HwCfg {
             tabs,
             pos: TabPos::parse(&t.str_or("tabs_position", "left")),
             tab_size: t.f64_or("tab_size", 44.0).clamp(24.0, 120.0) as f32,
             icon_size: t.f64_or("icon_size", 22.0).clamp(8.0, 64.0) as f32,
-            tab_gap: t.f64_or("tab_gap", 6.0).clamp(0.0, 64.0) as f32,
+            tab_gap,
+            inverse,
+            inverse_gap: t.f64_or("inversetab_gap", tab_gap as f64).clamp(0.0, 64.0) as f32,
             width: size("width"),
             height: size("height"),
             preload: t.bool_or("preload", true),
@@ -206,6 +266,38 @@ mod tests {
         assert_eq!((c.pos, c.tab_size, c.width), (TabPos::Bottom, 50.0, Some(500.0)));
         // príliš malá výška sa zvýši na minimum
         assert_eq!(c.height, Some(120.0));
+    }
+
+    #[test]
+    fn inverse_buttons() {
+        let src = "tab_gap=10\ninversetab=true\ninversetab1=\"systemctl suspend\"\ninversetab1_icon=\"S\"\ninversetab2=\"menu:radio\"\ninversetab3=\"module:power\"\ninversetab4=\"  \"\ninversetab5=\"wifi\"\n";
+        let c = HwCfg::from_table(&toml::parse(src).unwrap());
+        let v: Vec<(&str, &str)> = c.inverse.iter().map(|b| (b.action.as_str(), b.icon.as_str())).collect();
+        assert_eq!(v, vec![("systemctl suspend", "S"), ("radio", "\u{f0e7}"), ("power", "\u{f0e7}"), ("wifi", default_icon("wifi"))]);
+        // vlastná medzera sa dedí z `tab_gap`, kým nie je zadaná
+        assert_eq!(c.inverse_gap, 10.0);
+        let c = HwCfg::from_table(&toml::parse("inversetab=\"true\"\ninversetab_gap=3\ninversetab1=\"x\"\n").unwrap());
+        assert_eq!((c.inverse.len(), c.inverse_gap), (1, 3.0));
+        // vypnuté (alebo bez kľúča) = žiadne tlačidlá, aj keď sú `inversetabN` zadané
+        assert!(HwCfg::from_table(&toml::parse("inversetab=false\ninversetab1=\"x\"\n").unwrap()).inverse.is_empty());
+        assert!(HwCfg::from_table(&toml::parse("inversetab1=\"x\"\n").unwrap()).inverse.is_empty());
+    }
+
+    #[test]
+    fn opposite_position_and_two_bars() {
+        assert_eq!((TabPos::Left.opposite(), TabPos::Bottom.opposite()), (TabPos::Right, TabPos::Top));
+        // dve lišty: hrúbka sa sčíta, dĺžka je väčšia z oboch
+        let (w, h) = window_size(TabPos::Left, (300.0, 100.0), 2.0 * 64.0, 200.0, None, None);
+        assert_eq!((w, h), (428.0, 200.0));
+        let win = (0.0, 0.0, 428.0, 200.0);
+        let (bar1, c1) = split(TabPos::Left, win, 64.0);
+        let (bar2, c2) = split(TabPos::Left.opposite(), c1, 64.0);
+        assert_eq!(bar1, (0.0, 0.0, 64.0, 200.0));
+        assert_eq!(bar2, (364.0, 0.0, 64.0, 200.0));
+        assert_eq!(c2, (64.0, 0.0, 300.0, 200.0));
+        let (_, c1) = split(TabPos::Top, (0.0, 0.0, 300.0, 300.0), 50.0);
+        let (bar2, c2) = split(TabPos::Bottom, c1, 50.0);
+        assert_eq!((bar2, c2), ((0.0, 250.0, 300.0, 50.0), (0.0, 50.0, 300.0, 200.0)));
     }
 
     #[test]
