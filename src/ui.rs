@@ -911,7 +911,7 @@ impl Ui {
                 }
             }
             ModId::Radio => match d.tracked.get("radio") {
-                Some((_, name)) => (c.radio_icon.clone(), badge_acc, None, fill(&c.radio.tooltip, &[("name", name.clone())]), 12.0),
+                Some((_, name)) => (c.radio_icon.clone(), None, None, fill(&c.radio.tooltip, &[("name", name.clone())]), 10.0),
                 None => none,
             },
             ModId::Media => match &d.media {
