@@ -295,6 +295,9 @@ pub struct Ui {
     hw_tab: usize,
     hw_w: Spring,
     hw_h: Spring,
+    /// veľký panel sa práve otvára z ostrovčeka: veľkosť okna sa nastaví naraz, každá ďalšia zmena veľkosti (prepnutie
+    /// panela v kontajneri / mimo neho, zmena obsahu) ide pružinami
+    big_snap: bool,
     panel_h: Spring,
     panel_w: Spring,
     panel_a: Spring,
@@ -596,6 +599,7 @@ impl Ui {
             hw_tab: 0,
             hw_w: Spring::with(0.0, 240.0, 26.0),
             hw_h: Spring::with(0.0, 240.0, 26.0),
+            big_snap: false,
             panel_h: Spring::with(0.0, 240.0, 26.0),
             panel_w: Spring::with(0.0, 240.0, 26.0),
             panel_a: Spring::with(0.0, 420.0, 42.0),
@@ -1128,11 +1132,17 @@ impl Ui {
         }
         let r_target = if self.panel != Panel::None || !self.notifs.is_empty() { self.cfg.radius_expanded } else { self.cfg.radius };
         self.radius.set(r_target);
-        if self.hw_view() {
-            // okno kontajnera plynulo dobieha rozmer aktívnej záložky (aj pri zmene počtu zariadení)
-            let (w, h) = self.hw_target();
-            self.hw_w.set(w);
-            self.hw_h.set(h);
+        if self.big_open() {
+            // okno plynulo dobieha rozmer panela (aj pri prepnutí záložky, panela mimo kontajnera alebo zmene obsahu)
+            let (w, h) = if self.hw_view() { self.hw_target() } else { self.panel_dims(self.big) };
+            if self.big_snap {
+                self.big_snap = false;
+                self.hw_w.snap(w);
+                self.hw_h.snap(h);
+            } else {
+                self.hw_w.set(w);
+                self.hw_h.set(h);
+            }
         }
         for sp in [&mut self.panel_h, &mut self.panel_w, &mut self.panel_a, &mut self.radius, &mut self.hud_t, &mut self.hide, &mut self.notif_t, &mut self.notif_w, &mut self.notif_h, &mut self.cal_t, &mut self.hw_w, &mut self.hw_h] {
             sp.step(dt);
@@ -1353,10 +1363,7 @@ impl Ui {
 
     /// Veľkosť veľkého panela: pri kontajneri `quickset` okno s lištou, inak samotný panel.
     fn cal_size(&self) -> (f32, f32) {
-        if self.hw_view() {
-            return (self.hw_w.x, self.hw_h.x);
-        }
-        self.panel_dims(self.big)
+        (self.hw_w.x, self.hw_h.x)
     }
 
     /// Prirodzená veľkosť panela `p` (fyzické px).
@@ -1594,6 +1601,11 @@ impl Ui {
             self.hw = false;
         }
         if Self::is_big(p) {
+            // naraz sa nastaví len veľkosť okna, ktoré je zatvorené; ak sa ešte zatvára (`set_panel(None)` tesne pred
+            // otvorením iného panela, napr. tlačidlo druhej lišty), pružiny pokračujú z aktuálnej veľkosti
+            if self.cal_t.x < 0.05 {
+                self.big_snap = true;
+            }
             self.big = p;
         }
         self.cal_t.set(if Self::is_big(p) { 1.0 } else { 0.0 });
