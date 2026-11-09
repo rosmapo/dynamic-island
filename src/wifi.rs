@@ -97,6 +97,8 @@ pub enum WifiCmd {
     /// stav + vyhľadanie sietí
     Load,
     Connect { ssid: String, ap: String, saved: Option<String>, password: Option<String>, key_mgmt: String },
+    /// skrytá sieť (SSID zadal používateľ): s heslom sa skúsi WPA/WPA2 (`wpa-psk`) a potom WPA3 (`sae`), bez hesla je otvorená
+    ConnectHidden { ssid: String, password: Option<String> },
     Forget(String),
     Disconnect,
     SetEnabled(bool),
@@ -327,6 +329,13 @@ fn entry_str(w: &mut W, key: &str, val: &str) {
     w.string(val);
 }
 
+fn entry_bool(w: &mut W, key: &str, val: bool) {
+    w.align(8);
+    w.string(key);
+    w.signature("b");
+    w.u32(val as u32);
+}
+
 fn entry_bytes(w: &mut W, key: &str, val: &[u8]) {
     w.align(8);
     w.string(key);
@@ -335,14 +344,20 @@ fn entry_bytes(w: &mut W, key: &str, val: &[u8]) {
 }
 
 /// Telo `AddAndActivateConnection(a{sa{sv}} settings, o device, o specific_object)`.
-fn add_and_activate_body(ssid: &str, secret: Option<(&str, &str)>, dev: &str, ap: &str) -> Vec<u8> {
+/// `hidden` = skrytá sieť (NetworkManager ju hľadá cielene podľa SSID; `ap` je vtedy `"/"`).
+fn add_and_activate_body(ssid: &str, secret: Option<(&str, &str)>, hidden: bool, dev: &str, ap: &str) -> Vec<u8> {
     let mut w = W::default();
     w.array(8, |w| {
         section(w, "connection", |w| {
             entry_str(w, "type", "802-11-wireless");
             entry_str(w, "id", ssid);
         });
-        section(w, "802-11-wireless", |w| entry_bytes(w, "ssid", ssid.as_bytes()));
+        section(w, "802-11-wireless", |w| {
+            entry_bytes(w, "ssid", ssid.as_bytes());
+            if hidden {
+                entry_bool(w, "hidden", true);
+            }
+        });
         if let Some((key_mgmt, psk)) = secret {
             section(w, "802-11-wireless-security", |w| {
                 entry_str(w, "key-mgmt", key_mgmt);
@@ -444,6 +459,39 @@ fn execute(c: &mut Conn, cmd: WifiCmd, tx: &Tx<Msg>) -> io::Result<()> {
             tx.send(Msg::WifiNote(String::new()));
             send_snapshot(c, tx);
         }
+        WifiCmd::ConnectHidden { ssid, password } => {
+            let dev = find_device(c)?.ok_or_else(|| other("Wi-Fi zariadenie sa nenašlo"))?;
+            tx.send(Msg::WifiNote(format!("Pripájam k {ssid}…")));
+            let modes: &[Option<&str>] = if password.is_some() { &[Some("wpa-psk"), Some("sae")] } else { &[None] };
+            let mut err = String::from("Pripojenie zlyhalo (skontroluj názov siete a heslo)");
+            for km in modes {
+                let secret = (*km).zip(password.as_deref());
+                let body = add_and_activate_body(&ssid, secret, true, &dev, "/");
+                let created = match c.call(NM, NM_PATH, NM, "AddAndActivateConnection", "a{sa{sv}}oo", body) {
+                    Ok(r) => Reader::new(&r.body, 0).string(),
+                    Err(e) => {
+                        err = e.to_string();
+                        continue;
+                    }
+                };
+                match wait_connected(c, &dev, &ssid) {
+                    Ok(()) => {
+                        tx.send(Msg::WifiNote(String::new()));
+                        send_snapshot(c, tx);
+                        return Ok(());
+                    }
+                    Err(e) => {
+                        err = e;
+                        // nepodarený profil nenecháme v NetworkManageri
+                        if let Some(p) = created {
+                            let _ = c.call(NM, &p, IF_CONN, "Delete", "", Vec::new());
+                        }
+                    }
+                }
+            }
+            tx.send(Msg::WifiNote(err));
+            send_snapshot(c, tx);
+        }
         WifiCmd::Connect { ssid, ap, saved, password, key_mgmt } => {
             let dev = find_device(c)?.ok_or_else(|| other("Wi-Fi zariadenie sa nenašlo"))?;
             tx.send(Msg::WifiNote(format!("Pripájam k {ssid}…")));
@@ -459,7 +507,7 @@ fn execute(c: &mut Conn, cmd: WifiCmd, tx: &Tx<Msg>) -> io::Result<()> {
                 }
                 None => {
                     let secret = password.as_deref().map(|p| (key_mgmt.as_str(), p));
-                    let body = add_and_activate_body(&ssid, secret, &dev, &ap);
+                    let body = add_and_activate_body(&ssid, secret, false, &dev, &ap);
                     let r = c.call(NM, NM_PATH, NM, "AddAndActivateConnection", "a{sa{sv}}oo", body)?;
                     created = Reader::new(&r.body, 0).string();
                 }
@@ -546,7 +594,7 @@ mod tests {
 
     #[test]
     fn add_and_activate_roundtrip() {
-        let body = add_and_activate_body("Moja WiFi", Some(("wpa-psk", "tajne heslo")), "/org/freedesktop/NetworkManager/Devices/2", "/org/freedesktop/NetworkManager/AccessPoint/9");
+        let body = add_and_activate_body("Moja WiFi", Some(("wpa-psk", "tajne heslo")), false, "/org/freedesktop/NetworkManager/Devices/2", "/org/freedesktop/NetworkManager/AccessPoint/9");
         let mut r = Reader::new(&body, 0);
         let v = r.value(b"a{sa{sv}}").expect("settings");
         let dev = r.string().unwrap();
@@ -562,9 +610,18 @@ mod tests {
         assert_eq!(sec["key-mgmt"].as_str(), Some("wpa-psk"));
         assert_eq!(sec["psk"].as_str(), Some("tajne heslo"));
         // otvorená sieť: bez sekcie zabezpečenia
-        let open = add_and_activate_body("Cafe", None, "/d", "/a");
+        let open = add_and_activate_body("Cafe", None, false, "/d", "/a");
         let v = Reader::new(&open, 0).value(b"a{sa{sv}}").unwrap();
         assert!(!dict_of(v).contains_key("802-11-wireless-security"));
+        // skrytá sieť: príznak `hidden`, bez neho ho kľúč nemá
+        let hid = add_and_activate_body("Skryta", Some(("sae", "heslo1234")), true, "/d", "/");
+        let v = Reader::new(&hid, 0).value(b"a{sa{sv}}").unwrap();
+        let sections = dict_of(v);
+        let wl = dict_of(sections["802-11-wireless"].clone());
+        assert_eq!(wl["hidden"], V::Bool(true));
+        assert_eq!(dict_of(sections["802-11-wireless-security"].clone())["key-mgmt"].as_str(), Some("sae"));
+        let v = Reader::new(&add_and_activate_body("X", None, false, "/d", "/a"), 0).value(b"a{sa{sv}}").unwrap();
+        assert!(!dict_of(dict_of(v)["802-11-wireless"].clone()).contains_key("hidden"));
     }
 
     #[test]

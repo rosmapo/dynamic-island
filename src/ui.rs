@@ -150,6 +150,8 @@ enum Hit {
     WallButton(usize),
     WallTheme(usize),
     WifiRow(usize),
+    /// posledný riadok zoznamu: pripojenie k skrytej sieti
+    WifiHidden,
     WifiToggle,
     WifiRefresh,
     WifiEditor,
@@ -444,6 +446,10 @@ struct WifiPw {
     ap: String,
     key_mgmt: String,
     text: String,
+    /// skrytá sieť: SSID zadáva používateľ
+    hidden: bool,
+    /// práve sa píše názov skrytej siete (potom heslo)
+    ssid_stage: bool,
 }
 
 fn fade(c: Color, a: f32) -> Color {
@@ -817,13 +823,14 @@ impl Ui {
             Msg::Wifi(s) => {
                 self.wifi = s;
                 self.wifi_loaded = true;
-                let max_start = self.wifi.aps.len().saturating_sub(self.cfg.wifi.rows);
+                let max_start = self.wifi_list_len().saturating_sub(self.cfg.wifi.rows);
                 self.wifi_scroll = self.wifi_scroll.min(max_start);
             }
             Msg::WifiNote(n) => self.wifi_note = n,
             Msg::WifiPaste(t) => {
                 if let Some(pw) = &mut self.wifi_pw {
-                    pw.text.extend(t.trim_end_matches(['\n', '\r']).chars().filter(|c| !c.is_control()));
+                    let dst = if pw.ssid_stage { &mut pw.ssid } else { &mut pw.text };
+                    dst.extend(t.trim_end_matches(['\n', '\r']).chars().filter(|c| !c.is_control()));
                 }
             }
             Msg::WallThumb(i, thumb) => {
@@ -1987,10 +1994,16 @@ impl Ui {
 
     /// Počet riadkov zoznamu sietí, ktoré sú vidieť (aspoň 1 – kvôli správe „žiadne siete“).
     fn wifi_rows_shown(&self) -> usize {
-        if !self.wifi.available || !self.wifi.enabled {
-            return 1;
+        self.wifi_list_len().min(self.cfg.wifi.rows).max(1)
+    }
+
+    /// Počet riadkov zoznamu vrátane posledného „Skrytá sieť…“ (0 = zoznam sa nezobrazuje).
+    fn wifi_list_len(&self) -> usize {
+        if self.wifi_loaded && self.wifi.available && self.wifi.enabled && self.wifi.error.is_empty() {
+            self.wifi.aps.len() + 1
+        } else {
+            0
         }
-        self.wifi.aps.len().min(self.cfg.wifi.rows).max(1)
     }
 
     fn toggle_wifi(&mut self) {
@@ -2221,10 +2234,41 @@ impl Ui {
         self.wifi_pw_until = Some(Instant::now() + Duration::from_secs(WIFI_PW_IDLE_SECS));
         let mut out = Vec::new();
         let Some(pw) = &mut self.wifi_pw else { return out };
+        // skrytá sieť, krok 1: názov (SSID)
+        if pw.ssid_stage {
+            match k.sym {
+                0xff1b => self.wifi_pw = None,
+                0xff08 => {
+                    pw.ssid.pop();
+                }
+                0xff0d | 0xff8d => {
+                    if !pw.ssid.trim().is_empty() {
+                        pw.ssid = pw.ssid.trim().to_string();
+                        pw.ssid_stage = false;
+                    }
+                }
+                0x76 | 0x56 if k.ctrl => out.push(Action::WifiPaste),
+                _ if !k.ctrl => pw.ssid.extend(k.text.chars().filter(|c| !c.is_control())),
+                _ => {}
+            }
+            return out;
+        }
         match k.sym {
             0xff1b => self.wifi_pw = None, // Escape
             0xff08 => {
                 pw.text.pop();
+            }
+            0xff0d | 0xff8d if pw.hidden => {
+                // Enter: prázdne heslo = otvorená sieť, inak WPA / WPA2 / WPA3
+                if !pw.text.is_empty() && pw.text.chars().count() < 8 {
+                    self.wifi_note = "Heslo WPA musí mať aspoň 8 znakov".into();
+                    return out;
+                }
+                if let Some(pw) = self.wifi_pw.take() {
+                    self.wifi_note = format!("Pripájam k {}…", pw.ssid);
+                    let password = (!pw.text.is_empty()).then_some(pw.text);
+                    out.push(Action::Wifi(crate::wifi::WifiCmd::ConnectHidden { ssid: pw.ssid, password }));
+                }
             }
             0xff0d | 0xff8d => {
                 // Enter
@@ -2235,7 +2279,7 @@ impl Ui {
                     self.wifi_note = "Heslo WPA musí mať aspoň 8 znakov".into();
                     return out;
                 }
-                let pw = self.wifi_pw.take().unwrap_or(WifiPw { ssid: String::new(), ap: String::new(), key_mgmt: String::new(), text: String::new() });
+                let pw = self.wifi_pw.take().unwrap_or(WifiPw { ssid: String::new(), ap: String::new(), key_mgmt: String::new(), text: String::new(), hidden: false, ssid_stage: false });
                 self.wifi_note = format!("Pripájam k {}…", pw.ssid);
                 out.push(Action::Wifi(crate::wifi::WifiCmd::Connect { ssid: pw.ssid, ap: pw.ap, saved: None, password: Some(pw.text), key_mgmt: pw.key_mgmt }));
             }
@@ -3141,6 +3185,14 @@ impl Ui {
                     out.push(Action::Wifi(crate::wifi::WifiCmd::Load));
                 }
             }
+            Hit::WifiHidden => {
+                if button == BTN_LEFT {
+                    self.wifi_note.clear();
+                    self.collapse_at = None;
+                    self.wifi_pw = Some(WifiPw { ssid: String::new(), ap: "/".into(), key_mgmt: String::new(), text: String::new(), hidden: true, ssid_stage: true });
+                    self.wifi_pw_until = Some(now + Duration::from_secs(WIFI_PW_IDLE_SECS));
+                }
+            }
             Hit::WifiRow(i) => {
                 if let Some(ap) = self.wifi.aps.get(i).cloned() {
                     if button == BTN_RIGHT {
@@ -3158,7 +3210,7 @@ impl Ui {
                         } else if ap.supported {
                             self.wifi_note.clear();
                             self.collapse_at = None;
-                            self.wifi_pw = Some(WifiPw { ssid: ap.ssid, ap: ap.ap, key_mgmt: ap.key_mgmt, text: String::new() });
+                            self.wifi_pw = Some(WifiPw { ssid: ap.ssid, ap: ap.ap, key_mgmt: ap.key_mgmt, text: String::new(), hidden: false, ssid_stage: false });
                             self.wifi_pw_until = Some(now + Duration::from_secs(WIFI_PW_IDLE_SECS));
                         } else {
                             self.wifi_note = "Tento typ zabezpečenia ostrovček nepodporuje".into();
@@ -3264,7 +3316,7 @@ impl Ui {
             self.wifi_acc += value;
             let rows = (self.wifi_acc / WIFI_SCROLL_UNIT).trunc();
             self.wifi_acc -= rows * WIFI_SCROLL_UNIT;
-            let max_start = self.wifi.aps.len().saturating_sub(self.cfg.wifi.rows) as f32;
+            let max_start = self.wifi_list_len().saturating_sub(self.cfg.wifi.rows) as f32;
             self.wifi_scroll = (self.wifi_scroll as f32 + rows).clamp(0.0, max_start) as usize;
         }
         if self.panel == Panel::Bluetooth && self.hover.is_some() {
@@ -4361,20 +4413,21 @@ impl Ui {
 
         // ---- zadávanie hesla
         if let Some(pw) = &self.wifi_pw {
-            let title = format!("\u{f033e}  Heslo pre {}", pw.ssid);
+            let title = if pw.ssid_stage { "\u{f033e}  Skrytá sieť – názov (SSID)".to_string() } else { format!("\u{f033e}  Heslo pre {}", pw.ssid) };
             let title = Self::ellipsize(text, &title, px, w_in - 2.0 * inset);
             text.layout_to(&mut frame.content, &title, px, x0 + inset, base(hcy), fade(t.fg, pa));
             let bx = Rect::new(x0, hy + head + 4.0 * s, w_in, (f + 18.0) * s);
             frame.content.push(Item::Rect { r: bx, radius: 10.0 * s, soft: 0.8, color: fade(t.fg, 0.12 * pa) });
             let max_w = bx.w - 2.0 * inset;
-            let mut dots: String = "\u{25cf}".repeat(pw.text.chars().count());
+            let mut dots: String = if pw.ssid_stage { pw.ssid.clone() } else { "\u{25cf}".repeat(pw.text.chars().count()) };
             while !dots.is_empty() && text.measure(&dots, px) > max_w {
                 dots.remove(0);
             }
             let cy = bx.y + bx.h * 0.5;
             let mut cx = bx.x + inset;
             if dots.is_empty() {
-                text.layout_to(&mut frame.content, "Heslo", px, cx, base(cy), fade(t.fg, 0.4 * pa));
+                let ph = if pw.ssid_stage { "Názov siete" } else if pw.hidden { "Heslo (prázdne = otvorená sieť)" } else { "Heslo" };
+                text.layout_to(&mut frame.content, ph, px, cx, base(cy), fade(t.fg, 0.4 * pa));
             } else {
                 text.layout_to(&mut frame.content, &dots, px, cx, base(cy), fade(t.fg, pa));
                 cx += text.measure(&dots, px);
@@ -4382,7 +4435,13 @@ impl Ui {
             frame.content.push(Item::Rect { r: Rect::new(cx + 2.0 * s, bx.y + 8.0 * s, 1.5 * s, bx.h - 16.0 * s), radius: 0.7 * s, soft: 0.8, color: fade(t.accent, pa) });
             let px2 = px * 0.85;
             let (a2, d2) = text.line_metrics(px2);
-            let msg = if self.wifi_note.is_empty() { "Enter – pripojiť · Esc – zrušiť · Ctrl+V – vložiť" } else { self.wifi_note.as_str() };
+            let msg = if !self.wifi_note.is_empty() {
+                self.wifi_note.as_str()
+            } else if pw.ssid_stage {
+                "Enter – ďalej · Esc – zrušiť · Ctrl+V – vložiť"
+            } else {
+                "Enter – pripojiť · Esc – zrušiť · Ctrl+V – vložiť"
+            };
             let msg = Self::ellipsize(text, msg, px2, w_in - 2.0 * inset);
             let hy2 = bx.y + bx.h + 10.0 * s + (f * 0.85 + 6.0) * s * 0.5;
             text.layout_to(&mut frame.content, &msg, px2, x0 + inset, hy2 + (a2 - d2) * 0.5, fade(t.fg, 0.65 * pa));
@@ -4455,8 +4514,9 @@ impl Ui {
 
         // ---- zoznam sietí
         let top = pill.y + pad + head;
-        let n = self.wifi.aps.len();
-        let list_on = usable && self.wifi.enabled && n > 0;
+        // posledný riadok zoznamu je „Skrytá sieť…“
+        let n = self.wifi_list_len();
+        let list_on = n > 0;
         let rows = self.wifi_rows_shown();
         if !list_on {
             let msg = if !self.wifi.error.is_empty() {
@@ -4487,6 +4547,21 @@ impl Ui {
                 let i = start + k;
                 let y = top + k as f32 * row_h;
                 let cell = Rect::new(x0, y, cell_w, row_h);
+                if i == self.wifi.aps.len() {
+                    self.hits.push((cell, Hit::WifiHidden));
+                    let hov = self.hover == Some(Hit::WifiHidden);
+                    let fg = if hov {
+                        frame.content.push(Item::Rect { r: cell, radius: 10.0 * s, soft: 0.8, color: fade(t.menu_selected, pa) });
+                        t.menu_selected_text
+                    } else {
+                        t.fg
+                    };
+                    let cy = y + row_h * 0.5;
+                    text.layout_to(&mut frame.content, "\u{f0415}", px, cell.x + inset, base(cy), fade(fg, 0.8 * pa));
+                    let name_x = cell.x + inset + px * 1.9;
+                    text.layout_to(&mut frame.content, "Skrytá sieť…", px, name_x, base(cy), fade(fg, 0.8 * pa));
+                    continue;
+                }
                 self.hits.push((cell, Hit::WifiRow(i)));
                 let hov = self.hover == Some(Hit::WifiRow(i));
                 let ap = &self.wifi.aps[i];
@@ -4547,6 +4622,7 @@ impl Ui {
                     "Klik – pripojiť"
                 }
             }),
+            Some(Hit::WifiHidden) => Some("Klik – pripojiť k skrytej sieti (názov a heslo)"),
             _ => None,
         };
         let msg = if !self.wifi_note.is_empty() { Some(self.wifi_note.as_str()) } else { hint };

@@ -706,7 +706,12 @@ sa otvoriť. Pozor na podmnožiny Nerd Fontu — `f00af` a `f0379` nemusia byť 
 **Wi-Fi panel:** klik na uloženú/otvorenú sieť ju pripojí, na aktívnu odpojí; nová zabezpečená sieť otvorí zadávanie
 hesla (WPA2/WPA3-PSK; Enter pripojí, Esc zruší, Ctrl+V vloží schránku cez `wl-paste`; pri zlom hesle sa profil zmaže);
 pravý klik zabudne uloženú sieť. Hlavička: prepínač rádia, obnovenie, názov siete, tlačidlo editora. Nepodporované:
-802.1X, WEP, skryté siete. Vyžaduje právo meniť siete (polkit).
+802.1X, WEP. Vyžaduje právo meniť siete (polkit).
+
+**Skrytá sieť:** posledný riadok zoznamu „Skrytá sieť…“. Klik otvorí dvojkrokové zadanie: najprv názov siete (SSID,
+Enter = ďalej), potom heslo. Prázdne heslo = otvorená sieť; s heslom (min. 8 znakov) sa skúsi WPA/WPA2 (`wpa-psk`) a ak
+to zlyhá, WPA3 (`sae`). Profil sa v NetworkManageri vytvorí s `hidden=true` (hľadá sa cielene podľa SSID); pri
+neúspechu sa zmaže. Po úspešnom pripojení zostane uložený a pripája sa sám.
 
 ### 6.14 `[monitor]`
 
