@@ -5553,8 +5553,8 @@ impl Ui {
                 let cell = Rect::new(x0 + c as f32 * (tw + gap), top + r as f32 * (th + gap), tw, th);
                 self.hits.push((cell, Hit::WallItem(i)));
                 let e = &self.wall[i];
-                let hov = self.hover == Some(Hit::WallItem(i));
-                let current = !self.wall_current.is_empty() && e.path == self.wall_current;
+                let hov = self.hover == Some(Hit::WallItem(i)) && self.cfg.wall.hover_ring;
+                let current = self.cfg.wall.current_ring && !self.wall_current.is_empty() && e.path == self.wall_current;
                 // rámik okolo náhľadu: zvýraznenie pod kurzorom / aktuálne pozadie
                 if hov || current {
                     let ring = if hov { t.menu_selected } else { t.accent };

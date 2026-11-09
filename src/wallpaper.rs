@@ -35,6 +35,10 @@ pub struct WallCfg {
     pub buttons: Vec<WallButton>,
     /// najväčšia šírka tlačidla (px); bez nej si tlačidlá rozdelia celý priestor
     pub button_max_width: Option<f32>,
+    /// rámik okolo náhľadu pod kurzorom
+    pub hover_ring: bool,
+    /// rámik okolo náhľadu aktuálneho pozadia
+    pub current_ring: bool,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -60,6 +64,8 @@ impl WallCfg {
                     (!label.trim().is_empty()).then(|| WallButton { label, command: t.str_or(&format!("button{i}_command"), "") })
                 })
                 .collect(),
+            hover_ring: t.bool_or("hover_ring", true),
+            current_ring: t.bool_or("current_ring", true),
             button_max_width: Some(t.f64_or("button_max_width", 0.0)).filter(|w| *w > 0.0).map(|w| w.clamp(40.0, 1000.0) as f32),
         }
     }
@@ -325,6 +331,9 @@ mod tests {
         let d = WallCfg::from_table(&Table::new());
         assert!(d.buttons.is_empty() && d.button_max_width.is_none());
         assert_eq!(d.themes_dir, "~/.config/matugen/themes");
+        assert!(d.hover_ring && d.current_ring);
+        let r = WallCfg::from_table(&toml::parse("hover_ring=false\ncurrent_ring=false\n").unwrap());
+        assert!(!r.hover_ring && !r.current_ring);
     }
 
     #[test]

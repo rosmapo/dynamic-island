@@ -388,11 +388,25 @@ služby (nie na Debian).
 
 ### 5.6 Osobné skripty a konvencie
 
-- **Tapety** (`[wallpaper] command`, predvolene `~/.config/wayfire/scripts/wallpaper`): ostrovček ho volá ako
-  `command -v CESTA` (nastaví tapetu, farby a notifikácie). Skript sa očakáva spolupracujúci s `matugen`; témy sa čítajú
-  z `themes_directory` (`*.json`, predvolene `~/.config/matugen/themes`) a **pri výbere témy sa volá `command -t TÉMA`**,
-  pri `-w`/`-r` ďalšie vlastné tlačidlá hlavičky (`buttonN_command`). Po úspešnom skončení ostrovček zapíše cestu do
-  `cache_dir/current`. **Rozhranie skriptu (prepínače `-v`, `-t`) je pevné v kóde** (`wallpaper.rs`).
+- **Tapety a témy** (`[wallpaper] command`, predvolene `~/.config/wayfire/scripts/wallpaper`, Python skript nad `awww` +
+  `matugen`). Ostrovček sám tapetu ani farby nenastavuje, iba volá skript; **rozhranie je pevné v `wallpaper.rs`**:
+
+  | Volanie | Kedy | Čo skript robí |
+  |---|---|---|
+  | `command -v CESTA` | klik na náhľad (režim „wallpaper“) | tapeta cez `awww` + farby z obrázka cez `matugen image CESTA --prefer darkness`; zmaže `applied-theme` |
+  | `command -w CESTA` | klik na náhľad, keď je vybraná téma | iba tapeta, farby sa nemenia |
+  | `command -t CESTA.json` | výber témy v rozbaľovacej ponuke | `matugen json CESTA.json` (iba farby), zapíše názov súboru bez `.json` do `applied-theme`; **argument je cesta k súboru, nie názov** |
+
+  Návratový kód 0 = úspech; až vtedy ostrovček zapíše `cache_dir/current` (pri `-v`/`-w`) resp. zapamätá tému (`-t`).
+  Skript sám používa `-r` (náhodná; viazané napr. na `on_click_middle` modulu) a `-p` (obnova po štarte, v autoštarte
+  Wayfire); tie ostrovček nevolá. Skript zapisuje `current` iba pri `-r`/`-p`, ostrovček pri `-v`/`-w`.
+  Stav v `cache_dir`: `current` (cesta k obrázku), `applied-theme` (názov témy; chýba = režim „wallpaper“, farby podľa
+  obrázka). Ostrovček súbor `applied-theme` maže pri návrate do režimu „wallpaper“.
+  Súbežnosť: ostrovček serializuje volania vlastným zámkom, skript `flock`-om (`$XDG_RUNTIME_DIR/wallpaper-cli.lock`).
+  **Väzba na farby:** ostrovček farby len číta z `colors_file`; ten musí generovať **šablóna v konfigurácii matugenu**
+  (`~/.config/matugen/config.toml`, výstup tej istej cesty ako `colors_file`). Pri zmene cesty/názvu `colors_file`
+  uprav aj šablónu matugenu, inak sa farby po zmene témy/tapety neprejavia. Témy (`*.json`) sa hľadajú v `themes_directory`.
+  Závislosti skriptu (nie ostrovčeka): `python3`, `awww`/`awww-daemon`, `matugen`, voliteľne `notify-send`.
 - **Farby** (`[island] colors_file`): CSS s riadkami `@define-color meno #hex;` (formát matugen šablóny pre GTK).
   Vzorový config používa `~/.config/dynamic-island/colors.css`; **predvolená hodnota v kóde je stále
   `~/.config/waybar/waybar-colors.css`** (historická, zmeň v `config.rs`, ak ju nechceš).
@@ -759,9 +773,11 @@ schránky (`wl-copy`).
 | `columns` | `4` (1–12) | stĺpce mriežky |
 | `rows` | `4` (1–20) | viditeľné riadky (viac = skrolovanie) |
 | `thumb_width` | `160` (60–600) | šírka náhľadu; výška 9/16 |
-| `command` | `~/.config/wayfire/scripts/wallpaper` | skript: `command -v CESTA` nastaví tapetu |
+| `hover_ring` | `true` | rámik okolo náhľadu pod kurzorom (`false` = bez rámika) |
+| `current_ring` | `true` | rámik okolo náhľadu aktuálne nastavenej tapety |
+| `command` | `~/.config/wayfire/scripts/wallpaper` | skript; volá sa `-v CESTA` (tapeta + farby), `-w CESTA` (len tapeta), `-t CESTA.json` (téma), pozri 5.6 |
 | `cache_dir` | `~/.cache/wallpaper-chooser` | `current`, `applied-theme`, `thumbs/` |
-| `themes_directory` | `~/.config/matugen/themes` | `*.json` témy (`command -t TÉMA`) |
+| `themes_directory` | `~/.config/matugen/themes` | `*.json` témy (`command -t CESTA.json`) |
 | `theme_width` | `170` (80–600) | šírka rozbaľovacej ponuky tém |
 | `buttonN_label` / `buttonN_command` (N = 1–16) | — | tlačidlá hlavičky (bez `label` sa nezobrazí) |
 | `button_max_width` | `0` (vypnuté; 40–1000) | najväčšia šírka tlačidla |
