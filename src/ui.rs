@@ -5120,14 +5120,6 @@ impl Ui {
                 lx += dot_d + 8.0 * s;
             }
             text.layout_to(&mut frame.content, &label, px, lx, base(r.y + r.h * 0.5), fade(fg, pa));
-            y += h + 6.0 * s;
-        }
-
-        // --- stavový riadok (posledný výsledok / chyba)
-        if !self.cap_note.is_empty() {
-            let note = Self::ellipsize(text, &self.cap_note, px_small, w_in - 2.0 * inset);
-            let col = if self.cap_err { t.alert } else { fade(t.fg, 0.6) };
-            text.layout_to(&mut frame.content, &note, px_small, x0 + inset, y + 11.0 * s + (a3 - d3) * 0.5, fade(col, pa));
         }
     }
 

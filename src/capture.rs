@@ -143,8 +143,8 @@ impl CaptureCfg {
 /// Výška panela (logické px) pre dané písmo – musí sedieť s `build_capture` v `ui.rs`.
 pub fn panel_height(font: f32) -> f32 {
     let row = font + 20.0;
-    // pad + 3 sekcie (popisok + rad) + prepínač + tlačidlo + stavový riadok, s medzerami
-    2.0 * 14.0 + 3.0 * (22.0 + row) + 4.0 * 12.0 + row + (row + 4.0) + 6.0 + 22.0
+    // pad + 3 sekcie (popisok + rad) + prepínač + tlačidlo, s medzerami
+    2.0 * 14.0 + 3.0 * (22.0 + row) + 4.0 * 12.0 + row + (row + 4.0)
 }
 
 /// Žiadosť o snímanie z panela.
@@ -571,6 +571,6 @@ mod tests {
     fn panel_height_matches_layout() {
         // 5 radov (f + 20) + pevné konštanty
         let f = 15.0;
-        assert_eq!(panel_height(f), 174.0 + 5.0 * (f + 20.0));
+        assert_eq!(panel_height(f), 146.0 + 5.0 * (f + 20.0));
     }
 }
