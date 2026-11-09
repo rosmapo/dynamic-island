@@ -1,46 +1,20 @@
-# Skopíruj do ~/.config/dynamic-island/config.toml. Zmena súboru = automatický reštart.
-# Farby sa berú z matugen súboru (colors_file) a menia sa ŽIVO bez reštartu.
+# Konfigurácia dynamic-island – skopíruj do ~/.config/dynamic-island/config.toml.
+# Zmena súboru = automatický reštart. Farby sa berú z matugen súboru (colors_file) a menia sa ŽIVO.
+#
+# Prehľad:  1 Poradie modulov · 2 Vzhľad ostrovčeka · 3 Kontajner a spúšťač (quickset, drun)
+#           4 Moduly lišty · 5 Panely a nástroje · 6 HUD a systém · 7 Notifikácie · 8 Vlastné menu
+
+# ============================================================================
+# 1. PORADIE MODULOV V LIŠTE
+# ============================================================================
 
 # poradie modulov (ako group/island vo waybare)
 modules = ["network", "vpn", "clock", "keyboard", "audio", "radio", "media", "capslock", "inhibitor", "recorder", "off", "disks"]
 
-# Práve hrá (MPRIS: fooyin, mpv s mpris, prehliadač…). Ikona sa ukáže, kým je nejaký prehrávač aktívny.
-# Klik = panel (neukončí sa odchodom myši, zbalí sa šípkou), pravý = play/pauza, stredný = ďalšia skladba.
-# Akcie: media, media-play-pause, media-next, media-prev (v menu s predponou module:).
-[media]
-#icon = ""             # ikona pri prehrávaní
-#icon_paused = ""      # ikona pri pozastavení
-tooltip = ""			# tooltip = "{artist} – {title}"   # + {album}
-# ignore = ["chromium"]       # prehrávače, ktoré sa majú preskočiť (podreťazec mena na zbernici)
-# panel_width = 460
-# art_size = 128              # veľkosť obalu (80–256 px)
-# font_size = 16
 
-# Natívne zdroje dashboardu (exec = "builtin:…")
-[system]
-# decimal = ","            # desatinný oddeľovač vo výstupe ("," alebo ".")
-# net_interface = ""      # rozhranie pre net-down / net-up; prázdne = rozhranie s predvolenou trasou
-
-# Spúšťač aplikácií: dynamic-island --drun (samostatný proces, nezávislý od ostrovčeka; druhé spustenie ho zatvorí = prepínač).
-# Z ostrovčeka: on_click = "drun" / "module:drun" na module, položke menu alebo inversetabN = "drun" (otvorí sa ako panel ostrovčeka).
-[drun]
-# columns = 5
-# rows = 4
-# opacity = 0.7            # krytie pozadia samostatného --drun; predvolene ako [island] opacity
-# order = "horizontal"    # "horizontal" = ďalšia aplikácia vedľa predošlej, "vertical" = pod predošlou
-# show = "icon"           # "icon" | "name" | "icon+name-right" | "icon+name-below"
-# icon_size = 64
-# name_size = 14
-# cell_width = 0          # 0 = podľa režimu a veľkostí
-# cell_height = 0
-# padding = 15
-# radius = 30             # zaoblenie okna
-# cell_radius = 15        # zaoblenie zvýraznenej bunky
-# hover = true            # zvýraznenie bunky pod ukazovateľom
-# search = false          # riadok hľadania vždy viditeľný (písaním sa filtruje aj bez neho)
-# terminal = "foot"       # pre aplikácie s Terminal=true
-# icon_theme = ""         # prázdne = téma z nastavení GTK (gtk-icon-theme-name), inak hicolor; napr. "Papirus"
-# desktop = ""            # napr. "Wayfire" pre OnlyShowIn / NotShowIn; prázdne = nekontrolovať
+# ============================================================================
+# 2. VZHĽAD OSTROVČEKA
+# ============================================================================
 
 [island]
 colors_file = "~/.config/dynamic-island/colors.css"   # @define-color surface / primary ...
@@ -67,18 +41,87 @@ poll_ms = 300           # kontrola caps/inhibitor/rec/rozloženia
 menu_selected      = "@secondary"   # pozadie vybranej položky
 menu_selected_text = "@surface"   # text vybranej položky
 
+
+# ============================================================================
+# 3. KONTAJNER A SPÚŠŤAČ
+# ============================================================================
+
+# --- quickset: kontajner s lištou záložiek a druhou (inversetab) lištou ---
+[quickset]
+tabs_position = "left"   # left | right | top | bottom
+tab_size = 44            # strana tlačidla záložky (px)
+icon_size = 22           # veľkosť ikony (px)
+tab_gap = 10      # px, 0–64, predvolene 6
+width = 544            # celková šírka okna vrátane lišty; bez nej podľa aktívnej záložky
+# height = 420           # celková výška okna vrátane lišty; bez nej podľa najvyššej záložky
+preload = false        # predvolene true: údaje monitora sa načítajú už pri otvorení kontajnera (ddcutil je pomalý)
+
+# poradie a výber záložiek; ikona je Nerd Font glyf (chýbajúca = predvolená)
+tab1 = "menu:settings"          # názov z [[menu]] name = "nastavenia"
+tab2 = "wifi"
+tab3 = "bluetooth"
+tab4 = "monitor"
+tab5 = "audio"
+tab6 = "menu:radio"				# povolené sú aj clipboard, trash, notifications a wallpaper
+tab1_icon = ""          # ikona je voliteľná, predvolene ozubené koleso "\U000f0493"
+tab2_icon = ""
+tab3_icon = ""
+tab4_icon = ""
+tab5_icon = ""
+tab6_icon = "" 		# 
+
+# Druhá lišta na opačnej strane. tlačidlá neotvárajú panel v kontajneri.
+inversetab = true
+inversetab_gap = 10			# pre 5 tlacidiel gap=23
+inversetab1 = "sudo poweroff"
+inversetab2 = "sudo reboot"
+inversetab3 = "systemctl suspend"
+inversetab4 = "logout_to_tty.sh"
+inversetab5 = "swaylock -f -i /home/mm/.config/wayfire/media/lockscreen.jpg --show-keyboard-layout --indicator-radius 100 --indicator-thickness 7"
+inversetab6 = "menu:capture"
+inversetab1_icon = ""
+inversetab2_icon = ""
+inversetab3_icon = ""
+inversetab4_icon = "󰍃"
+inversetab5_icon = ""
+inversetab6_icon = "󱣴"
+
+# --- drun: spúšťač aplikácií (dynamic-island --drun, modul "drun") ---
+[drun]
+# columns = 5
+rows = 3
+order = "vertical"    # "horizontal" = ďalšia aplikácia vedľa predošlej, "vertical" = pod predošlou
+show = "icon"           # "icon" | "name" | "icon+name-right" | "icon+name-below"
+# icon_size = 64
+name_size = 18
+# cell_width = 0          # 0 = podľa režimu a veľkostí
+# cell_height = 0
+# padding = 15
+# radius = 30             # zaoblenie okna
+# cell_radius = 15        # zaoblenie zvýraznenej bunky
+hover = false            # zvýraznenie bunky pod ukazovateľom
+# search = false          # riadok hľadania vždy viditeľný (písaním sa filtruje aj bez neho)
+# terminal = "foot"       # pre aplikácie s Terminal=true
+# icon_theme = ""         # prázdne = téma z nastavení GTK (gtk-icon-theme-name), inak hicolor; napr. "Papirus"
+# desktop = ""            # napr. "Wayfire" pre OnlyShowIn / NotShowIn; prázdne = nekontrolovať
+
+
+# ============================================================================
+# 4. MODULY LIŠTY
+# (poradie a zobrazenie určuje `modules` hore)
+# ============================================================================
+
 [clock]
 format = "%A  %d. %B,  %H:%M"
 locale = "sk_SK.UTF-8"
 on_click = "calendar"                        # kalendár sa rozbalí priamo v ostrovčeku
-on_click_middle = "~/.config/wayfire/scripts/wallpaper -r"
-on_click_right = "sysmenu"   
+# on_click_middle = "drun"
+on_click_right = "sysmenu"
 
 [network]
 interface = "wlan0"
 on_click = "~/.config/wayfire/scripts/VPN_switcher.sh"
-on_click_right = "foot bash -c 'mega-cmd; exec bash'"
-on_click_middle = "anydesk"
+on_click_right = "anydesk"
 # icons = [...]  icon_ethernet  icon_disconnected   (predvolene Nerd Font ako vo waybare)
 # Tooltipy (zástupné symboly: {ssid} {ifname} {ip} {gateway} {signal} {dbm} {freq}; \n = nový riadok):
 # tooltip_wifi = "SSID: {ssid}\nIP adresa: {ip}\nSila signálu: {signal}% ({dbm} dBm)"
@@ -86,53 +129,22 @@ tooltip_wifi = ""
 # tooltip_ethernet = "Rozhranie: {ifname}\nIP adresa: {ip}\nBrána: {gateway}"
 # tooltip_disconnected = "Nepripojené"
 
-[quickset]
-tabs_position = "left"   # left | right | top | bottom
-tab_size = 44            # strana tlačidla záložky (px)
-icon_size = 22           # veľkosť ikony (px)
-tab_gap = 10      # px, 0–64, predvolene 6
-width = 500            # celková šírka okna vrátane lišty; bez nej podľa aktívnej záložky
-# height = 420           # celková výška okna vrátane lišty; bez nej podľa najvyššej záložky
-preload = false        # predvolene true: údaje monitora sa načítajú už pri otvorení kontajnera (ddcutil je pomalý)
-
-# poradie a výber záložiek; ikona je Nerd Font glyf (chýbajúca = predvolená)
-tab5 = "audio"
-tab2 = "wifi"
-tab3 = "bluetooth"
-tab4 = "monitor"
-tab1 = "menu:settings"          # názov z [[menu]] name = "nastavenia"
-tab6 = "menu:radio"				# povolené sú aj clipboard, trash, notifications a wallpaper
-tab5_icon = ""
-tab2_icon = ""
-tab3_icon = ""
-tab4_icon = ""
-tab1_icon = ""          # ikona je voliteľná, predvolene ozubené koleso "\U000f0493" 
-tab6_icon = "" 		# 
-
-# Druhá lišta na opačnej strane (ak je záložky vľavo, táto je vpravo; hore ↔ dole). Tlačidlá neotvárajú panel v kontajneri:
-# spustia príkaz alebo otvoria panel / menu samostatne (rovnako ako on_click modulu; "menu:radio" aj "radio" otvorí menu radio).
-# Veľkosť tlačidiel a ikon preberá z tab_size a icon_size, medzera je inversetab_gap (predvolene ako tab_gap).
-# inversetab = true
-# inversetab_gap = 10
-# inversetab1 = "systemctl suspend"
-# inversetab1_icon = "\uf186"
-# inversetab2 = "menu:radio"
-# inversetab2_icon = "\uf001"
-  
-[wifi]
-font_size = 16
-rows = 8
-width = 500
-editor_command = "nm-connection-editor"
-editor_label = ""		# text a / alebo editor_icon = "\U000f0493"; bez nich (alebo s prázdnym editor_command) sa tlačidlo nezobrazí
-
 [vpn]
 interfaces = ["tun*"]
 text = "VPN"
 tooltip = ""
-# tooltip = "{ifname}: {ip}"     
+# tooltip = "{ifname}: {ip}"
 on_click = "remmina -c /home/mm/.local/share/remmina/group_rdp_pc-práca_192-168-1-35.remmina"
 on_click_right = "remmina"
+
+[keyboard]
+on_click = "layout-toggle"
+on_click_right = "clipboard"
+on_click_middle = "notifications"
+tooltip = ""
+[keyboard.names]
+Slovak = "SK"
+"English (US)" = "US"
 
 [audio]               # odznak sa zobrazí len pri stlmení; zmena hlasitosti ukáže HUD
 on_click = "audio-mute"   # natívne (wpctl); skript Volume.sh netreba
@@ -144,50 +156,97 @@ panel_font_size = 16
 panel_width = 420
 panel_rows = 10
 
-[monitor]
-bus = "10"
-width = 350
-font_size = 16
-night_switcher = "~/.config/dynamic-island/scripts/bluelight.sh"   # prepína nočný režim; prázdne/chýba = prepínač sa nezobrazí
-night_state = "pgrep -x wlsunset"   # voliteľné: kód 0 = nočný režim beží
-# voliteľné (predvolené sú pre tvoj Iiyama):
-# presets = [5, 6, 8]
-# preset_labels = ["6500 K", "7500 K", "9300 K"]
-# inputs = [15, 17]
-# input_labels = ["DisplayPort", "HDMI"]
+# Práve hrá (MPRIS: fooyin, mpv s mpris, prehliadač…). Ikona sa ukáže, kým je nejaký prehrávač aktívny.
+# Klik = panel (neukončí sa odchodom myši, zbalí sa šípkou), pravý = play/pauza, stredný = ďalšia skladba.
+# Akcie: media, media-play-pause, media-next, media-prev (v menu s predponou module:).
+[media]
+#icon = ""             # ikona pri prehrávaní
+#icon_paused = ""      # ikona pri pozastavení
+tooltip = ""			# tooltip = "{artist} – {title}"   # + {album}
+# ignore = ["chromium"]       # prehrávače, ktoré sa majú preskočiť (podreťazec mena na zbernici)
+# panel_width = 460
+# art_size = 128              # veľkosť obalu (80–256 px)
+# font_size = 16
 
-[bluetooth]			# sudo apt install bluez-tools   # bt-agent
-width = 450
-font_size = 16
-rows = 8
-scan_ms = 4000
-# editor_command = "blueman-manager"
-# editor_icon = "\U000f0493"
-# editor_label = "Správca"
+[radio]                 # voliteľné
+icon = ""
+tooltip = "{name}"   # {name} = label položky
+on_click_right = "radio"
 
-[keyboard]
-on_click = "layout-toggle"
-on_click_right = "clipboard"
-on_click_middle = "notifications"
+[recorder]
+file = "/tmp/RECORDING"
+on_click = "~/.config/wayfire/scripts/recorder.sh"
+
+[inhibitor]            # ikona len zobrazuje existenciu súboru; vytvára/maže ho tvoj skript na Super+Z
+file = "/tmp/idleinhibit"
+on_click = ""
 tooltip = ""
-[keyboard.names]
-Slovak = "SK"
-"English (US)" = "US"
+
+[capslock]
+text = "CAPS"
+
+# Externé disky a flash kľúče (náhrada udiskie + waybar-eject.py): UDisks2 cez D-Bus.
+# Modul sa zobrazí, len keď je niečo pripojené. Ľavý klik = pri jednom disku ho rovno odpojí, pri viacerých otvorí menu (klik na riadok odpojí a vysunie),
+# pravý klik = odpojiť všetko. Menu sa zavrie, keď odídeš myšou.
+[disks]
+automount = true      # automaticky pripájať nové médiá
+notify = true         # notifikácie o pripojení / odpojení / chybách
+notify_timeout_ms = 2000   # ako dlho zostanú na obrazovke (rovnaký pre všetky); 0 = nevyprší
+icon = ""      # nf-fa-usb
+format = "{icon}"               # jeden disk
+format_many = "{icon} {count}"  # viac diskov (počíta sa disk, nie oddiel); {icon} {count} {label}
+tooltip = "{list}"    # {list} = „názov (veľkosť)  →  bod pripojenia“ po riadkoch
+# on_click = "menu"   # "menu" | "eject-all" | príkaz
+# on_click_right = "eject-all"
+
+# --- Vlastné moduly ([[custom]]) ---
+# Ľubovoľný externý modul (waybar „custom“): trvalý proces (interval = 0) alebo periodický.
+# Výstup: JSON {"text","tooltip","class"} alebo čistý text (json = false).
+[[custom]]
+name = "off"
+text = ""			#    
+on_click = "quickset"
+on_click_right = "~/.config/wayfire/scripts/wallpaper -r"
+# tooltip = "Leftt-click: quick setting, Right-click: random wallpaper"
+
+##### [[custom]]
+##### name = "ram"
+##### exec = "awk '/MemTotal/{t=$2} /MemAvailable/{a=$2} END{printf \"\uf2db %.1f GB\", (t-a)/1048576}' /proc/meminfo"
+##### interval = 5
+##### json = false
+##### tooltip = "Použitá pamäť"
+
+# [[custom]]
+# name = "sett"
+# text = ""		# 
+# on_click = "settings"
+# on_click_right = "backup"
+
+# [[custom]]
+# name = "radio"
+# text = ""
+# on_click = "radio"
+
+
+# ============================================================================
+# 5. PANELY A NÁSTROJE
+# (otvárajú sa z modulov, záložiek kontajnera alebo menu cez module:meno)
+# ============================================================================
 
 [clipboard]
-font_size = 18    # veľkosť písma
+font_size = 17    # veľkosť písma
 rows = 10          # koľko riadkov je vidieť, viac = skrolovanie
 width = 600       # šírka panela
 max_items = 200   # koľko najnovších položiek sa načíta
+search = false		# skryje vyhladacie pole, ale vyhladava nadalej
 # list_command = "cliphist list"
 # copy_command = "cliphist decode | wl-copy"
-# search = true        # false = skryje pole hľadania v okne `--clip` (písaním sa aj tak filtruje)
 # window_radius = 24   # zaoblenie okna samostatného režimu `dynamic-island --clip`
 
 [trash]
 width = 600
 rows = 10
-text_size = 18
+text_size = 17
 confirm_empty = false
 show_location = false
 show_date = true
@@ -211,67 +270,71 @@ button3_command = "qt5ct"
 button4_label = "qt6"
 button4_command = "qt6ct"
 
-[radio]                 # voliteľné
-icon = ""
-tooltip = "{name}"   # {name} = label položky
-on_click_right = "radio"
+[wifi]
+font_size = 16
+rows = 8
+width = 500
+editor_command = "nm-connection-editor"
+editor_label = ""		# text a / alebo editor_icon = "\U000f0493"; bez nich (alebo s prázdnym editor_command) sa tlačidlo nezobrazí
 
-[[custom]]
-name = "off"
-text = ""
-on_click = "power"
-on_click_right = "quickset"
+[bluetooth]			# sudo apt install bluez-tools   # bt-agent
+width = 450
+font_size = 16
+rows = 8
+scan_ms = 4000
+# editor_command = "blueman-manager"
+# editor_icon = "\U000f0493"
+# editor_label = "Správca"
 
-[capslock]
-text = "CAPS"
-
-[inhibitor]            # ikona len zobrazuje existenciu súboru; vytvára/maže ho tvoj skript na Super+Z
-file = "/tmp/idleinhibit"
-on_click = ""
-tooltip = ""
-
-[recorder]
-file = "/tmp/RECORDING"   # odznak REC: píše doň aj panel capture (odpočet, "REC m:ss"); vlastný skript funguje ďalej
-on_click = "~/.config/wayfire/scripts/recorder.sh"
-# kým chceš klik na odznak využiť na zastavenie nahrávania z panela capture, daj:
-# on_click = "capture"    # odpočet/nahrávanie = zastaví; inak otvorí panel capture
+[monitor]
+bus = "10"
+width = 350
+font_size = 17
+night_switcher = "~/.config/dynamic-island/scripts/bluelight.sh"
+night_state    = "pgrep -x wlsunset"     # voliteľné
+night_label    = "Filter modráho svetla"           # voliteľné
+# voliteľné (predvolené sú pre tvoj Iiyama):
+# presets = [5, 6, 8]
+# preset_labels = ["6500 K", "7500 K", "9300 K"]
+# inputs = [15, 17]
+# input_labels = ["DisplayPort", "HDMI"]
 
 # Snímka obrazovky / nahrávanie videa (grim, slurp, wf-recorder). Otvorí sa akciou "capture"
-# (`on_click = "capture"` / `"module:capture"` na module, položka menu `module:capture`, záložka `tab9 = "capture"`, `inversetab`).
+# (položka menu `module:capture`, záložka kontajnera `tab9 = "capture"`, tlačidlo `inversetab`).
 [capture]
-dir = "~/Pictures/Screenshots"
-video_dir = "~/Videos/Recordings"
+dir = "~/Obrázky/Screenshots"
+video_dir = "~/Obrázky/Screenshots"
 name = "%Y-%m-%d_%H-%M-%S"   # vzor názvu súboru (strftime)
 delays = [0, 3, 5, 10]       # ponúkané časovače v sekundách
-mode = "region"              # predvolená oblasť: screen | window | region
+mode = "screen"              # predvolená oblasť: screen | window | region
 kind = "image"               # predvolený typ: image | video
 width = 380
-font_size = 16
+font_size = 17
+slurp_args = "-b #000000AA -w 0"   # vzhľad výberu slurp (nahrádza nepodporovaný kľúč slurp_bg)
 # cursor = false             # kurzor myši na snímke
 # audio = false              # zvuk pri nahrávaní
 # format = "png"             # png | jpeg
 # video_ext = "mp4"          # mp4 | mkv | webm
 # recorder_args = ""         # ďalšie argumenty pre wf-recorder, napr. "-c h264_vaapi -d /dev/dri/renderD128"
-# copy = true                # snímku skopírovať do schránky (wl-copy)
+copy = false                # snímku skopírovať do schránky (wl-copy)
 # notify = true              # po uložení poslať notifikáciu (notify-send)
 # hide_bar = true            # pri snímke dočasne skryť ostrovček
-# slurp_args = "-b #ffffff30 -w 0"   # vzhľad výberu: -b farba pozadia (RRGGBBAA), -c okraj, -s výplň výberu, -w hrúbka okraja; "" = predvolený vzhľad slurp
 
-# Ľubovoľný externý modul (waybar „custom“): trvalý proces (interval = 0) alebo periodický.
-# Výstup: JSON {"text","tooltip","class"} alebo čistý text (json = false).
-# Externé disky a flash kľúče (náhrada udiskie + waybar-eject.py): UDisks2 cez D-Bus.
-# Modul sa zobrazí, len keď je niečo pripojené. Ľavý klik = pri jednom disku ho rovno odpojí, pri viacerých otvorí menu (klik na riadok odpojí a vysunie),
-# pravý klik = odpojiť všetko. Menu sa zavrie, keď odídeš myšou.
-[disks]
-automount = true      # automaticky pripájať nové médiá
-notify = true         # notifikácie o pripojení / odpojení / chybách
-notify_timeout_ms = 2000   # ako dlho zostanú na obrazovke (rovnaký pre všetky); 0 = nevyprší
-icon = ""      # nf-fa-usb
-format = "{icon}"               # jeden disk
-format_many = "{icon} {count}"  # viac diskov (počíta sa disk, nie oddiel); {icon} {count} {label}
-tooltip = "{list}"    # {list} = „názov (veľkosť)  →  bod pripojenia“ po riadkoch
-# on_click = "menu"   # "menu" | "eject-all" | príkaz
-# on_click_right = "eject-all"
+
+# ============================================================================
+# 6. HUD A SYSTÉM
+# ============================================================================
+
+[brightness]          # HUD jasu; skratky nastav vo wayfire.ini (pozri README)
+step = 10
+get  = "lumix get"
+set  = "lumix set \"{value}\""   # {value} = "10+", "10-" alebo číslo; v výstupe sa hľadá NN%
+# icons = [...]
+
+# Natívne zdroje dashboardu (exec = "builtin:…")
+[system]
+# decimal = ","            # desatinný oddeľovač vo výstupe ("," alebo ".")
+# net_interface = ""      # rozhranie pre net-down / net-up; prázdne = rozhranie s predvolenou trasou
 
 [autohide]            # vyžaduje Wayfire ipc + ipc-rules
 enabled = true
@@ -282,11 +345,10 @@ margin = 0
 poll_ms = 30
 ignore = []
 
-[brightness]          # HUD jasu; skratky nastav vo wayfire.ini (pozri README)
-step = 10
-get  = "lumix get"
-set  = "lumix set \"{value}\""   # {value} = "10+", "10-" alebo číslo; v výstupe sa hľadá NN%
-# icons = [...]
+
+# ============================================================================
+# 7. NOTIFIKÁCIE
+# ============================================================================
 
 # Notifikácie (náhrada maka): ostrovček je server org.freedesktop.Notifications.
 # Farby sú rovnaké ako ostrovček; urgentné majú vlastný rámik a text:
@@ -320,27 +382,11 @@ summary = "Debian Aktualizácie"
 on_click = "foot bash -c 'sudo apt update && sudo apt -u -V upgrade; exec bash'"
 # timeout_ms = 0
 
-##### [[custom]]
-##### name = "ram"
-##### exec = "awk '/MemTotal/{t=$2} /MemAvailable/{a=$2} END{printf \"\uf2db %.1f GB\", (t-a)/1048576}' /proc/meminfo"
-##### interval = 5
-##### json = false
-##### tooltip = "Použitá pamäť"
 
-# [[custom]]
-# name = "sett"
-# text = ""		# 
-# on_click = "settings"
-# on_click_right = "backup"
-
-# [[custom]]
-# name = "radio"
-# text = ""
-# on_click = "radio"
-
-
-# Vlastné menu (panel ako kalendár). Spúšťa sa on_click = "meno" na ľubovoľnom module.
-# Command može byť aj iny modul (command = "module:calendar")
+# ============================================================================
+# 8. VLASTNÉ MENU
+# Spúšťa sa on_click = "meno" na ľubovoľnom module; command môže byť aj iný modul (command = "module:calendar").
+# ============================================================================
 
 ### Backup menu #################################################################
 [[menu]]
@@ -349,7 +395,7 @@ name = "sysmenu"
 icon_columns = 5           # ikony
 text_columns = 2           # labely
 icon_size = 52
-text_size = 18
+text_size = 17
 cell_width = 170
 gap = 1
 padding = 12
@@ -420,10 +466,8 @@ exec = "builtin:disk-pct:/boot/efi"
 [[menu.item]]
 label = "{} %"
 exec = "builtin:disk-pct:/media/mm/backup"   # uprav na svoj pripojný bod
-
 [[menu.item]]
 separator = true
-
 #[[menu.item]]
 #label = "Teplota: {}"
 #exec = "builtin:temp"                     # builtin:temp:NÁZOV = konkrétny snímač (napr. coretemp, nvme)
@@ -456,12 +500,13 @@ command = "gnome-system-monitor"
 ### Radio menu #############################################################################
 # `track = "radio"`: ostrovček príkaz spustí sám, jeden proces na skupinu (nové rádio predošlé ukončí) a modul
 # `radio` v `modules` ukáže ikonu, kým beží; klik na ikonu ho vypne. Voliteľne `[radio]` s `icon`, `tooltip`.
+
 [[menu]]
 name = "radio"
 title = "Rádio"
 text_columns = 2
 #rows = 5
-text_size = 18
+text_size = 17
 cell_width = 180
 gap = 5
 padding = 12
@@ -538,7 +583,7 @@ command = "sudo poweroff"
 name = "settings"
 title = "Nastavenie"
 text_columns = 3
-icon_columns = 1          
+icon_columns = 1
 icon_size = 86
 #rows = 5
 text_size = 18
