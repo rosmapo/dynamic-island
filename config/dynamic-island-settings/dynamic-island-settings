@@ -1,0 +1,1171 @@
+#!/usr/bin/env python3
+"""Nastavenia ostrovčeka (GTK4 + libadwaita).
+
+Upravuje ~/.config/dynamic-island/config.toml a zachová komentáre.
+Navigácia: taby podľa oblasti → bočný zoznam sekcií → obsah.
+Vlastné menu: master–detail (zoznam menu | editor + položky).
+"""
+import difflib, os, sys
+
+HERE = os.path.dirname(os.path.realpath(__file__))
+sys.path.insert(0, HERE)
+
+import gi
+gi.require_version('Gtk', '4.0')
+gi.require_version('Adw', '1')
+from gi.repository import Adw, Gdk, Gio, GLib, Gtk, Pango
+
+import schema
+from model import Model, RESET
+
+APP_ID = 'sk.rosmapo.DynamicIslandSettings'
+MODULE_CHOICES = ['network', 'vpn', 'clock', 'keyboard', 'audio', 'radio', 'media',
+                  'capslock', 'inhibitor', 'recorder', 'disks']
+ACTION_KEYS = ('on_click', 'on_click_right', 'on_click_middle', 'tooltip')
+
+# Hlavné taby: (id, názov, ikona, [(sekcia, názov), ...])
+# Zoskupenie podľa úlohy, nie 1:1 s TOML sekciami.
+TABS = [
+    ('vzhľad', 'Vzhľad', 'preferences-desktop-appearance-symbolic',
+     [('', 'Poradie modulov'), ('island', 'Ostrovček'), ('colors', 'Farby')]),
+    ('kontajner', 'Kontajner', 'view-grid-symbolic',
+     [('quickset', 'Kontajner (quickset)'), ('drun', 'Spúšťač (drun)')]),
+    ('lista', 'Lišta', 'format-justify-fill-symbolic',
+     [('clock', 'Hodiny'), ('network', 'Sieť'), ('vpn', 'VPN'), ('keyboard', 'Klávesnica'),
+      ('audio', 'Zvuk'), ('media', 'Práve hrá'), ('radio', 'Rádio'), ('recorder', 'Nahrávanie'),
+      ('inhibitor', 'Zákaz uspania'), ('capslock', 'Caps Lock'), ('disks', 'Externé disky')]),
+    ('panely', 'Panely', 'preferences-system-symbolic',
+     [('clipboard', 'Schránka'), ('trash', 'Kôš'), ('wallpaper', 'Tapety'), ('wifi', 'Wi-Fi'),
+      ('bluetooth', 'Bluetooth'), ('monitor', 'Monitor'), ('capture', 'Snímanie'),
+      ('notifications', 'Notifikácie')]),
+    ('vlastne', 'Vlastné', 'document-edit-symbolic',
+     [('menu', 'Vlastné menu'), ('custom', 'Vlastné moduly')]),
+    ('system', 'Systém', 'applications-system-symbolic',
+     [('brightness', 'Jas'), ('notifications.urgent', 'Urgentné'),
+      ('notifications.rule', 'Pravidlá notifikácií'), ('system', 'Systém'), ('autohide', 'Automatické skrývanie')]),
+]
+
+
+def short(v):
+    s = repr(v) if not isinstance(v, str) else v
+    return s if len(s) < 60 else s[:57] + '…'
+
+
+def _find_scrolled(widget):
+    w = widget
+    while w is not None:
+        if isinstance(w, Gtk.ScrolledWindow):
+            return w
+        w = w.get_parent()
+
+    def down(w):
+        if isinstance(w, Gtk.ScrolledWindow):
+            return w
+        child = w.get_first_child()
+        while child is not None:
+            found = down(child)
+            if found is not None:
+                return found
+            child = child.get_next_sibling()
+        return None
+    return down(widget)
+
+
+def _preserve_scroll(anchor):
+    sw = _find_scrolled(anchor)
+    if sw is None:
+        return lambda: None
+    vadj = sw.get_vadjustment()
+    val = vadj.get_value()
+
+    def restore():
+        def _do():
+            upper = vadj.get_upper() - vadj.get_page_size()
+            vadj.set_value(min(val, max(0.0, upper)))
+            return False
+        GLib.idle_add(_do)
+    return restore
+
+
+class ModelBinding:
+    def __init__(self, model, sec, key):
+        self.m, self.sec, self.key = model, sec, key
+
+    def get(self):
+        return self.m.value(self.sec, self.key)
+
+    def set(self, v):
+        self.m.set(self.sec, self.key, v)
+
+    def reset(self):
+        self.m.reset(self.sec, self.key)
+
+    def is_default(self):
+        return self.m.is_default(self.sec, self.key)
+
+
+class RecBinding:
+    def __init__(self, rec, spec, changed):
+        self.rec, self.spec, self.changed = rec, spec, changed
+
+    def get(self):
+        f = self.rec['fields']
+        return f[self.spec['key']] if self.spec['key'] in f else self.spec.get('default')
+
+    def set(self, v):
+        key = self.spec['key']
+        if self.spec.get('nullable') and (v is None or v < 1):
+            self.rec['fields'].pop(key, None)
+        else:
+            self.rec['fields'][key] = v
+        self.changed()
+
+    def reset(self):
+        self.rec['fields'].pop(self.spec['key'], None)
+        self.changed()
+
+    def is_default(self):
+        return self.spec['key'] not in self.rec['fields']
+
+
+class Window(Adw.ApplicationWindow):
+    def __init__(self, app, model):
+        super().__init__(application=app, title='Nastavenia ostrovčeka',
+                         default_width=1280, default_height=740)
+        self.set_size_request(1000, 500)
+        self.model = model
+        self.pages = {}            # (tab_id, sec) -> widget
+        self.rows = []             # (binding, reset_btn)
+        self.current_tab = TABS[0][0]
+        self.current_sec = None
+        self.icon_font = (model.value('island', 'icon_family') or ['Symbols Nerd Font Mono'])[0]
+        self._sidebar_rows = {}    # sec -> ListBoxRow
+        self._filling_sidebar = False
+        self._menu_sel = None      # selected menu rec id for master-detail
+
+        self.toasts = Adw.ToastOverlay()
+        self.set_content(self.toasts)
+
+        root = Adw.ToolbarView()
+        self.toasts.set_child(root)
+
+        # ---- header (taby majú prioritu; hľadanie vpravo, užšie)
+        head = Adw.HeaderBar()
+        self.view_stack = Adw.ViewStack()
+        switcher = Adw.ViewSwitcherTitle(stack=self.view_stack, title='Nastavenia ostrovčeka')
+        head.set_title_widget(switcher)
+
+        self.apply_btn = Gtk.Button(label='Použiť', sensitive=False)
+        self.apply_btn.add_css_class('suggested-action')
+        self.apply_btn.connect('clicked', lambda *_: self.apply())
+        head.pack_end(self.apply_btn)
+
+        menu = Gio.Menu()
+        menu.append('Zobraziť zmeny…', 'win.diff')
+        menu.append('Zahodiť neuložené zmeny', 'win.discard')
+        menu.append('Načítať súbor znova', 'win.reload')
+        mb = Gtk.MenuButton(icon_name='open-menu-symbolic', menu_model=menu)
+        head.pack_end(mb)
+
+        self.search = Gtk.SearchEntry(placeholder_text='Hľadať…', width_chars=12, max_width_chars=18)
+        self.search.connect('search-changed', self.on_search)
+        head.pack_end(self.search)
+        root.add_top_bar(head)
+
+        # ---- tab pages: each is a split (sidebar sections | content)
+        self.tab_sidebars = {}
+        self.tab_stacks = {}
+        self.tab_titles = {}  # sec -> title within tab
+
+        for tid, tlabel, ticon, sections in TABS:
+            split = Adw.NavigationSplitView(min_sidebar_width=180, max_sidebar_width=260,
+                                            sidebar_width_fraction=0.22)
+            # sidebar
+            lb = Gtk.ListBox(selection_mode=Gtk.SelectionMode.SINGLE)
+            lb.add_css_class('navigation-sidebar')
+            lb.connect('row-selected', self._on_sidebar_selected)
+            for sec, title in sections:
+                r = Gtk.ListBoxRow()
+                r.set_child(Gtk.Label(label=title, xalign=0,
+                                      margin_top=10, margin_bottom=10,
+                                      margin_start=12, margin_end=12))
+                r.sec = sec
+                r.title = title
+                r.tab_id = tid
+                lb.append(r)
+            if tid == 'system':
+                r = Gtk.ListBoxRow()
+                r.set_child(Gtk.Label(label='Ostatné (neznáme kľúče)', xalign=0,
+                                      margin_top=10, margin_bottom=10,
+                                      margin_start=12, margin_end=12))
+                r.sec = '__other__'
+                r.title = 'Ostatné'
+                r.tab_id = tid
+                lb.append(r)
+
+            sb_scroll = Gtk.ScrolledWindow(child=lb, hscrollbar_policy=Gtk.PolicyType.NEVER)
+            sb_page = Adw.NavigationPage.new(sb_scroll, tlabel)
+            split.set_sidebar(sb_page)
+
+            content_stack = Gtk.Stack(transition_type=Gtk.StackTransitionType.CROSSFADE)
+            # placeholder
+            ph = Adw.StatusPage(title=tlabel, description='Vyber sekciu vľavo')
+            content_stack.add_named(ph, '_empty')
+            content_stack.set_visible_child_name('_empty')
+            c_page = Adw.NavigationPage.new(content_stack, 'Obsah')
+            split.set_content(c_page)
+
+            self.view_stack.add_titled_with_icon(split, tid, tlabel, ticon)
+            self.tab_sidebars[tid] = lb
+            self.tab_stacks[tid] = content_stack
+            for sec, title in sections:
+                self.tab_titles[sec] = title
+            if tid == 'system':
+                self.tab_titles['__other__'] = 'Ostatné'
+
+        # Hľadanie je samostatná vrstva nad tabmi — neberie miesto vo ViewSwitcher
+        self.content_stack = Gtk.Stack(transition_type=Gtk.StackTransitionType.CROSSFADE)
+        self.content_stack.add_named(self.view_stack, 'tabs')
+        self.search_page_holder = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+        self.content_stack.add_named(self.search_page_holder, 'search')
+        self.content_stack.set_visible_child_name('tabs')
+        root.set_content(self.content_stack)
+        self.view_stack.connect('notify::visible-child-name', self._on_tab_changed)
+
+        for name, cb in (('diff', self.show_diff), ('discard', self.discard), ('reload', self.reload)):
+            a = Gio.SimpleAction.new(name, None)
+            a.connect('activate', lambda _a, _p, cb=cb: cb())
+            self.add_action(a)
+        self.connect('close-request', self.on_close)
+
+        # initial selection – prvá sekcia prvého tabu
+        first_lb = self.tab_sidebars[TABS[0][0]]
+        first_row = first_lb.get_row_at_index(0)
+        if first_row is not None:
+            first_lb.select_row(first_row)
+
+    # ============================================================ navigácia
+    def _on_tab_changed(self, stack, _pspec):
+        name = stack.get_visible_child_name()
+        if not name or name == '_search':
+            return
+        self.current_tab = name
+        lb = self.tab_sidebars.get(name)
+        if lb is None:
+            return
+        row = lb.get_selected_row()
+        if row is None:
+            row = lb.get_row_at_index(0)
+            if row:
+                lb.select_row(row)
+        elif hasattr(row, 'sec'):
+            self.show_section(name, row.sec, row.title)
+
+    def _on_sidebar_selected(self, lb, row):
+        if self._filling_sidebar or row is None or not hasattr(row, 'sec'):
+            return
+        self.search.set_text('')
+        self.show_section(row.tab_id, row.sec, row.title)
+
+    def show_section(self, tab_id, sec, title):
+        self.current_tab = tab_id
+        self.current_sec = sec
+        stack = self.tab_stacks[tab_id]
+        key = (tab_id, sec)
+        name = f'{tab_id}:{sec}'
+        if key not in self.pages:
+            if sec == '__other__':
+                page = self.build_other()
+            elif sec in schema.ARRAYS:
+                if sec == 'menu':
+                    page = self.build_menu_master_detail()
+                else:
+                    page = self.build_array_page(sec)
+            else:
+                page = self.build_section(sec)
+            self.pages[key] = page
+            stack.add_named(page, name)
+        stack.set_visible_child_name(name)
+        self.content_stack.set_visible_child_name('tabs')
+        if self.view_stack.get_visible_child_name() != tab_id:
+            self.view_stack.set_visible_child_name(tab_id)
+
+    def on_search(self, entry):
+        q = entry.get_text().strip().lower()
+        if not q:
+            self.content_stack.set_visible_child_name('tabs')
+            return
+        # build results – samostatná vrstva, taby ostanú vo ViewSwitcher
+        while self.search_page_holder.get_first_child():
+            self.search_page_holder.remove(self.search_page_holder.get_first_child())
+        page = Adw.PreferencesPage()
+        grp = Adw.PreferencesGroup(title=f'Výsledky pre „{q}“')
+        page.add(grp)
+        n = 0
+        titles = {sec: t for _g, sec, t in schema.sections_in_order()}
+        sec_to_tab = {}
+        for tid, _tl, _ti, sections in TABS:
+            for sec, _title in sections:
+                sec_to_tab[sec] = tid
+        for (sec, key), e in self.model.schema.items():
+            hay = f"{e['label']} {key} {sec} {e.get('desc', '')}".lower()
+            if q in hay and e['type'] != 'modules':
+                row = self.make_row(e, section_hint=titles.get(sec, sec))
+                if row is not None:
+                    go = Gtk.Button(icon_name='go-next-symbolic', valign=Gtk.Align.CENTER,
+                                    tooltip_text='Prejsť na sekciu')
+                    go.add_css_class('flat')
+                    tid = sec_to_tab.get(sec, TABS[0][0])
+                    title = titles.get(sec, sec)
+
+                    def jump(_b, tid=tid, sec=sec, title=title):
+                        self.search.set_text('')
+                        self.content_stack.set_visible_child_name('tabs')
+                        self.show_section(tid, sec, title)
+                        lb = self.tab_sidebars.get(tid)
+                        if lb:
+                            r = lb.get_row_at_index(0)
+                            while r:
+                                if getattr(r, 'sec', None) == sec:
+                                    lb.select_row(r)
+                                    break
+                                r = r.get_next_sibling()
+                    go.connect('clicked', jump)
+                    row.add_suffix(go)
+                    grp.add(row)
+                    n += 1
+                if n >= 50:
+                    break
+        if n == 0:
+            grp.set_description('Nič sa nenašlo.')
+        self.search_page_holder.append(page)
+        self.content_stack.set_visible_child_name('search')
+
+    # ============================================================ stránky sekcií
+    def build_section(self, sec):
+        page = Adw.PreferencesPage()
+        entries = [e for (s, k), e in self.model.schema.items() if s == sec]
+        if sec == '':
+            g = Adw.PreferencesGroup(title='Poradie modulov')
+            self.build_modules(g, self.model.schema[('', 'modules')])
+            page.add(g)
+            return page
+        basic = [e for e in entries if e['key'] not in ACTION_KEYS]
+        actions = [e for e in entries if e['key'] in ACTION_KEYS]
+        if basic:
+            g = Adw.PreferencesGroup()
+            for e in basic:
+                r = self.make_row(e)
+                if r is not None:
+                    g.add(r)
+            page.add(g)
+        for ix in schema.INDEXED:
+            if ix[0] == sec:
+                page.add(self.build_indexed(ix))
+        for m in schema.MAPS:
+            if m[0] == sec:
+                page.add(self.build_map(m))
+        if actions:
+            g = Adw.PreferencesGroup(
+                title='Akcie a tooltip',
+                description='Názov akcie (calendar, menu:meno, module:meno …) alebo ľubovoľný príkaz.')
+            for e in actions:
+                r = self.make_row(e)
+                if r is not None:
+                    g.add(r)
+            page.add(g)
+        return page
+
+    def build_other(self):
+        page = Adw.PreferencesPage()
+        g = Adw.PreferencesGroup(
+            title='Neznáme kľúče',
+            description='GUI ich nepozná, ostanú v súbore nezmenené.')
+        unk = self.model.unknown()
+        if not unk:
+            g.set_description('Žiadne – všetky kľúče v súbore GUI pozná.')
+        for sec, key, val in unk:
+            r = Adw.ActionRow(title=key, subtitle=f'[{sec}]  {short(val)}' if sec else short(val))
+            g.add(r)
+        page.add(g)
+        return page
+
+    # ============================================================ menu master–detail
+    @staticmethod
+    def rec_title(rec, aid, is_item=False):
+        f = rec['fields']
+        if is_item:
+            if f.get('separator'):
+                return '──── oddeľovač ────'
+            return (f.get('label') or f.get('icon') or f.get('command')
+                    or f.get('exec') or f.get('track') or '(prázdna položka)')
+        key = schema.ARRAYS[aid]['key']
+        return f.get(key) or f.get('name') or f.get('exec') or f.get('on_click') or '(bez názvu)'
+
+    def build_menu_master_detail(self):
+        """Master–detail: vľavo zoznam menu, vpravo editor + položky."""
+        a = schema.ARRAYS['menu']
+        recs = self.model.get_array('menu')
+        outer = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=0)
+        outer.set_hexpand(True)
+        outer.set_vexpand(True)
+
+        # ---- left: menu list
+        left_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
+        left_box.set_size_request(220, -1)
+        left_head = Gtk.Label(label='Menu', xalign=0, margin_start=12, margin_top=12, margin_bottom=6)
+        left_head.add_css_class('heading')
+        left_box.append(left_head)
+
+        menu_lb = Gtk.ListBox(selection_mode=Gtk.SelectionMode.SINGLE)
+        menu_lb.add_css_class('navigation-sidebar')
+        menu_scroll = Gtk.ScrolledWindow(child=menu_lb, vexpand=True,
+                                         hscrollbar_policy=Gtk.PolicyType.NEVER)
+        left_box.append(menu_scroll)
+
+        add_menu_btn = Gtk.Button(label='Pridať menu', margin_start=8, margin_end=8,
+                                  margin_top=8, margin_bottom=8)
+        add_menu_btn.add_css_class('pill')
+        left_box.append(add_menu_btn)
+        outer.append(left_box)
+
+        sep = Gtk.Separator(orientation=Gtk.Orientation.VERTICAL)
+        outer.append(sep)
+
+        # ---- right: detail
+        right_scroll = Gtk.ScrolledWindow(hexpand=True, vexpand=True,
+                                          hscrollbar_policy=Gtk.PolicyType.NEVER)
+        right_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
+        right_scroll.set_child(right_box)
+        outer.append(right_scroll)
+
+        empty = Adw.StatusPage(
+            icon_name='document-edit-symbolic',
+            title='Vlastné menu',
+            description=a['desc'] + '\n\nVyber menu vľavo alebo pridaj nové.')
+        right_box.append(empty)
+
+        detail_host = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
+        detail_host.set_visible(False)
+        right_box.append(detail_host)
+
+        state = {'selected': None}  # rec object
+
+        def mark_dirty():
+            self.value_changed()
+
+        def rebuild_menu_list(select_rec=None):
+            restore = _preserve_scroll(menu_scroll)
+            while True:
+                r = menu_lb.get_row_at_index(0)
+                if r is None:
+                    break
+                menu_lb.remove(r)
+            for i, rec in enumerate(recs):
+                title = self.rec_title(rec, 'menu', False)
+                n_items = len(rec.get('children') or [])
+                row = Gtk.ListBoxRow()
+                box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6,
+                              margin_start=10, margin_end=6, margin_top=8, margin_bottom=8)
+                lab = Gtk.Label(label=title, xalign=0, hexpand=True)
+                lab.add_css_class('body')
+                box.append(lab)
+                badge = Gtk.Label(label=str(n_items))
+                badge.add_css_class('dim-label')
+                badge.add_css_class('caption')
+                box.append(badge)
+                # reorder + delete on the row
+                up = Gtk.Button(icon_name='go-up-symbolic', sensitive=i > 0)
+                dn = Gtk.Button(icon_name='go-down-symbolic', sensitive=i < len(recs) - 1)
+                rm = Gtk.Button(icon_name='user-trash-symbolic')
+                for b in (up, dn, rm):
+                    b.add_css_class('flat')
+                    b.set_valign(Gtk.Align.CENTER)
+                    box.append(b)
+
+                def do_up(_b, i=i):
+                    recs.insert(i - 1, recs.pop(i))
+                    mark_dirty()
+                    rebuild_menu_list(recs[i - 1])
+
+                def do_dn(_b, i=i):
+                    recs.insert(i + 1, recs.pop(i))
+                    mark_dirty()
+                    rebuild_menu_list(recs[i + 1])
+
+                def do_rm(_b, rec=rec):
+                    if state['selected'] is rec:
+                        state['selected'] = None
+                    recs.remove(rec)
+                    mark_dirty()
+                    rebuild_menu_list()
+                    show_detail(None)
+
+                up.connect('clicked', do_up)
+                dn.connect('clicked', do_dn)
+                rm.connect('clicked', do_rm)
+                row.set_child(box)
+                row.rec = rec
+                menu_lb.append(row)
+                if select_rec is rec or (select_rec is None and state['selected'] is rec):
+                    menu_lb.select_row(row)
+            restore()
+            if not recs:
+                show_detail(None)
+
+        def show_detail(rec):
+            state['selected'] = rec
+            # clear detail_host
+            while True:
+                c = detail_host.get_first_child()
+                if c is None:
+                    break
+                detail_host.remove(c)
+            if rec is None:
+                empty.set_visible(True)
+                detail_host.set_visible(False)
+                return
+            empty.set_visible(False)
+            detail_host.set_visible(True)
+
+            # menu fields
+            fields_group = Adw.PreferencesGroup(title='Vlastnosti menu',
+                                                description=f'[[menu]] · {self.rec_title(rec, "menu")}')
+            detail_host.append(fields_group)
+
+            def field_changed():
+                mark_dirty()
+                # len aktualizovať názov v ľavom zozname, nie celý rebuild (fokús v poli)
+                row = menu_lb.get_selected_row()
+                if row is not None and getattr(row, 'rec', None) is rec:
+                    child = row.get_child()
+                    if child is not None:
+                        lab = child.get_first_child()
+                        if isinstance(lab, Gtk.Label):
+                            lab.set_text(self.rec_title(rec, 'menu', False))
+
+            for spec in a['specs'].values():
+                row = self.make_row(spec, binding=RecBinding(rec, spec, field_changed))
+                if row is not None:
+                    fields_group.add(row)
+
+            # items
+            items = rec.setdefault('children', [])
+            items_group = Adw.PreferencesGroup(
+                title='Položky',
+                description='Poradie = poradie v paneli. Oddeľovač = vodorovná čiara.')
+            detail_host.append(items_group)
+            item_rows = []
+
+            def rebuild_items():
+                restore = _preserve_scroll(right_scroll)
+                for r in item_rows:
+                    items_group.remove(r)
+                item_rows.clear()
+                for i, it in enumerate(items):
+                    title = self.rec_title(it, 'menu', True)
+                    ex = Adw.ExpanderRow(title=GLib.markup_escape_text(title))
+                    ex.set_expanded(False)
+
+                    def item_changed(it=it, ex=ex):
+                        ex.set_title(GLib.markup_escape_text(self.rec_title(it, 'menu', True)))
+                        mark_dirty()
+
+                    for spec in a['child'][1].values():
+                        r = self.make_row(spec, binding=RecBinding(it, spec, item_changed))
+                        if r is not None:
+                            ex.add_row(r)
+                    ctl = Gtk.Box(spacing=2, valign=Gtk.Align.CENTER)
+                    for icon, fn, sens in (
+                        ('go-up-symbolic',
+                         lambda i=i: (items.insert(i - 1, items.pop(i)), mark_dirty(), rebuild_items()),
+                         i > 0),
+                        ('go-down-symbolic',
+                         lambda i=i: (items.insert(i + 1, items.pop(i)), mark_dirty(), rebuild_items()),
+                         i < len(items) - 1),
+                        ('user-trash-symbolic',
+                         lambda i=i: (items.pop(i), mark_dirty(), rebuild_items()),
+                         True),
+                    ):
+                        b = Gtk.Button(icon_name=icon, sensitive=sens)
+                        b.add_css_class('flat')
+                        b.connect('clicked', lambda _b, fn=fn: fn())
+                        ctl.append(b)
+                    ex.add_suffix(ctl)
+                    items_group.add(ex)
+                    item_rows.append(ex)
+
+                add = Adw.ActionRow(title='Pridať položku')
+                ab = Gtk.Button(icon_name='list-add-symbolic', valign=Gtk.Align.CENTER)
+                ab.add_css_class('flat')
+
+                def add_item(_b):
+                    new = {'src': None, 'fields': {}}
+                    items.append(new)
+                    mark_dirty()
+                    rebuild_items()
+                    # expand last
+                    if item_rows:
+                        item_rows[-1].set_expanded(True)
+
+                ab.connect('clicked', add_item)
+                add.add_suffix(ab)
+                add.set_activatable_widget(ab)
+                items_group.add(add)
+                item_rows.append(add)
+                restore()
+                # badge = počet položiek v ľavom zozname
+                row = menu_lb.get_selected_row()
+                if row is not None and getattr(row, 'rec', None) is rec:
+                    child = row.get_child()
+                    if child is not None:
+                        # lab, badge, up, dn, rm
+                        badge = child.get_first_child()
+                        if badge is not None:
+                            badge = badge.get_next_sibling()
+                        if isinstance(badge, Gtk.Label):
+                            badge.set_text(str(len(items)))
+
+            rebuild_items()
+
+        def on_menu_selected(lb, row):
+            if row is None:
+                return
+            # ignore clicks on suffix buttons – they still select; that's OK
+            rec = getattr(row, 'rec', None)
+            if rec is not None:
+                show_detail(rec)
+
+        menu_lb.connect('row-selected', on_menu_selected)
+
+        def add_menu(_b):
+            new = {'src': None, 'fields': {}, 'children': []}
+            recs.append(new)
+            mark_dirty()
+            rebuild_menu_list(new)
+            show_detail(new)
+
+        add_menu_btn.connect('clicked', add_menu)
+        rebuild_menu_list()
+        if recs:
+            menu_lb.select_row(menu_lb.get_row_at_index(0))
+        return outer
+
+    # ============================================================ ostatné polia tabuliek (custom, rules)
+    def build_array_page(self, aid):
+        a = schema.ARRAYS[aid]
+        page = Adw.PreferencesPage()
+        group = Adw.PreferencesGroup(title=a['title'], description=a['desc'])
+        page.add(group)
+        recs = self.model.get_array(aid)
+        state = {}
+        rows = []
+
+        def structure_changed():
+            self.value_changed()
+            rebuild()
+
+        def make_expander(rec, specs, siblings, is_item):
+            ex = Adw.ExpanderRow(title=GLib.markup_escape_text(self.rec_title(rec, aid, is_item)))
+            ex.set_expanded(state.get(id(rec), False))
+            ex.connect('notify::expanded', lambda r, _p: state.__setitem__(id(rec), r.get_expanded()))
+
+            def changed():
+                ex.set_title(GLib.markup_escape_text(self.rec_title(rec, aid, is_item)))
+                self.value_changed()
+
+            for spec in specs.values():
+                r = self.make_row(spec, binding=RecBinding(rec, spec, changed))
+                if r is not None:
+                    ex.add_row(r)
+            ctl = Gtk.Box(spacing=2, valign=Gtk.Align.CENTER)
+            i = siblings.index(rec)
+
+            def move(d):
+                j = i + d
+                if 0 <= j < len(siblings):
+                    siblings.insert(j, siblings.pop(i))
+                    structure_changed()
+
+            for icon, fn, sens in (
+                ('go-up-symbolic', lambda: move(-1), i > 0),
+                ('go-down-symbolic', lambda: move(1), i < len(siblings) - 1),
+                ('user-trash-symbolic', lambda: (siblings.remove(rec), structure_changed()), True),
+            ):
+                b = Gtk.Button(icon_name=icon, sensitive=sens)
+                b.add_css_class('flat')
+                b.connect('clicked', lambda _b, fn=fn: fn())
+                ctl.append(b)
+            ex.add_suffix(ctl)
+            return ex
+
+        def rebuild():
+            restore = _preserve_scroll(page)
+            for r in rows:
+                group.remove(r)
+            rows.clear()
+            for rec in recs:
+                ex = make_expander(rec, a['specs'], recs, False)
+                group.add(ex)
+                rows.append(ex)
+            add = Adw.ActionRow(title=a['add'])
+            ab = Gtk.Button(icon_name='list-add-symbolic', valign=Gtk.Align.CENTER)
+            ab.add_css_class('flat')
+
+            def add_rec(_b):
+                new = {'src': None, 'fields': {}}
+                if a['child']:
+                    new['children'] = []
+                recs.append(new)
+                state[id(new)] = True
+                structure_changed()
+
+            ab.connect('clicked', add_rec)
+            add.add_suffix(ab)
+            add.set_activatable_widget(ab)
+            group.add(add)
+            rows.append(add)
+            restore()
+
+        rebuild()
+        return page
+
+    # ============================================================ riadky
+    def value_changed(self):
+        self.apply_btn.set_sensitive(self.model.dirty())
+        self.refresh_resets()
+
+    def refresh_resets(self):
+        for b, btn in self.rows:
+            btn.set_visible(not b.is_default())
+
+    def reset_button(self, b, e, on_reset):
+        btn = Gtk.Button(icon_name='edit-undo-symbolic', valign=Gtk.Align.CENTER,
+                         tooltip_text=self.default_tooltip(e))
+        btn.add_css_class('flat')
+        btn.set_visible(not b.is_default())
+
+        def clicked(_b):
+            b.reset()
+            on_reset()
+            self.value_changed()
+        btn.connect('clicked', clicked)
+        self.rows.append((b, btn))
+        return btn
+
+    @staticmethod
+    def default_tooltip(e):
+        d = e.get('default')
+        if isinstance(d, bool):
+            d = 'zapnuté' if d else 'vypnuté'
+        elif isinstance(d, list):
+            d = ', '.join(str(x) for x in d)
+        elif d in (None, ''):
+            d = 'nenastavené'
+        return f'Vrátiť predvolenú hodnotu: {d}'
+
+    def subtitle(self, e, section_hint=None):
+        parts = []
+        if e.get('desc'):
+            parts.append(e['desc'])
+        sec = e.get('section', '')
+        where = f"{sec}.{e['key']}" if sec else e['key']
+        parts.append((f'{section_hint} · ' if section_hint else '') + where)
+        return GLib.markup_escape_text('\n'.join(parts))
+
+    def make_row(self, e, section_hint=None, binding=None):
+        t = e['type']
+        sec, key = e.get('section', ''), e['key']
+        m = binding or ModelBinding(self.model, sec, key)
+        val = m.get()
+        title = GLib.markup_escape_text(e['label'])
+        sub = self.subtitle(e, section_hint)
+
+        if t == 'bool':
+            row = Adw.SwitchRow(title=title, subtitle=sub)
+            row.set_active(bool(val))
+            row.connect('notify::active', lambda r, _p: (m.set(r.get_active()), self.value_changed()))
+            row.add_suffix(self.reset_button(m, e, lambda: row.set_active(bool(m.get()))))
+            return row
+
+        if t in ('int', 'float'):
+            lo = e['min'] if e.get('min') is not None else 0.0
+            hi = e['max'] if e.get('max') is not None else 1000000.0
+            digits = 0 if t == 'int' else 2
+            step = 1.0 if t == 'int' else 0.05
+            nullable = e.get('nullable')
+            cur = 0 if val is None else val
+            adj = Gtk.Adjustment(value=float(cur), lower=0.0 if nullable else float(lo),
+                                 upper=float(hi), step_increment=step, page_increment=step * 10)
+            row = Adw.SpinRow(title=title, subtitle=sub, adjustment=adj, digits=digits)
+            suppress = [False]
+
+            def changed(r, _p):
+                if suppress[0]:
+                    return
+                v = r.get_value()
+                if nullable and v < 1:
+                    m.reset()
+                else:
+                    m.set(int(round(v)) if t == 'int' else round(v, 3))
+                self.value_changed()
+            row.connect('notify::value', changed)
+
+            def reset_ui():
+                suppress[0] = True
+                d = m.get()
+                row.set_value(float(d) if d is not None else 0.0)
+                suppress[0] = False
+            row.add_suffix(self.reset_button(m, e, reset_ui))
+            return row
+
+        if t == 'enum':
+            choices = e['choices']
+            labels = e.get('choice_labels') or {}
+            row = Adw.ComboRow(title=title, subtitle=sub,
+                               model=Gtk.StringList.new([labels.get(c, c) for c in choices]))
+            row.set_selected(choices.index(val) if val in choices else 0)
+            suppress = [False]
+
+            def changed(r, _p):
+                if not suppress[0]:
+                    m.set(choices[r.get_selected()])
+                    self.value_changed()
+            row.connect('notify::selected', changed)
+
+            def reset_ui():
+                suppress[0] = True
+                d = m.get()
+                row.set_selected(choices.index(d) if d in choices else 0)
+                suppress[0] = False
+            row.add_suffix(self.reset_button(m, e, reset_ui))
+            return row
+
+        row = Adw.ActionRow(title=title, subtitle=sub)
+        entry = Gtk.Entry(valign=Gtk.Align.CENTER, width_chars=28, max_width_chars=42, hexpand=True)
+        entry.set_alignment(0.0)
+        multiline = t in ('str', 'command')
+
+        def show(v):
+            if t in ('strlist', 'numlist'):
+                return ', '.join(str(x) for x in (v or []))
+            s_ = '' if v is None else str(v)
+            return s_.replace('\n', '\\n') if multiline else s_
+
+        def parse(s_):
+            if t == 'strlist':
+                return [x.strip() for x in s_.split(',') if x.strip()]
+            if t == 'numlist':
+                out = []
+                for x in s_.split(','):
+                    x = x.strip()
+                    if x:
+                        try:
+                            out.append(int(x, 0))
+                        except ValueError:
+                            pass
+                return out
+            return s_.replace('\\n', '\n') if multiline else s_
+
+        entry.set_text(show(val))
+        suppress = [False]
+
+        def changed(r):
+            if suppress[0]:
+                return
+            v = parse(r.get_text())
+            if t == 'color' and v == '':
+                m.reset()
+            else:
+                m.set(v)
+            self.value_changed()
+        entry.connect('changed', changed)
+
+        def reset_ui():
+            suppress[0] = True
+            entry.set_text(show(m.get()))
+            suppress[0] = False
+        row.add_suffix(entry)
+        if t == 'path':
+            b = Gtk.Button(icon_name='document-open-symbolic', valign=Gtk.Align.CENTER,
+                           tooltip_text='Vybrať…')
+            b.add_css_class('flat')
+            folder = key.endswith('dir') or key.endswith('directory')
+            b.connect('clicked', lambda _b: self.choose_path(entry, folder))
+            row.add_suffix(b)
+        if t == 'icon' or e.get('icon_list'):
+            lab = Gtk.Label(valign=Gtk.Align.CENTER)
+            lab.set_attributes(Pango.AttrList.from_string(f'0 -1 font-desc "{self.icon_font} 16"'))
+            lab.set_text(entry.get_text().replace(',', ' '))
+            entry.connect('changed', lambda r: lab.set_text(r.get_text().replace(',', ' ')))
+            row.add_suffix(lab)
+        if t == 'color':
+            cb = Gtk.ColorDialogButton(dialog=Gtk.ColorDialog(), valign=Gtk.Align.CENTER)
+            rgba = Gdk.RGBA()
+            if (val or '').startswith('#') and rgba.parse(val):
+                cb.set_rgba(rgba)
+
+            def picked(btn, _p):
+                c = btn.get_rgba()
+                hexs = '#%02x%02x%02x' % (round(c.red * 255), round(c.green * 255), round(c.blue * 255))
+                if c.alpha < 0.999:
+                    hexs += '%02x' % round(c.alpha * 255)
+                if entry.get_text() != hexs:
+                    entry.set_text(hexs)
+            cb.connect('notify::rgba', picked)
+            row.add_suffix(cb)
+        row.add_suffix(self.reset_button(m, e, reset_ui))
+        return row
+
+    def choose_path(self, entry, folder):
+        dlg = Gtk.FileDialog()
+
+        def done(d, res):
+            try:
+                f = d.select_folder_finish(res) if folder else d.open_finish(res)
+            except GLib.Error:
+                return
+            if f is not None:
+                p = f.get_path()
+                home = os.path.expanduser('~')
+                if p.startswith(home):
+                    p = '~' + p[len(home):]
+                entry.set_text(p)
+        (dlg.select_folder if folder else dlg.open)(self, None, done)
+
+    # ============================================================ zoznam modulov
+    def build_modules(self, group, e):
+        m = self.model
+        names = list(m.value('', 'modules') or [])
+        box_rows = []
+
+        def commit():
+            m.set('', 'modules', list(names))
+            self.value_changed()
+
+        def rebuild():
+            restore = _preserve_scroll(group)
+            for r in box_rows:
+                group.remove(r)
+            box_rows.clear()
+            for i, n in enumerate(names):
+                row = Adw.ActionRow(title=GLib.markup_escape_text(n))
+                up = Gtk.Button(icon_name='go-up-symbolic', valign=Gtk.Align.CENTER, sensitive=i > 0)
+                dn = Gtk.Button(icon_name='go-down-symbolic', valign=Gtk.Align.CENTER,
+                                sensitive=i < len(names) - 1)
+                rm = Gtk.Button(icon_name='user-trash-symbolic', valign=Gtk.Align.CENTER)
+                for b in (up, dn, rm):
+                    b.add_css_class('flat')
+                    row.add_suffix(b)
+                up.connect('clicked', lambda _b, i=i: (names.insert(i - 1, names.pop(i)), commit(), rebuild()))
+                dn.connect('clicked', lambda _b, i=i: (names.insert(i + 1, names.pop(i)), commit(), rebuild()))
+                rm.connect('clicked', lambda _b, i=i: (names.pop(i), commit(), rebuild()))
+                group.add(row)
+                box_rows.append(row)
+            add = Adw.EntryRow(title='Pridať modul (vstavaný názov alebo vlastný z [[custom]])')
+            add.set_show_apply_button(True)
+            add.connect('apply', lambda r: (
+                names.append(r.get_text().strip()) if r.get_text().strip() else None,
+                commit(), rebuild()))
+            group.add(add)
+            box_rows.append(add)
+            restore()
+        rebuild()
+        group.set_description('Vstavané: ' + ', '.join(MODULE_CHOICES))
+        reset = Gtk.Button(label='Predvolené', valign=Gtk.Align.CENTER)
+        reset.connect('clicked', lambda _b: (
+            names.__setitem__(slice(None), list(e['default'])), commit(), rebuild()))
+        group.set_header_suffix(reset)
+
+    # ============================================================ indexované / mapy
+    def build_indexed(self, ix):
+        sec, name, pats, maxn, hint = ix
+        m = self.model
+        group = Adw.PreferencesGroup(title=name, description=hint)
+        items = [dict(x) for x in m.get_indexed(sec, name, pats, maxn)]
+        rows = []
+
+        def commit():
+            m.set_indexed(sec, name, [dict(x) for x in items])
+            self.value_changed()
+
+        def rebuild():
+            restore = _preserve_scroll(group)
+            for r in rows:
+                group.remove(r)
+            rows.clear()
+            for i, it in enumerate(items):
+                first = str(it.get(pats[0][0], '')) or '(prázdne)'
+                ex = Adw.ExpanderRow(title=GLib.markup_escape_text(f'{i + 1}. {first}'))
+                for p, label, typ in pats:
+                    er = Adw.EntryRow(title=label)
+                    er.set_text(str(it.get(p, '')))
+                    er.connect('changed', lambda r, p=p, it=it: (it.__setitem__(p, r.get_text()), commit()))
+                    ex.add_row(er)
+                ctl = Gtk.Box(spacing=2, valign=Gtk.Align.CENTER)
+                for icon, fn, sens in (
+                    ('go-up-symbolic',
+                     lambda i=i: (items.insert(i - 1, items.pop(i)), commit(), rebuild()), i > 0),
+                    ('go-down-symbolic',
+                     lambda i=i: (items.insert(i + 1, items.pop(i)), commit(), rebuild()),
+                     i < len(items) - 1),
+                    ('user-trash-symbolic',
+                     lambda i=i: (items.pop(i), commit(), rebuild()), True),
+                ):
+                    b = Gtk.Button(icon_name=icon, sensitive=sens)
+                    b.add_css_class('flat')
+                    b.connect('clicked', lambda _b, fn=fn: fn())
+                    ctl.append(b)
+                ex.add_suffix(ctl)
+                group.add(ex)
+                rows.append(ex)
+            if len(items) < maxn:
+                add = Adw.ActionRow(title='Pridať')
+                b = Gtk.Button(icon_name='list-add-symbolic', valign=Gtk.Align.CENTER)
+                b.add_css_class('flat')
+                b.connect('clicked', lambda _b: (
+                    items.append({p: '' for p, _l, _t in pats}), commit(), rebuild()))
+                add.add_suffix(b)
+                add.set_activatable_widget(b)
+                group.add(add)
+                rows.append(add)
+            restore()
+        rebuild()
+        return group
+
+    def build_map(self, mp):
+        sec, name, desc = mp
+        m = self.model
+        group = Adw.PreferencesGroup(title=name, description=desc)
+        d = m.get_map(sec)
+        rows = []
+
+        def commit():
+            m.set_map(sec, d)
+            self.value_changed()
+
+        def rebuild():
+            restore = _preserve_scroll(group)
+            for r in rows:
+                group.remove(r)
+            rows.clear()
+            for k in list(d):
+                er = Adw.EntryRow(title=GLib.markup_escape_text(k))
+                er.set_text(d[k])
+                er.connect('changed', lambda r, k=k: (d.__setitem__(k, r.get_text()), commit()))
+                rm = Gtk.Button(icon_name='user-trash-symbolic', valign=Gtk.Align.CENTER)
+                rm.add_css_class('flat')
+                rm.connect('clicked', lambda _b, k=k: (d.pop(k, None), commit(), rebuild()))
+                er.add_suffix(rm)
+                group.add(er)
+                rows.append(er)
+            add = Adw.EntryRow(title='Pridať: pôvodný názov rozloženia (napr. Czech)')
+            add.set_show_apply_button(True)
+            add.connect('apply', lambda r: (
+                d.setdefault(r.get_text().strip(), ''), commit(), rebuild()
+            ) if r.get_text().strip() else None)
+            group.add(add)
+            rows.append(add)
+            restore()
+        rebuild()
+        return group
+
+    # ============================================================ akcie
+    def apply(self):
+        try:
+            backup = self.model.save()
+        except Exception as ex:  # noqa: BLE001
+            dlg = Adw.AlertDialog.new('Zápis zlyhal', str(ex))
+            dlg.add_response('ok', 'Zavrieť')
+            dlg.present(self)
+            return
+        self.reload(silent=True)
+        msg = 'Uložené. Ostrovček sa reštartuje sám.'
+        if backup:
+            msg += f' Záloha: {os.path.basename(backup)}'
+        self.toasts.add_toast(Adw.Toast.new(msg))
+
+    def reload(self, silent=False):
+        self.model.load()
+        # drop cached pages
+        for tid, stack in self.tab_stacks.items():
+            for key, page in list(self.pages.items()):
+                if key[0] == tid:
+                    try:
+                        stack.remove(page)
+                    except Exception:  # noqa: BLE001
+                        pass
+        self.pages.clear()
+        self.rows.clear()
+        self.apply_btn.set_sensitive(False)
+        # re-show current
+        if self.current_tab and self.current_sec is not None:
+            title = self.tab_titles.get(self.current_sec, self.current_sec)
+            self.show_section(self.current_tab, self.current_sec, title)
+        if not silent:
+            self.toasts.add_toast(Adw.Toast.new('Súbor načítaný znova'))
+
+    def discard(self):
+        self.model.discard()
+        self.reload(silent=True)
+        self.toasts.add_toast(Adw.Toast.new('Zmeny zahodené'))
+
+    def show_diff(self):
+        old = self.model.text.splitlines(keepends=True)
+        new = self.model.preview().splitlines(keepends=True)
+        diff = ''.join(difflib.unified_diff(old, new, 'config.toml', 'po použití', n=1)) or 'Žiadne zmeny.'
+        dlg = Adw.Dialog(title='Zmeny', content_width=720, content_height=520)
+        tv = Gtk.TextView(editable=False, monospace=True, cursor_visible=False,
+                          left_margin=12, top_margin=12)
+        tv.get_buffer().set_text(diff)
+        view = Adw.ToolbarView()
+        view.add_top_bar(Adw.HeaderBar())
+        view.set_content(Gtk.ScrolledWindow(child=tv))
+        dlg.set_child(view)
+        dlg.present(self)
+
+    def on_close(self, *_a):
+        if not self.model.dirty():
+            return False
+        dlg = Adw.AlertDialog.new('Neuložené zmeny', 'Máš zmeny, ktoré ešte neboli použité.')
+        dlg.add_response('cancel', 'Zrušiť')
+        dlg.add_response('discard', 'Zahodiť')
+        dlg.add_response('save', 'Použiť a zavrieť')
+        dlg.set_response_appearance('discard', Adw.ResponseAppearance.DESTRUCTIVE)
+        dlg.set_response_appearance('save', Adw.ResponseAppearance.SUGGESTED)
+        dlg.set_default_response('save')
+
+        def done(d, res):
+            r = d.choose_finish(res)
+            if r == 'save':
+                self.apply()
+                if not self.model.dirty():
+                    self.destroy()
+            elif r == 'discard':
+                self.model.discard()
+                self.destroy()
+        dlg.choose(self, None, done)
+        return True
+
+
+class App(Adw.Application):
+    def __init__(self, path):
+        super().__init__(application_id=APP_ID, flags=Gio.ApplicationFlags.DEFAULT_FLAGS)
+        self.path = path
+
+    def do_activate(self):
+        win = self.props.active_window or Window(self, Model(self.path))
+        win.present()
+
+
+def main(argv):
+    path = None
+    if len(argv) > 2 and argv[1] in ('-c', '--config'):
+        path = argv[2]
+    elif len(argv) > 1 and not argv[1].startswith('-'):
+        path = argv[1]
+    return App(path).run([argv[0]])
+
+
+if __name__ == '__main__':
+    sys.exit(main(sys.argv))

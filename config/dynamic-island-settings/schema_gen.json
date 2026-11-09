@@ -1,0 +1,1874 @@
+[
+ {
+  "section": "drun",
+  "key": "show",
+  "kind": "str_or",
+  "default": "icon",
+  "min": null,
+  "max": null,
+  "comment": "\"icon\" | \"name\" | \"icon+name-right\" | \"icon+name-below\""
+ },
+ {
+  "section": "drun",
+  "key": "columns",
+  "kind": "f64_or",
+  "default": 5.0,
+  "min": 1.0,
+  "max": 20.0,
+  "comment": ""
+ },
+ {
+  "section": "drun",
+  "key": "rows",
+  "kind": "f64_or",
+  "default": 4.0,
+  "min": 1.0,
+  "max": 20.0,
+  "comment": ""
+ },
+ {
+  "section": "drun",
+  "key": "icon_size",
+  "kind": "f64_or",
+  "default": 64.0,
+  "min": 16.0,
+  "max": 256.0,
+  "comment": ""
+ },
+ {
+  "section": "drun",
+  "key": "name_size",
+  "kind": "f64_or",
+  "default": 14.0,
+  "min": 8.0,
+  "max": 48.0,
+  "comment": ""
+ },
+ {
+  "section": "drun",
+  "key": "cell_width",
+  "kind": "f64_or",
+  "default": 0.0,
+  "min": 0.0,
+  "max": 600.0,
+  "comment": "0 = podľa režimu a veľkostí"
+ },
+ {
+  "section": "drun",
+  "key": "cell_height",
+  "kind": "f64_or",
+  "default": 0.0,
+  "min": 0.0,
+  "max": 600.0,
+  "comment": ""
+ },
+ {
+  "section": "drun",
+  "key": "padding",
+  "kind": "f64_or",
+  "default": 15.0,
+  "min": 0.0,
+  "max": 100.0,
+  "comment": ""
+ },
+ {
+  "section": "drun",
+  "key": "radius",
+  "kind": "f64_or",
+  "default": 30.0,
+  "min": 0.0,
+  "max": 100.0,
+  "comment": "zaoblenie okna"
+ },
+ {
+  "section": "drun",
+  "key": "cell_radius",
+  "kind": "f64_or",
+  "default": 15.0,
+  "min": 0.0,
+  "max": 100.0,
+  "comment": "zaoblenie zvýraznenej bunky"
+ },
+ {
+  "section": "drun",
+  "key": "opacity",
+  "kind": "f64_or",
+  "default": -1.0,
+  "min": null,
+  "max": null,
+  "comment": ""
+ },
+ {
+  "section": "drun",
+  "key": "order",
+  "kind": "str_or",
+  "default": "horizontal",
+  "min": null,
+  "max": null,
+  "comment": "\"horizontal\" = ďalšia aplikácia vedľa predošlej, \"vertical\" = pod predošlou"
+ },
+ {
+  "section": "drun",
+  "key": "hover",
+  "kind": "bool_or",
+  "default": true,
+  "min": null,
+  "max": null,
+  "comment": "zvýraznenie bunky pod ukazovateľom"
+ },
+ {
+  "section": "drun",
+  "key": "search",
+  "kind": "bool_or",
+  "default": false,
+  "min": null,
+  "max": null,
+  "comment": "riadok hľadania vždy viditeľný (písaním sa filtruje aj bez neho)"
+ },
+ {
+  "section": "drun",
+  "key": "terminal",
+  "kind": "str_or",
+  "default": "foot",
+  "min": null,
+  "max": null,
+  "comment": "pre aplikácie s Terminal=true"
+ },
+ {
+  "section": "drun",
+  "key": "icon_theme",
+  "kind": "str_or",
+  "default": "",
+  "min": null,
+  "max": null,
+  "comment": "prázdne = téma z nastavení GTK (gtk-icon-theme-name), inak hicolor; napr. \"Papirus\""
+ },
+ {
+  "section": "drun",
+  "key": "desktop",
+  "kind": "str_or",
+  "default": "",
+  "min": null,
+  "max": null,
+  "comment": "napr. \"Wayfire\" pre OnlyShowIn / NotShowIn; prázdne = nekontrolovať"
+ },
+ {
+  "section": "island",
+  "key": "font_scale",
+  "kind": "f64_or",
+  "default": 1.0,
+  "min": 0.5,
+  "max": 3.0,
+  "comment": "násobiteľ VŠETKÝCH písem (kapsula aj panely); napr. 1.15 = o 15 % väčšie"
+ },
+ {
+  "section": "island",
+  "key": "font_size",
+  "kind": "f64_or",
+  "default": 17.0,
+  "min": null,
+  "max": null,
+  "comment": ""
+ },
+ {
+  "section": "island",
+  "key": "height",
+  "kind": "f64_or",
+  "default": 34.0,
+  "min": null,
+  "max": null,
+  "comment": "výška kompaktného ostrovčeka (px)"
+ },
+ {
+  "section": "island",
+  "key": "margin_top",
+  "kind": "f64_or",
+  "default": 6.0,
+  "min": null,
+  "max": null,
+  "comment": ""
+ },
+ {
+  "section": "island",
+  "key": "radius",
+  "kind": "f64_or",
+  "default": 17.0,
+  "min": null,
+  "max": null,
+  "comment": "zbalený (kapsula)"
+ },
+ {
+  "section": "island",
+  "key": "radius_expanded",
+  "kind": "f64_or",
+  "default": 26.0,
+  "min": null,
+  "max": null,
+  "comment": "s kalendárom / tooltipom"
+ },
+ {
+  "section": "island",
+  "key": "opacity",
+  "kind": "f64_or",
+  "default": 0.75,
+  "min": null,
+  "max": null,
+  "comment": "krytie pozadia (ako alpha(@surface, 0.75))"
+ },
+ {
+  "section": "island",
+  "key": "shadow",
+  "kind": "bool_or",
+  "default": true,
+  "min": null,
+  "max": null,
+  "comment": ""
+ },
+ {
+  "section": "island",
+  "key": "surface_width",
+  "kind": "f64_or",
+  "default": 760.0,
+  "min": null,
+  "max": null,
+  "comment": "priehľadný povrch; myš prijíma len samotný ostrovček"
+ },
+ {
+  "section": "island",
+  "key": "surface_height",
+  "kind": "f64_or",
+  "default": 560.0,
+  "min": null,
+  "max": null,
+  "comment": ""
+ },
+ {
+  "section": "island",
+  "key": "tooltip_delay_ms",
+  "kind": "f64_or",
+  "default": 450.0,
+  "min": null,
+  "max": null,
+  "comment": ""
+ },
+ {
+  "section": "island",
+  "key": "collapse_delay_ms",
+  "kind": "f64_or",
+  "default": 700.0,
+  "min": null,
+  "max": null,
+  "comment": ""
+ },
+ {
+  "section": "island",
+  "key": "poll_ms",
+  "kind": "f64_or",
+  "default": 300.0,
+  "min": 50.0,
+  "max": null,
+  "comment": "kontrola caps/inhibitor/rec/rozloženia"
+ },
+ {
+  "section": "island",
+  "key": "colors_file",
+  "kind": "str_or",
+  "default": "~/.config/waybar/waybar-colors.css",
+  "min": null,
+  "max": null,
+  "comment": "@define-color surface / primary ..."
+ },
+ {
+  "section": "clock",
+  "key": "format",
+  "kind": "str_or",
+  "default": "%A  %d. %B,  %H:%M",
+  "min": null,
+  "max": null,
+  "comment": ""
+ },
+ {
+  "section": "clock",
+  "key": "locale",
+  "kind": "str_or",
+  "default": "sk_SK.UTF-8",
+  "min": null,
+  "max": null,
+  "comment": ""
+ },
+ {
+  "section": "network",
+  "key": "interface",
+  "kind": "str_or",
+  "default": "wlan0",
+  "min": null,
+  "max": null,
+  "comment": ""
+ },
+ {
+  "section": "network",
+  "key": "icon_ethernet",
+  "kind": "str_or",
+  "default": "󰈀",
+  "min": null,
+  "max": null,
+  "comment": ""
+ },
+ {
+  "section": "network",
+  "key": "icon_disconnected",
+  "kind": "str_or",
+  "default": "󰤭",
+  "min": null,
+  "max": null,
+  "comment": ""
+ },
+ {
+  "section": "vpn",
+  "key": "interfaces",
+  "kind": "strs",
+  "default": [],
+  "min": null,
+  "max": null,
+  "comment": ""
+ },
+ {
+  "section": "vpn",
+  "key": "text",
+  "kind": "str_or",
+  "default": "VPN",
+  "min": null,
+  "max": null,
+  "comment": ""
+ },
+ {
+  "section": "audio",
+  "key": "icon_muted",
+  "kind": "str_or",
+  "default": "",
+  "min": null,
+  "max": null,
+  "comment": ""
+ },
+ {
+  "section": "audio",
+  "key": "hud",
+  "kind": "bool_or",
+  "default": true,
+  "min": null,
+  "max": null,
+  "comment": ""
+ },
+ {
+  "section": "audio",
+  "key": "hud_ms",
+  "kind": "f64_or",
+  "default": 1600.0,
+  "min": null,
+  "max": null,
+  "comment": ""
+ },
+ {
+  "section": "audio",
+  "key": "step",
+  "kind": "f64_or",
+  "default": 5.0,
+  "min": 1.0,
+  "max": null,
+  "comment": "krok skratiek v %"
+ },
+ {
+  "section": "audio",
+  "key": "limit",
+  "kind": "f64_or",
+  "default": 1.0,
+  "min": 0.1,
+  "max": null,
+  "comment": "strop hlasitosti (1.0 = 100 %)"
+ },
+ {
+  "section": "brightness",
+  "key": "step",
+  "kind": "f64_or",
+  "default": 10.0,
+  "min": 1.0,
+  "max": null,
+  "comment": ""
+ },
+ {
+  "section": "brightness",
+  "key": "get",
+  "kind": "str_or",
+  "default": "lumix get",
+  "min": null,
+  "max": null,
+  "comment": ""
+ },
+ {
+  "section": "brightness",
+  "key": "set",
+  "kind": "str_or",
+  "default": "lumix set \"{value}\"",
+  "min": null,
+  "max": null,
+  "comment": "{value} = \"10+\", \"10-\" alebo číslo; v výstupe sa hľadá NN%"
+ },
+ {
+  "section": "network",
+  "key": "tooltip_ethernet",
+  "kind": "str_or",
+  "default": "Rozhranie: {ifname}\nIP adresa: {ip}\nBrána: {gateway}",
+  "min": null,
+  "max": null,
+  "comment": ""
+ },
+ {
+  "section": "network",
+  "key": "tooltip_disconnected",
+  "kind": "str_or",
+  "default": "",
+  "min": null,
+  "max": null,
+  "comment": ""
+ },
+ {
+  "section": "capslock",
+  "key": "text",
+  "kind": "str_or",
+  "default": "CAPS",
+  "min": null,
+  "max": null,
+  "comment": ""
+ },
+ {
+  "section": "inhibitor",
+  "key": "icon",
+  "kind": "str_or",
+  "default": "",
+  "min": null,
+  "max": null,
+  "comment": ""
+ },
+ {
+  "section": "inhibitor",
+  "key": "file",
+  "kind": "str_or",
+  "default": "~/.idle_inhibit",
+  "min": null,
+  "max": null,
+  "comment": ""
+ },
+ {
+  "section": "radio",
+  "key": "icon",
+  "kind": "str_or",
+  "default": "󰐹",
+  "min": null,
+  "max": null,
+  "comment": ""
+ },
+ {
+  "section": "media",
+  "key": "icon",
+  "kind": "str_or",
+  "default": "",
+  "min": null,
+  "max": null,
+  "comment": "ikona pri prehrávaní"
+ },
+ {
+  "section": "media",
+  "key": "icon_paused",
+  "kind": "str_or",
+  "default": "",
+  "min": null,
+  "max": null,
+  "comment": "ikona pri pozastavení"
+ },
+ {
+  "section": "media",
+  "key": "ignore",
+  "kind": "strs",
+  "default": [],
+  "min": null,
+  "max": null,
+  "comment": "prehrávače, ktoré sa majú preskočiť (podreťazec mena na zbernici)"
+ },
+ {
+  "section": "media",
+  "key": "panel_width",
+  "kind": "f64_or",
+  "default": 460.0,
+  "min": 300.0,
+  "max": 900.0,
+  "comment": ""
+ },
+ {
+  "section": "media",
+  "key": "art_size",
+  "kind": "f64_or",
+  "default": 128.0,
+  "min": 80.0,
+  "max": 256.0,
+  "comment": "veľkosť obalu (80–256 px)"
+ },
+ {
+  "section": "media",
+  "key": "font_size",
+  "kind": "f64_or",
+  "default": 16.0,
+  "min": 10.0,
+  "max": 32.0,
+  "comment": ""
+ },
+ {
+  "section": "recorder",
+  "key": "file",
+  "kind": "str_or",
+  "default": "/tmp/RECORDING",
+  "min": null,
+  "max": null,
+  "comment": ""
+ },
+ {
+  "section": "disks",
+  "key": "icon",
+  "kind": "str_or",
+  "default": "",
+  "min": null,
+  "max": null,
+  "comment": "nf-fa-usb"
+ },
+ {
+  "section": "disks",
+  "key": "format",
+  "kind": "str_or",
+  "default": "{icon}",
+  "min": null,
+  "max": null,
+  "comment": "jeden disk"
+ },
+ {
+  "section": "disks",
+  "key": "format_many",
+  "kind": "str_or",
+  "default": "{icon} {count}",
+  "min": null,
+  "max": null,
+  "comment": "viac diskov (počíta sa disk, nie oddiel); {icon} {count} {label}"
+ },
+ {
+  "section": "disks",
+  "key": "automount",
+  "kind": "bool_or",
+  "default": true,
+  "min": null,
+  "max": null,
+  "comment": "automaticky pripájať nové médiá"
+ },
+ {
+  "section": "disks",
+  "key": "notify",
+  "kind": "bool_or",
+  "default": true,
+  "min": null,
+  "max": null,
+  "comment": "notifikácie o pripojení / odpojení / chybách"
+ },
+ {
+  "section": "disks",
+  "key": "notify_timeout_ms",
+  "kind": "f64_or",
+  "default": 5000.0,
+  "min": null,
+  "max": null,
+  "comment": "ako dlho zostanú na obrazovke (rovnaký pre všetky); 0 = nevyprší"
+ },
+ {
+  "section": "notifications",
+  "key": "history_file",
+  "kind": "str_or",
+  "default": "",
+  "min": null,
+  "max": null,
+  "comment": ""
+ },
+ {
+  "section": "notifications",
+  "key": "history",
+  "kind": "bool_or",
+  "default": true,
+  "min": null,
+  "max": null,
+  "comment": "ukladať históriu (JSON riadky) vedľa konfigurácie"
+ },
+ {
+  "section": "notifications",
+  "key": "history_max",
+  "kind": "f64_or",
+  "default": 1000.0,
+  "min": 0.0,
+  "max": null,
+  "comment": "koľko posledných záznamov ponechať"
+ },
+ {
+  "section": "notifications",
+  "key": "enabled",
+  "kind": "bool_or",
+  "default": true,
+  "min": null,
+  "max": null,
+  "comment": ""
+ },
+ {
+  "section": "notifications",
+  "key": "width",
+  "kind": "f64_or",
+  "default": 450.0,
+  "min": null,
+  "max": null,
+  "comment": ""
+ },
+ {
+  "section": "notifications",
+  "key": "max_visible",
+  "kind": "f64_or",
+  "default": 3.0,
+  "min": 1.0,
+  "max": null,
+  "comment": ""
+ },
+ {
+  "section": "notifications",
+  "key": "max_lines",
+  "kind": "f64_or",
+  "default": 3.0,
+  "min": 1.0,
+  "max": null,
+  "comment": ""
+ },
+ {
+  "section": "system",
+  "key": "decimal",
+  "kind": "str_or",
+  "default": ",",
+  "min": null,
+  "max": null,
+  "comment": "desatinný oddeľovač vo výstupe (\",\" alebo \".\")"
+ },
+ {
+  "section": "system",
+  "key": "net_interface",
+  "kind": "str_or",
+  "default": "",
+  "min": null,
+  "max": null,
+  "comment": "rozhranie pre net-down / net-up; prázdne = rozhranie s predvolenou trasou"
+ },
+ {
+  "section": "notifications",
+  "key": "icons",
+  "kind": "bool_or",
+  "default": true,
+  "min": null,
+  "max": null,
+  "comment": "ikony notifikácií (image-data / image-path / app_icon; len PNG, inak písmeno aplikácie)"
+ },
+ {
+  "section": "notifications",
+  "key": "panel_width",
+  "kind": "f64_or",
+  "default": 480.0,
+  "min": 240.0,
+  "max": 1400.0,
+  "comment": ""
+ },
+ {
+  "section": "notifications",
+  "key": "panel_height",
+  "kind": "f64_or",
+  "default": 520.0,
+  "min": 200.0,
+  "max": 1600.0,
+  "comment": ""
+ },
+ {
+  "section": "notifications",
+  "key": "panel_lines",
+  "kind": "f64_or",
+  "default": 3.0,
+  "min": 1.0,
+  "max": null,
+  "comment": "najviac riadkov tela na kartu"
+ },
+ {
+  "section": "notifications",
+  "key": "font_size",
+  "kind": "f64_or",
+  "default": 15.0,
+  "min": null,
+  "max": null,
+  "comment": ""
+ },
+ {
+  "section": "notifications",
+  "key": "timeout_ms",
+  "kind": "f64_or",
+  "default": 10000.0,
+  "min": null,
+  "max": null,
+  "comment": "ak aplikácia nepošle vlastný; 0 = nevyprší"
+ },
+ {
+  "section": "notifications.urgent",
+  "key": "timeout_ms",
+  "kind": "f64_or",
+  "default": 0.0,
+  "min": null,
+  "max": null,
+  "comment": "urgentné nevyprší, kým ich nezavrieš"
+ },
+ {
+  "section": "notifications.urgent",
+  "key": "border_size",
+  "kind": "f64_or",
+  "default": 2.0,
+  "min": null,
+  "max": null,
+  "comment": ""
+ },
+ {
+  "section": "notifications",
+  "key": "align",
+  "kind": "str_or",
+  "default": "center",
+  "min": null,
+  "max": null,
+  "comment": "\"center\" alebo \"left\""
+ },
+ {
+  "section": "notifications",
+  "key": "on_click",
+  "kind": "str_or",
+  "default": "default-action",
+  "min": null,
+  "max": null,
+  "comment": "akcia \"default\" aplikácie + zavrieť; \"dismiss\"; alebo príkaz (napr. tvoj mako_action.sh)"
+ },
+ {
+  "section": "notifications",
+  "key": "on_click_right",
+  "kind": "str_or",
+  "default": "dismiss",
+  "min": null,
+  "max": null,
+  "comment": "stredné tlačidlo zavrie všetky"
+ },
+ {
+  "section": "clipboard",
+  "key": "font_size",
+  "kind": "f64_or",
+  "default": 15.0,
+  "min": 8.0,
+  "max": 64.0,
+  "comment": "veľkosť písma"
+ },
+ {
+  "section": "clipboard",
+  "key": "rows",
+  "kind": "f64_or",
+  "default": 8.0,
+  "min": 1.0,
+  "max": 50.0,
+  "comment": "koľko riadkov je vidieť, viac = skrolovanie"
+ },
+ {
+  "section": "clipboard",
+  "key": "width",
+  "kind": "f64_or",
+  "default": 420.0,
+  "min": 120.0,
+  "max": 1400.0,
+  "comment": "šírka panela"
+ },
+ {
+  "section": "clipboard",
+  "key": "max_items",
+  "kind": "f64_or",
+  "default": 200.0,
+  "min": 1.0,
+  "max": 5000.0,
+  "comment": "koľko najnovších položiek sa načíta"
+ },
+ {
+  "section": "clipboard",
+  "key": "list_command",
+  "kind": "str_or",
+  "default": "cliphist list",
+  "min": null,
+  "max": null,
+  "comment": ""
+ },
+ {
+  "section": "clipboard",
+  "key": "copy_command",
+  "kind": "str_or",
+  "default": "cliphist decode | wl-copy",
+  "min": null,
+  "max": null,
+  "comment": ""
+ },
+ {
+  "section": "clipboard",
+  "key": "search",
+  "kind": "bool_or",
+  "default": true,
+  "min": null,
+  "max": null,
+  "comment": "skryje vyhladacie pole, ale vyhladava nadalej"
+ },
+ {
+  "section": "clipboard",
+  "key": "window_radius",
+  "kind": "f64_or",
+  "default": 24.0,
+  "min": 0.0,
+  "max": 100.0,
+  "comment": "zaoblenie okna samostatného režimu `dynamic-island --clip`"
+ },
+ {
+  "section": "autohide",
+  "key": "enabled",
+  "kind": "bool_or",
+  "default": true,
+  "min": null,
+  "max": null,
+  "comment": ""
+ },
+ {
+  "section": "autohide",
+  "key": "bar_height",
+  "kind": "f64_or",
+  "default": 40.0,
+  "min": null,
+  "max": null,
+  "comment": ""
+ },
+ {
+  "section": "autohide",
+  "key": "edge",
+  "kind": "f64_or",
+  "default": 2.0,
+  "min": null,
+  "max": null,
+  "comment": ""
+ },
+ {
+  "section": "autohide",
+  "key": "edge_width",
+  "kind": "f64_or",
+  "default": 30.0,
+  "min": 0.0,
+  "max": 100.0,
+  "comment": ""
+ },
+ {
+  "section": "autohide",
+  "key": "margin",
+  "kind": "f64_or",
+  "default": 0.0,
+  "min": null,
+  "max": null,
+  "comment": ""
+ },
+ {
+  "section": "autohide",
+  "key": "poll_ms",
+  "kind": "f64_or",
+  "default": 30.0,
+  "min": 10.0,
+  "max": null,
+  "comment": ""
+ },
+ {
+  "section": "autohide",
+  "key": "ignore",
+  "kind": "strs",
+  "default": [],
+  "min": null,
+  "max": null,
+  "comment": ""
+ },
+ {
+  "section": "audio",
+  "key": "panel_font_size",
+  "kind": "f64_or",
+  "default": 15.0,
+  "min": 8.0,
+  "max": 64.0,
+  "comment": ""
+ },
+ {
+  "section": "audio",
+  "key": "panel_width",
+  "kind": "f64_or",
+  "default": 380.0,
+  "min": 200.0,
+  "max": 1000.0,
+  "comment": ""
+ },
+ {
+  "section": "audio",
+  "key": "panel_rows",
+  "kind": "f64_or",
+  "default": 6.0,
+  "min": 1.0,
+  "max": 30.0,
+  "comment": ""
+ },
+ {
+  "section": "bluetooth",
+  "key": "font_size",
+  "kind": "f64_or",
+  "default": 15.0,
+  "min": 8.0,
+  "max": 64.0,
+  "comment": ""
+ },
+ {
+  "section": "bluetooth",
+  "key": "rows",
+  "kind": "f64_or",
+  "default": 8.0,
+  "min": 1.0,
+  "max": 30.0,
+  "comment": ""
+ },
+ {
+  "section": "bluetooth",
+  "key": "width",
+  "kind": "f64_or",
+  "default": 380.0,
+  "min": 200.0,
+  "max": 1000.0,
+  "comment": ""
+ },
+ {
+  "section": "bluetooth",
+  "key": "scan_ms",
+  "kind": "f64_or",
+  "default": 4000.0,
+  "min": 500.0,
+  "max": 30000.0,
+  "comment": ""
+ },
+ {
+  "section": "bluetooth",
+  "key": "editor_command",
+  "kind": "str_or",
+  "default": "",
+  "min": null,
+  "max": null,
+  "comment": ""
+ },
+ {
+  "section": "bluetooth",
+  "key": "editor_icon",
+  "kind": "str_or",
+  "default": "",
+  "min": null,
+  "max": null,
+  "comment": ""
+ },
+ {
+  "section": "bluetooth",
+  "key": "editor_label",
+  "kind": "str_or",
+  "default": "",
+  "min": null,
+  "max": null,
+  "comment": ""
+ },
+ {
+  "section": "capture",
+  "key": "mode",
+  "kind": "str_or",
+  "default": "region",
+  "min": null,
+  "max": null,
+  "comment": "predvolená oblasť: screen | window | region"
+ },
+ {
+  "section": "capture",
+  "key": "kind",
+  "kind": "str_or",
+  "default": "image",
+  "min": null,
+  "max": null,
+  "comment": "predvolený typ: image | video"
+ },
+ {
+  "section": "capture",
+  "key": "format",
+  "kind": "str_or",
+  "default": "png",
+  "min": null,
+  "max": null,
+  "comment": "png | jpeg"
+ },
+ {
+  "section": "capture",
+  "key": "video_ext",
+  "kind": "str_or",
+  "default": "mp4",
+  "min": null,
+  "max": null,
+  "comment": "mp4 | mkv | webm"
+ },
+ {
+  "section": "capture",
+  "key": "font_size",
+  "kind": "f64_or",
+  "default": 15.0,
+  "min": 8.0,
+  "max": 64.0,
+  "comment": ""
+ },
+ {
+  "section": "capture",
+  "key": "width",
+  "kind": "f64_or",
+  "default": 380.0,
+  "min": 240.0,
+  "max": 800.0,
+  "comment": ""
+ },
+ {
+  "section": "capture",
+  "key": "dir",
+  "kind": "str_or",
+  "default": "~/Pictures/Screenshots",
+  "min": null,
+  "max": null,
+  "comment": ""
+ },
+ {
+  "section": "capture",
+  "key": "video_dir",
+  "kind": "str_or",
+  "default": "~/Videos/Recordings",
+  "min": null,
+  "max": null,
+  "comment": ""
+ },
+ {
+  "section": "capture",
+  "key": "name",
+  "kind": "str_or",
+  "default": "%Y-%m-%d_%H-%M-%S",
+  "min": null,
+  "max": null,
+  "comment": "vzor názvu súboru (strftime)"
+ },
+ {
+  "section": "capture",
+  "key": "cursor",
+  "kind": "bool_or",
+  "default": false,
+  "min": null,
+  "max": null,
+  "comment": "kurzor myši na snímke"
+ },
+ {
+  "section": "capture",
+  "key": "audio",
+  "kind": "bool_or",
+  "default": false,
+  "min": null,
+  "max": null,
+  "comment": "zvuk pri nahrávaní"
+ },
+ {
+  "section": "capture",
+  "key": "slurp_args",
+  "kind": "str_or",
+  "default": "-b #ffffff30 -w 0",
+  "min": null,
+  "max": null,
+  "comment": "000000AA -w 0\"   # vzhľad výberu slurp (nahrádza nepodporovaný kľúč slurp_bg)"
+ },
+ {
+  "section": "capture",
+  "key": "recorder_args",
+  "kind": "str_or",
+  "default": "",
+  "min": null,
+  "max": null,
+  "comment": "ďalšie argumenty pre wf-recorder, napr. \"-c h264_vaapi -d /dev/dri/renderD128\""
+ },
+ {
+  "section": "capture",
+  "key": "copy",
+  "kind": "bool_or",
+  "default": true,
+  "min": null,
+  "max": null,
+  "comment": "snímku skopírovať do schránky (wl-copy)"
+ },
+ {
+  "section": "capture",
+  "key": "notify",
+  "kind": "bool_or",
+  "default": true,
+  "min": null,
+  "max": null,
+  "comment": "po uložení poslať notifikáciu (notify-send)"
+ },
+ {
+  "section": "capture",
+  "key": "hide_bar",
+  "kind": "bool_or",
+  "default": true,
+  "min": null,
+  "max": null,
+  "comment": "pri snímke dočasne skryť ostrovček"
+ },
+ {
+  "section": "capture",
+  "key": "settle_ms",
+  "kind": "f64_or",
+  "default": 350.0,
+  "min": 0.0,
+  "max": 3000.0,
+  "comment": ""
+ },
+ {
+  "section": "monitor",
+  "key": "preset_labels",
+  "kind": "strs",
+  "default": [],
+  "min": null,
+  "max": null,
+  "comment": ""
+ },
+ {
+  "section": "monitor",
+  "key": "input_labels",
+  "kind": "strs",
+  "default": [],
+  "min": null,
+  "max": null,
+  "comment": ""
+ },
+ {
+  "section": "monitor",
+  "key": "font_size",
+  "kind": "f64_or",
+  "default": 15.0,
+  "min": 8.0,
+  "max": 64.0,
+  "comment": ""
+ },
+ {
+  "section": "monitor",
+  "key": "width",
+  "kind": "f64_or",
+  "default": 380.0,
+  "min": 240.0,
+  "max": 800.0,
+  "comment": ""
+ },
+ {
+  "section": "monitor",
+  "key": "bus",
+  "kind": "str_or",
+  "default": "10",
+  "min": null,
+  "max": null,
+  "comment": ""
+ },
+ {
+  "section": "monitor",
+  "key": "night_switcher",
+  "kind": "str_or",
+  "default": "",
+  "min": null,
+  "max": null,
+  "comment": ""
+ },
+ {
+  "section": "monitor",
+  "key": "night_state",
+  "kind": "str_or",
+  "default": "",
+  "min": null,
+  "max": null,
+  "comment": "voliteľné"
+ },
+ {
+  "section": "monitor",
+  "key": "night_label",
+  "kind": "str_or",
+  "default": "Nočný režim",
+  "min": null,
+  "max": null,
+  "comment": "voliteľné"
+ },
+ {
+  "section": "quickset",
+  "key": "tab_gap",
+  "kind": "f64_or",
+  "default": 6.0,
+  "min": 0.0,
+  "max": 64.0,
+  "comment": "px, 0–64, predvolene 6"
+ },
+ {
+  "section": "quickset",
+  "key": "tabs_position",
+  "kind": "str_or",
+  "default": "left",
+  "min": null,
+  "max": null,
+  "comment": "left | right | top | bottom"
+ },
+ {
+  "section": "quickset",
+  "key": "tab_size",
+  "kind": "f64_or",
+  "default": 44.0,
+  "min": 24.0,
+  "max": 120.0,
+  "comment": "strana tlačidla záložky (px)"
+ },
+ {
+  "section": "quickset",
+  "key": "icon_size",
+  "kind": "f64_or",
+  "default": 22.0,
+  "min": 8.0,
+  "max": 64.0,
+  "comment": "veľkosť ikony (px)"
+ },
+ {
+  "section": "quickset",
+  "key": "inversetab_gap",
+  "kind": "f64_or",
+  "default": null,
+  "min": 0.0,
+  "max": 64.0,
+  "comment": "pre 5 tlacidiel gap=23"
+ },
+ {
+  "section": "quickset",
+  "key": "preload",
+  "kind": "bool_or",
+  "default": true,
+  "min": null,
+  "max": null,
+  "comment": "predvolene true: údaje monitora sa načítajú už pri otvorení kontajnera (ddcutil je pomalý)"
+ },
+ {
+  "section": "trash",
+  "key": "width",
+  "kind": "f64_or",
+  "default": 560.0,
+  "min": 240.0,
+  "max": 1600.0,
+  "comment": ""
+ },
+ {
+  "section": "trash",
+  "key": "rows",
+  "kind": "f64_or",
+  "default": 8.0,
+  "min": 1.0,
+  "max": 50.0,
+  "comment": ""
+ },
+ {
+  "section": "trash",
+  "key": "text_size",
+  "kind": "f64_or",
+  "default": 14.0,
+  "min": 8.0,
+  "max": 64.0,
+  "comment": ""
+ },
+ {
+  "section": "trash",
+  "key": "confirm_empty",
+  "kind": "bool_or",
+  "default": true,
+  "min": null,
+  "max": null,
+  "comment": ""
+ },
+ {
+  "section": "trash",
+  "key": "show_location",
+  "kind": "bool_or",
+  "default": true,
+  "min": null,
+  "max": null,
+  "comment": ""
+ },
+ {
+  "section": "trash",
+  "key": "show_date",
+  "kind": "bool_or",
+  "default": true,
+  "min": null,
+  "max": null,
+  "comment": ""
+ },
+ {
+  "section": "wallpaper",
+  "key": "directory",
+  "kind": "str_or",
+  "default": "~/.config/wayfire/media/wallpaper",
+  "min": null,
+  "max": null,
+  "comment": ""
+ },
+ {
+  "section": "wallpaper",
+  "key": "columns",
+  "kind": "f64_or",
+  "default": 4.0,
+  "min": 1.0,
+  "max": 12.0,
+  "comment": ""
+ },
+ {
+  "section": "wallpaper",
+  "key": "rows",
+  "kind": "f64_or",
+  "default": 4.0,
+  "min": 1.0,
+  "max": 20.0,
+  "comment": ""
+ },
+ {
+  "section": "wallpaper",
+  "key": "thumb_width",
+  "kind": "f64_or",
+  "default": 160.0,
+  "min": 60.0,
+  "max": 600.0,
+  "comment": ""
+ },
+ {
+  "section": "wallpaper",
+  "key": "command",
+  "kind": "str_or",
+  "default": "~/.config/wayfire/scripts/wallpaper",
+  "min": null,
+  "max": null,
+  "comment": ""
+ },
+ {
+  "section": "wallpaper",
+  "key": "cache_dir",
+  "kind": "str_or",
+  "default": "~/.cache/wallpaper-chooser",
+  "min": null,
+  "max": null,
+  "comment": ""
+ },
+ {
+  "section": "wallpaper",
+  "key": "themes_directory",
+  "kind": "str_or",
+  "default": "~/.config/matugen/themes",
+  "min": null,
+  "max": null,
+  "comment": ""
+ },
+ {
+  "section": "wallpaper",
+  "key": "theme_width",
+  "kind": "f64_or",
+  "default": 170.0,
+  "min": 80.0,
+  "max": 600.0,
+  "comment": ""
+ },
+ {
+  "section": "wallpaper",
+  "key": "hover_ring",
+  "kind": "bool_or",
+  "default": true,
+  "min": null,
+  "max": null,
+  "comment": "rámik okolo náhľadu pod kurzorom"
+ },
+ {
+  "section": "wallpaper",
+  "key": "current_ring",
+  "kind": "bool_or",
+  "default": true,
+  "min": null,
+  "max": null,
+  "comment": "rámik okolo aktuálne nastavenej tapety"
+ },
+ {
+  "section": "wallpaper",
+  "key": "button_max_width",
+  "kind": "f64_or",
+  "default": 0.0,
+  "min": null,
+  "max": null,
+  "comment": ""
+ },
+ {
+  "section": "wifi",
+  "key": "font_size",
+  "kind": "f64_or",
+  "default": 15.0,
+  "min": 8.0,
+  "max": 64.0,
+  "comment": ""
+ },
+ {
+  "section": "wifi",
+  "key": "rows",
+  "kind": "f64_or",
+  "default": 8.0,
+  "min": 1.0,
+  "max": 30.0,
+  "comment": ""
+ },
+ {
+  "section": "wifi",
+  "key": "width",
+  "kind": "f64_or",
+  "default": 420.0,
+  "min": 200.0,
+  "max": 1000.0,
+  "comment": ""
+ },
+ {
+  "section": "wifi",
+  "key": "editor_command",
+  "kind": "str_or",
+  "default": "nm-connection-editor",
+  "min": null,
+  "max": null,
+  "comment": ""
+ },
+ {
+  "section": "wifi",
+  "key": "editor_icon",
+  "kind": "str_or",
+  "default": "",
+  "min": null,
+  "max": null,
+  "comment": ""
+ },
+ {
+  "section": "wifi",
+  "key": "editor_label",
+  "kind": "str_or",
+  "default": "",
+  "min": null,
+  "max": null,
+  "comment": "text a / alebo editor_icon = \"\\U000f0493\"; bez nich (alebo s prázdnym editor_command) sa tlačidlo nezobrazí"
+ },
+ {
+  "section": "clock",
+  "key": "on_click",
+  "kind": "str_or",
+  "default": "calendar",
+  "min": null,
+  "max": null,
+  "comment": "kalendár sa rozbalí priamo v ostrovčeku"
+ },
+ {
+  "section": "clock",
+  "key": "on_click_right",
+  "kind": "str_or",
+  "default": "",
+  "min": null,
+  "max": null,
+  "comment": ""
+ },
+ {
+  "section": "clock",
+  "key": "on_click_middle",
+  "kind": "str_or",
+  "default": "",
+  "min": null,
+  "max": null,
+  "comment": ""
+ },
+ {
+  "section": "clock",
+  "key": "tooltip",
+  "kind": "str_or",
+  "default": "",
+  "min": null,
+  "max": null,
+  "comment": ""
+ },
+ {
+  "section": "network",
+  "key": "on_click",
+  "kind": "str_or",
+  "default": "",
+  "min": null,
+  "max": null,
+  "comment": ""
+ },
+ {
+  "section": "network",
+  "key": "on_click_right",
+  "kind": "str_or",
+  "default": "",
+  "min": null,
+  "max": null,
+  "comment": ""
+ },
+ {
+  "section": "network",
+  "key": "on_click_middle",
+  "kind": "str_or",
+  "default": "",
+  "min": null,
+  "max": null,
+  "comment": ""
+ },
+ {
+  "section": "network",
+  "key": "tooltip",
+  "kind": "str_or",
+  "default": "",
+  "min": null,
+  "max": null,
+  "comment": ""
+ },
+ {
+  "section": "vpn",
+  "key": "on_click",
+  "kind": "str_or",
+  "default": "",
+  "min": null,
+  "max": null,
+  "comment": ""
+ },
+ {
+  "section": "vpn",
+  "key": "on_click_right",
+  "kind": "str_or",
+  "default": "",
+  "min": null,
+  "max": null,
+  "comment": ""
+ },
+ {
+  "section": "vpn",
+  "key": "on_click_middle",
+  "kind": "str_or",
+  "default": "",
+  "min": null,
+  "max": null,
+  "comment": ""
+ },
+ {
+  "section": "vpn",
+  "key": "tooltip",
+  "kind": "str_or",
+  "default": "{ifname}: {ip}",
+  "min": null,
+  "max": null,
+  "comment": ""
+ },
+ {
+  "section": "audio",
+  "key": "on_click",
+  "kind": "str_or",
+  "default": "audio-mute",
+  "min": null,
+  "max": null,
+  "comment": "natívne (wpctl); skript Volume.sh netreba"
+ },
+ {
+  "section": "audio",
+  "key": "on_click_right",
+  "kind": "str_or",
+  "default": "",
+  "min": null,
+  "max": null,
+  "comment": ""
+ },
+ {
+  "section": "audio",
+  "key": "on_click_middle",
+  "kind": "str_or",
+  "default": "",
+  "min": null,
+  "max": null,
+  "comment": ""
+ },
+ {
+  "section": "audio",
+  "key": "tooltip",
+  "kind": "str_or",
+  "default": "",
+  "min": null,
+  "max": null,
+  "comment": ""
+ },
+ {
+  "section": "keyboard",
+  "key": "on_click",
+  "kind": "str_or",
+  "default": "layout-toggle",
+  "min": null,
+  "max": null,
+  "comment": ""
+ },
+ {
+  "section": "keyboard",
+  "key": "on_click_right",
+  "kind": "str_or",
+  "default": "",
+  "min": null,
+  "max": null,
+  "comment": ""
+ },
+ {
+  "section": "keyboard",
+  "key": "on_click_middle",
+  "kind": "str_or",
+  "default": "",
+  "min": null,
+  "max": null,
+  "comment": ""
+ },
+ {
+  "section": "keyboard",
+  "key": "tooltip",
+  "kind": "str_or",
+  "default": "Klávesnica SK/US",
+  "min": null,
+  "max": null,
+  "comment": ""
+ },
+ {
+  "section": "capslock",
+  "key": "on_click",
+  "kind": "str_or",
+  "default": "",
+  "min": null,
+  "max": null,
+  "comment": ""
+ },
+ {
+  "section": "capslock",
+  "key": "on_click_right",
+  "kind": "str_or",
+  "default": "",
+  "min": null,
+  "max": null,
+  "comment": ""
+ },
+ {
+  "section": "capslock",
+  "key": "on_click_middle",
+  "kind": "str_or",
+  "default": "",
+  "min": null,
+  "max": null,
+  "comment": ""
+ },
+ {
+  "section": "capslock",
+  "key": "tooltip",
+  "kind": "str_or",
+  "default": "",
+  "min": null,
+  "max": null,
+  "comment": ""
+ },
+ {
+  "section": "inhibitor",
+  "key": "on_click",
+  "kind": "str_or",
+  "default": "inhibit-toggle",
+  "min": null,
+  "max": null,
+  "comment": ""
+ },
+ {
+  "section": "inhibitor",
+  "key": "on_click_right",
+  "kind": "str_or",
+  "default": "",
+  "min": null,
+  "max": null,
+  "comment": ""
+ },
+ {
+  "section": "inhibitor",
+  "key": "on_click_middle",
+  "kind": "str_or",
+  "default": "",
+  "min": null,
+  "max": null,
+  "comment": ""
+ },
+ {
+  "section": "inhibitor",
+  "key": "tooltip",
+  "kind": "str_or",
+  "default": "Idle Inhibitor",
+  "min": null,
+  "max": null,
+  "comment": ""
+ },
+ {
+  "section": "radio",
+  "key": "on_click",
+  "kind": "str_or",
+  "default": "track-stop:radio",
+  "min": null,
+  "max": null,
+  "comment": ""
+ },
+ {
+  "section": "radio",
+  "key": "on_click_right",
+  "kind": "str_or",
+  "default": "",
+  "min": null,
+  "max": null,
+  "comment": ""
+ },
+ {
+  "section": "radio",
+  "key": "on_click_middle",
+  "kind": "str_or",
+  "default": "",
+  "min": null,
+  "max": null,
+  "comment": ""
+ },
+ {
+  "section": "radio",
+  "key": "tooltip",
+  "kind": "str_or",
+  "default": "{name}\nKlik = vypnúť",
+  "min": null,
+  "max": null,
+  "comment": "{name} = label položky"
+ },
+ {
+  "section": "media",
+  "key": "on_click",
+  "kind": "str_or",
+  "default": "media",
+  "min": null,
+  "max": null,
+  "comment": ""
+ },
+ {
+  "section": "media",
+  "key": "on_click_right",
+  "kind": "str_or",
+  "default": "media-play-pause",
+  "min": null,
+  "max": null,
+  "comment": ""
+ },
+ {
+  "section": "media",
+  "key": "on_click_middle",
+  "kind": "str_or",
+  "default": "",
+  "min": null,
+  "max": null,
+  "comment": ""
+ },
+ {
+  "section": "media",
+  "key": "tooltip",
+  "kind": "str_or",
+  "default": "{artist} – {title}",
+  "min": null,
+  "max": null,
+  "comment": "tooltip = \"{artist} – {title}\"   # + {album}"
+ },
+ {
+  "section": "recorder",
+  "key": "on_click",
+  "kind": "str_or",
+  "default": "",
+  "min": null,
+  "max": null,
+  "comment": ""
+ },
+ {
+  "section": "recorder",
+  "key": "on_click_right",
+  "kind": "str_or",
+  "default": "",
+  "min": null,
+  "max": null,
+  "comment": ""
+ },
+ {
+  "section": "recorder",
+  "key": "on_click_middle",
+  "kind": "str_or",
+  "default": "",
+  "min": null,
+  "max": null,
+  "comment": ""
+ },
+ {
+  "section": "recorder",
+  "key": "tooltip",
+  "kind": "str_or",
+  "default": "",
+  "min": null,
+  "max": null,
+  "comment": ""
+ },
+ {
+  "section": "disks",
+  "key": "on_click",
+  "kind": "str_or",
+  "default": "menu",
+  "min": null,
+  "max": null,
+  "comment": "\"menu\" | \"eject-all\" | príkaz"
+ },
+ {
+  "section": "disks",
+  "key": "on_click_right",
+  "kind": "str_or",
+  "default": "eject-all",
+  "min": null,
+  "max": null,
+  "comment": ""
+ },
+ {
+  "section": "disks",
+  "key": "on_click_middle",
+  "kind": "str_or",
+  "default": "",
+  "min": null,
+  "max": null,
+  "comment": ""
+ },
+ {
+  "section": "disks",
+  "key": "tooltip",
+  "kind": "str_or",
+  "default": "{list}",
+  "min": null,
+  "max": null,
+  "comment": "{list} = „názov (veľkosť)  →  bod pripojenia“ po riadkoch"
+ }
+]

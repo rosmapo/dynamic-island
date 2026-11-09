@@ -9,7 +9,7 @@
 # ============================================================================
 
 # poradie modulov (ako group/island vo waybare)
-modules = ["network", "vpn", "clock", "keyboard", "audio", "radio", "media", "capslock", "inhibitor", "recorder", "off", "disks"]
+modules = ["network", "vpn", "clock", "keyboard", "audio", "radio", "media", "capslock", "inhibitor", "recorder", "quick", "disks"]
 
 
 # ============================================================================
@@ -78,7 +78,7 @@ inversetab2 = "sudo reboot"
 inversetab3 = "systemctl suspend"
 inversetab4 = "logout_to_tty.sh"
 inversetab5 = "swaylock -f -i /home/mm/.config/wayfire/media/lockscreen.jpg --show-keyboard-layout --indicator-radius 100 --indicator-thickness 7"
-inversetab6 = "menu:capture"
+inversetab6 = "module:capture"
 inversetab1_icon = ""
 inversetab2_icon = ""
 inversetab3_icon = ""
@@ -87,7 +87,7 @@ inversetab5_icon = ""
 inversetab6_icon = "󱣴"
 
 # --- drun: spúšťač aplikácií (dynamic-island --drun, modul "drun") ---
-[drun]
+[drun]					# librsvg2-bin nainstalovat kvoli konverzii svg ikon
 # columns = 5
 rows = 3
 order = "vertical"    # "horizontal" = ďalšia aplikácia vedľa predošlej, "vertical" = pod predošlou
@@ -200,10 +200,10 @@ tooltip = "{list}"    # {list} = „názov (veľkosť)  →  bod pripojenia“ p
 # on_click_right = "eject-all"
 
 # --- Vlastné moduly ([[custom]]) ---
-# Ľubovoľný externý modul (waybar „custom“): trvalý proces (interval = 0) alebo periodický.
+# Ľubovoľný externý modul: trvalý proces (interval = 0) alebo periodický.
 # Výstup: JSON {"text","tooltip","class"} alebo čistý text (json = false).
 [[custom]]
-name = "off"
+name = "quick"
 text = ""			#    
 on_click = "quickset"
 on_click_right = "~/.config/wayfire/scripts/wallpaper -r"
@@ -221,11 +221,6 @@ on_click_right = "~/.config/wayfire/scripts/wallpaper -r"
 # text = ""		# 
 # on_click = "settings"
 # on_click_right = "backup"
-
-# [[custom]]
-# name = "radio"
-# text = ""
-# on_click = "radio"
 
 
 # ============================================================================
@@ -256,12 +251,12 @@ directory = "~/.config/wayfire/media/wallpaper"
 columns = 4
 rows = 4
 thumb_width = 160
-# hover_ring = true       # rámik okolo náhľadu pod kurzorom
-# current_ring = true     # rámik okolo aktuálne nastavenej tapety
 command = "~/.config/wayfire/scripts/wallpaper"
 cache_dir = "~/.cache/wallpaper-chooser"
 themes_directory = "~/.config/matugen/themes"
 theme_width = 190
+hover_ring = false     # rámik okolo náhľadu pod kurzorom
+current_ring = false   # rámik okolo aktuálne nastavenej tapety
 # button_max_width = 120
 button1_label = "GTK"
 button1_command = "nwg-look"
@@ -312,7 +307,7 @@ mode = "screen"              # predvolená oblasť: screen | window | region
 kind = "image"               # predvolený typ: image | video
 width = 380
 font_size = 17
-slurp_args = "-b #000000AA -w 0"   # vzhľad výberu slurp (nahrádza nepodporovaný kľúč slurp_bg)
+slurp_args = "-b #00000030 -w 0"   # vzhľad výberu slurp (nahrádza nepodporovaný kľúč slurp_bg)
 # cursor = false             # kurzor myši na snímke
 # audio = false              # zvuk pri nahrávaní
 # format = "png"             # png | jpeg
@@ -400,7 +395,7 @@ icon_size = 52
 text_size = 17
 cell_width = 170
 gap = 1
-padding = 12
+padding = 0
 separator_thickness = 2
 separator_length = 0.6
 ### Backup ###
@@ -419,6 +414,10 @@ command = "foot bash -c '/home/mm/.config/dynamic-island/scripts/dotfilesbkp.sh;
 [[menu.item]]
 icon = "timeshift.png"
 command = "timeshift-launcher"
+[[menu.item]]
+label = "up: {}"
+command = ""
+exec = "uptime -p | sed -E 's/up //; s/ days?,?//; s/ hours?/ hod./; s/,//; s/ minutes?/ min./'"
 [[menu.item]]
 separator = true
 ### Dashboard ###
@@ -457,6 +456,8 @@ exec = "builtin:disk-pct:/"   # uprav na svoj pripojný bod
 label = "{} %"
 exec = "builtin:disk-pct:/media/mm/Data"   # uprav na svoj pripojný bod
 [[menu.item]]
+separator = true
+[[menu.item]]
 label = "Efi: {}"
 exec = "builtin:disk:/boot/efi"
 [[menu.item]]
@@ -470,6 +471,7 @@ label = "{} %"
 exec = "builtin:disk-pct:/media/mm/backup"   # uprav na svoj pripojný bod
 [[menu.item]]
 separator = true
+
 #[[menu.item]]
 #label = "Teplota: {}"
 #exec = "builtin:temp"                     # builtin:temp:NÁZOV = konkrétny snímač (napr. coretemp, nvme)
@@ -480,7 +482,6 @@ exec = "~/.config/dynamic-island/scripts/trash.sh"
 command = "module:trash"                               # voliteľné: klik otvorí kôš
 [[menu.item]]
 separator = true
-
 ### System Tools ###
 [[menu.item]]
 icon = "axagon.png"
@@ -552,33 +553,33 @@ separator = true
 label = "  Vypnúť rádio"
 command = "module:track-stop:radio"
 
-### Power menu #######################################################################
-[[menu]]
-name = "power"
-title = ""
-text_columns = 5
-rows = 1
-text_size = 48
-cell_width = 100
-gap = 6
-padding = 12
-separator_thickness = 2
-separator_length = 0.8
-[[menu.item]]
-label = ""
-command = "swaylock -f -i /home/mm/.config/wayfire/media/lockscreen.jpg --show-keyboard-layout --indicator-radius 100 --indicator-thickness 7"
-[[menu.item]]
-label = "󰍃"
-command = "logout_to_tty.sh"
-[[menu.item]]
-label = ""
-command = "systemctl suspend"
-[[menu.item]]
-label = ""
-command = "sudo reboot"
-[[menu.item]]
-label = ""
-command = "sudo poweroff"
+# ### Power menu #######################################################################
+# [[menu]]
+# name = "power"
+# title = ""
+# text_columns = 5
+# rows = 1
+# text_size = 48
+# cell_width = 100
+# gap = 6
+# padding = 12
+# separator_thickness = 2
+# separator_length = 0.8
+# [[menu.item]]
+# label = ""
+# command = "swaylock -f -i /home/mm/.config/wayfire/media/lockscreen.jpg --show-keyboard-layout --indicator-radius 100 --indicator-thickness 7"
+# [[menu.item]]
+# label = "󰍃"
+# command = "logout_to_tty.sh"
+# [[menu.item]]
+# label = ""
+# command = "systemctl suspend"
+# [[menu.item]]
+# label = ""
+# command = "sudo reboot"
+# [[menu.item]]
+# label = ""
+# command = "sudo poweroff"
 
 #### Settings #################################################################
 [[menu]]
@@ -614,6 +615,9 @@ command = "rungufw.sh"
 [[menu.item]]
 label = "S.M.A.R.T"
 command = "QDiskInfo"
+[[menu.item]]
+label = "Island"
+command = "~/.config/dynamic-island/dynamic-island-settings/dynamic-island-settings"
 [[menu.item]]
 separator = true
 [[menu.item]]
