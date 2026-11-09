@@ -22,6 +22,8 @@ pub struct CustomCfg {
     pub text: String,
     pub interval: f64, // 0 = trvalý proces, riadok = aktualizácia
     pub json: bool,
+    /// sledovaný súbor: modul sa zobrazí ako odznak (ako CAPS), len kým súbor existuje; prázdne = bežný modul
+    pub track_file: String,
     pub btn: Btn,
 }
 
@@ -428,6 +430,10 @@ impl Config {
                         text,
                         interval: c.f64_or("interval", 0.0),
                         json: c.bool_or("json", true),
+                        track_file: {
+                            let f = c.str_or("track_file", "");
+                            if f.trim().is_empty() { String::new() } else { expand(f.trim()) }
+                        },
                         btn: btn(c, "", "", ""),
                     });
                 }
@@ -647,7 +653,7 @@ BUILTIN_MODULES.map(String::from).to_vec()
             media_w: media.f64_or("panel_width", 460.0).clamp(300.0, 900.0) as f32,
             media_art: media.f64_or("art_size", 128.0).clamp(80.0, 256.0) as f32,
             media_font: media.f64_or("font_size", 16.0).clamp(10.0, 32.0) as f32,
-            rec_file: expand(&rec.str_or("file", "/tmp/RECORDING")),
+            rec_file: crate::capture::rec_path(),
             rec: btn(&rec, "", "", ""),
             disks: btn(&dk, "menu", "eject-all", "{list}"),
             disks_icon: dk.str_or("icon", "\u{f287}"),
@@ -715,7 +721,7 @@ BUILTIN_MODULES.map(String::from).to_vec()
             wifi: crate::wifi::WifiCfg::from_table(&t.sub("wifi")),
             audio_panel: crate::audio::AudioCfg::from_table(&audio),
             monitor: crate::monitor::MonitorCfg::from_table(&t.sub("monitor")),
-            capture: crate::capture::CaptureCfg::from_table(&t.sub("capture"), &expand(&rec.str_or("file", "/tmp/RECORDING"))),
+            capture: crate::capture::CaptureCfg::from_table(&t.sub("capture"), &crate::capture::rec_path()),
             bluetooth: crate::bluetooth::BtCfg::from_table(&t.sub("bluetooth")),
             hw: crate::quickset::HwCfg::from_table(&{
                 // `[quickset]`; starý názov `[quickset]` sa ešte číta, ak `[quickset]` chýba
@@ -879,6 +885,15 @@ mod tests {
         let t = toml::parse("[clipboard]\nfont_size=18\nrows=5\nwidth=500\n").unwrap();
         let c = Config::from_table(&t, PathBuf::new());
         assert_eq!((c.clip_font, c.clip_rows, c.clip_width), (18.0, 5, 500.0));
+    }
+
+    #[test]
+    fn custom_track_file() {
+        let t = toml::parse("[[custom]]\nname=\"rec\"\ntext=\"REC\"\ntrack_file=\"/tmp/RECORDING\"\n[[custom]]\nname=\"plain\"\ntext=\"x\"\n[[custom]]\nname=\"empty\"\ntext=\"y\"\ntrack_file=\"\"\n").unwrap();
+        let c = Config::from_table(&t, PathBuf::new());
+        assert_eq!(c.custom[0].track_file, "/tmp/RECORDING");
+        assert_eq!(c.custom[1].track_file, "");
+        assert_eq!(c.custom[2].track_file, "");
     }
 
     #[test]

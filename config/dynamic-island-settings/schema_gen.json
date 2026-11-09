@@ -522,15 +522,6 @@
   "comment": ""
  },
  {
-  "section": "recorder",
-  "key": "file",
-  "kind": "str_or",
-  "default": "/tmp/RECORDING",
-  "min": null,
-  "max": null,
-  "comment": ""
- },
- {
   "section": "disks",
   "key": "icon",
   "kind": "str_or",
@@ -1095,7 +1086,7 @@
   "default": "-b #ffffff30 -w 0",
   "min": null,
   "max": null,
-  "comment": "000000AA -w 0\"   # vzhľad výberu slurp (nahrádza nepodporovaný kľúč slurp_bg)"
+  "comment": "00000030 -w 0\"   # vzhľad výberu slurp (nahrádza nepodporovaný kľúč slurp_bg)"
  },
  {
   "section": "capture",
@@ -1806,7 +1797,7 @@
   "default": "",
   "min": null,
   "max": null,
-  "comment": ""
+  "comment": "klik na odznak ukončí odpočet / nahrávanie"
  },
  {
   "section": "recorder",

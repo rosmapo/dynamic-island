@@ -1,8 +1,8 @@
 //! Modul capture: snímka obrazovky / okna / oblasti (`grim`, `slurp`) a nahrávanie videa (`wf-recorder`).
 //!
-//! Aktívne okno a výstup sa zisťujú cez Wayfire IPC. Odznak REC (modul `recorder`) sa riadi tým istým súborom ako
-//! doteraz (`[recorder] file`, predvolene `/tmp/RECORDING`): počas odpočtu v ňom je odpočet, počas nahrávania
-//! `REC m:ss`; po skončení sa súbor zmaže. Ručný spôsob (vlastný skript, ktorý do súboru píše) funguje ďalej.
+//! Aktívne okno a výstup sa zisťujú cez Wayfire IPC. Odznak REC (modul `recorder`) sa riadi interným súborom
+//! (`rec_path()`, v konfigu sa nenastavuje): počas odpočtu v ňom je odpočet, počas nahrávania `REC m:ss`; po
+//! skončení sa súbor zmaže.
 use crate::data::Msg;
 use crate::sys::{self, Tx};
 use crate::toml::{Table, TableExt};
@@ -86,8 +86,16 @@ pub struct CaptureCfg {
     pub hide_bar: bool,
     /// čakanie na zatvorenie panela / skrytie ostrovčeka pred snímkou (ms)
     pub settle_ms: u64,
-    /// súbor odznaku REC (`[recorder] file`)
+    /// interný súbor so stavom odznaku REC (`rec_path()`)
     pub rec_file: String,
+}
+
+/// Interný súbor so stavom odznaku REC: `$XDG_RUNTIME_DIR/dynamic-island-rec` (inak `/tmp/dynamic-island-rec`).
+pub fn rec_path() -> String {
+    match std::env::var("XDG_RUNTIME_DIR") {
+        Ok(d) if !d.is_empty() => format!("{}/dynamic-island-rec", d.trim_end_matches('/')),
+        _ => "/tmp/dynamic-island-rec".to_string(),
+    }
 }
 
 fn expand_home(p: &str) -> String {

@@ -35,7 +35,7 @@ Obsah:
 | `audio` | odznak len pri stlmení; HUD pri zmene hlasitosti | `wpctl`, `pactl subscribe` |
 | `capslock` | odznak pri zapnutom Caps Lock | `/sys/class/leds/*::capslock` |
 | `inhibitor` | ikona, kým existuje súbor `~/.idle_inhibit` | existencia súboru |
-| `recorder` | odznak REC: text zo súboru `/tmp/RECORDING` (píše doň aj panel `capture`) | obsah súboru |
+| `recorder` | odznak REC: odpočet a čas nahrávania z panelu `capture`; klik (`on_click = "capture"`) ho zastaví | interný stavový súbor |
 | `radio` | ikona, kým beží sledovaný proces (položka menu s `track`) | vlastné sledovanie procesu |
 | `media` | ikona, kým je aktívny prehrávač (MPRIS); klik otvorí panel „Práve hrá“ | D-Bus `org.mpris.MediaPlayer2.*` |
 | `disks` | ikona USB s počtom pripojených médií, automount, odpojenie/vysunutie | UDisks2 (D-Bus) |
@@ -179,7 +179,7 @@ procesy (`track`) aj `pactl subscribe`. Zmena farebného súboru (`colors_file`)
 | `$XDG_RUNTIME_DIR/dynamic-island/hud` | rúra pre `--hud`/`--brightness` → HUD (záloha `/tmp`) |
 | `~/.cache/wallpaper-chooser/` | stav tapiet (`current`, `applied-theme`) a náhľady `thumbs/` |
 | `~/.idle_inhibit` | súbor-príznak inhibítora nečinnosti (len sa sleduje jeho existencia) |
-| `/tmp/RECORDING` | text modulu `recorder` (obsah súboru; prázdny/chýbajúci = skryté) |
+| `$XDG_RUNTIME_DIR/dynamic-island-rec` | stav nahrávania pre modul `recorder` (píše ho panel `capture`; interný, nenastavuje sa) |
 
 ### 3.3 Systemd používateľská služba
 
@@ -412,7 +412,7 @@ služby (nie na Debian).
   `~/.config/waybar/waybar-colors.css`** (historická, zmeň v `config.rs`, ak ju nechceš).
 - **Inhibítor nečinnosti** (`~/.idle_inhibit`): súbor vytvára/maže Wayfire skript viazaný na Super+Z; ostrovček
   len sleduje existenciu (ikona). Samotné blokovanie nečinnosti rieši kompozitor/`swayidle`.
-- **Rekordér** (`/tmp/RECORDING`): skript nahrávania (napr. s `wf-recorder`) zapisuje text, ostrovček ho zobrazí.
+- **Rekordér**: odznak REC ukazuje odpočet a čas nahrávania z panelu `capture`.
 - **Jas** (`lumix`): pozri [6.10](#610-brightness) pre kontrakt príkazu.
 - **Skripty dashboardu** (`config/dynamic-island/scripts/*.sh`): ukážkové skripty pre položky menu s `exec`
   (cpu, ram, teplota, disk, kôš…); sú osobné, kopírujú sa s configom.
@@ -445,7 +445,7 @@ služby (nie na Debian).
 5. Audio: `wpctl status`, `pactl info`. Sieť: `ip`, `iw`; NetworkManager beží? (`nmcli`).
 6. D-Bus: `busctl --user status org.freedesktop.Notifications` (nesmie ho držať iný démon); UDisks2, BlueZ bežia.
 7. `ddcutil detect` → nastav `[monitor] bus`, over VCP kódy svojho monitora (predvolené sú pre Iiyama PL2493H).
-8. Presuň/skontroluj osobné skripty (`lumix`, tapety, `~/.idle_inhibit` skript, `/tmp/RECORDING` skript).
+8. Presuň/skontroluj osobné skripty (`lumix`, tapety, `~/.idle_inhibit` skript).
 9. Prenes `~/.config/dynamic-island/` (config, `icons/`, `scripts/`, `colors.css`).
 10. `dynamic-island --check`, potom spustiť a sledovať stderr/`journalctl`.
 
@@ -486,7 +486,7 @@ V popisoch: **px** = logické pixely (pred násobením mierkou); hodnoty v zátv
 | `surface_width` / `surface_height` | `760` / `560` | veľkosť priehľadného povrchu = **horná hranica veľkosti rozbaleného panela** |
 | `tooltip_delay_ms` | `450` | oneskorenie tooltipu po nabehnutí myši na modul |
 | `collapse_delay_ms` | `700` | oneskorenie zbalenia po odchode myši |
-| `poll_ms` | `300` (min. 50) | interval kontroly caps LED / inhibítora / recordera / rozloženia |
+| `poll_ms` | `300` (min. 50) | interval kontroly caps LED / inhibítora / recordera / rozloženia / súborov `track_file` |
 | `colors_file` | `~/.config/waybar/waybar-colors.css` | CSS s `@define-color` (pozri 6.3) |
 
 ### 6.3 `[colors]` — farby
@@ -589,7 +589,7 @@ custom `{text} {tooltip} {class}`; hodiny: formát `strftime`.
 | `[inhibitor]` | `icon` | `f0f4` | ikona |
 | | `file` | `~/.idle_inhibit` | súbor-príznak (existuje = aktívny) |
 | | `on_click*`, `tooltip` | `inhibit-toggle`, `"Idle Inhibitor"` | |
-| `[recorder]` | `file` | `/tmp/RECORDING` | obsah súboru sa zobrazí ako text (červený odznak); prázdny/chýbajúci = skryté |
+| `[recorder]` | `on_click` | *(prázdne)* | napr. `"capture"`: klik na odznak ukončí odpočet / nahrávanie |
 | | `on_click*`, `tooltip` | —, — | tooltip: `{text}` |
 | `[radio]` | `icon` | `f0439` | ikona sledovaného procesu skupiny `radio` |
 | | `tooltip` | `"{name}\nKlik = vypnúť"` | `{name}` = `label` položky menu |
@@ -741,9 +741,8 @@ nahrávanie (`wf-recorder`). Pri **okne** sa aktívne okno určuje až po odpoč
 súradnice sa prepočítajú na globálne podľa aktívneho výstupu); ak ho zistiť nejde, okno sa vyberie klikom (`slurp -r`).
 Nahrávanie okna / regiónu sníma pevný obdĺžnik zo štartu (pohyb okna sa nesleduje).
 
-**Odznak REC** (modul `recorder` musí byť v `modules`): používa sa ten istý súbor `[recorder] file`. Počas odpočtu v ňom
-je odpočet (`3`, `2`, `1`), počas nahrávania `REC m:ss`, po skončení sa súbor zmaže. Pôvodný spôsob (vlastný skript, ktorý
-do súboru píše) funguje ďalej a môže sa používať súbežne. Zastavenie: tlačidlo „Zastaviť“ v paneli, klik na odznak s
+**Odznak REC** (modul `recorder` musí byť v `modules`): panel zapisuje stav do interného súboru (nenastavuje sa). Počas
+odpočtu je v odznaku odpočet, počas nahrávania `REC m:ss`, po skončení odznak zmizne. Zastavenie: tlačidlo „Zastaviť“ v paneli, klik na odznak s
 `[recorder] on_click = "capture"`, alebo akcia `capture-stop` (pošle `wf-recorder` SIGINT, aby sa súbor korektne dokončil).
 
 Pri snímke sa ostrovček na okamih skryje (`hide_bar`), aby nebol na obrázku. Výsledok (uložený súbor / chyba) sa ukáže v
@@ -1009,10 +1008,21 @@ command = "module:track-stop:radio"
 | `text` | — | statický text/ikona bez procesu (tlačidlo); povinné je `exec` **alebo** `text` |
 | `interval` | `0` | `0` = trvalý proces, každý riadok výstupu je nový stav (pri páde sa po 3 s spustí znova); `> 0` = spúšťa sa každých N s, berie sa posledný riadok |
 | `json` | `true` | riadok sa skúsi parsovať ako JSON `{"text","tooltip","class"}`; inak ide celý riadok ako text |
+| `track_file` | *(prázdne)* | cesta k súboru (`~/` sa rozbalí): modul je v lište ako **odznak** (rovnako ako CAPS), len kým súbor **existuje**; prázdne = modul sa správa ako doteraz. Kontroluje sa každých `poll_ms` |
 | `tooltip` | — | prázdne = použije sa `tooltip` z JSON; inak šablóna so `{text} {tooltip} {class}` |
 | `on_click*` | — | pozri 6.4 |
 
 `class` sa nepoužíva na štýlovanie, len ako `{class}` v tooltipe. Procesy `exec` zanikajú s ostrovčekom.
+
+Príklad – odznak, ktorý je v lište, kým existuje súbor:
+
+```toml
+[[custom]]
+name = "busy"
+text = "BUSY"
+track_file = "/tmp/busy"
+on_click = ""
+```
 
 ### 6.21 `[notifications]`
 

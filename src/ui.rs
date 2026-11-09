@@ -584,7 +584,11 @@ impl Ui {
         let (sw, sh) = (cfg.surface_w as f32 * scale, cfg.surface_h as f32 * scale);
         let radius = cfg.radius;
         let mut ui = Ui {
-            data: Data { custom: cfg.custom.iter().map(|c| CustomOut { text: c.text.clone(), ..Default::default() }).collect(), ..Default::default() },
+            data: Data {
+                custom: cfg.custom.iter().map(|c| CustomOut { text: c.text.clone(), ..Default::default() }).collect(),
+                custom_file: vec![false; cfg.custom.len()],
+                ..Default::default()
+            },
             icons: {
                 let dir = cfg.path.parent().map(|p| p.to_path_buf()).unwrap_or_else(|| std::path::PathBuf::from("."));
                 let mut ic = IconCache::new(dir);
@@ -939,6 +943,11 @@ impl Ui {
             Msg::Caps(c) => self.data.caps = c,
             Msg::Inhibit(i) => self.data.inhibit = i,
             Msg::Rec(r) => self.data.rec = r,
+            Msg::CustomFile(i, on) => {
+                if i < self.data.custom_file.len() {
+                    self.data.custom_file[i] = on;
+                }
+            }
             Msg::TrackStart { group, id, name } => {
                 self.data.tracked.insert(group, (id, name));
             }
@@ -1072,7 +1081,14 @@ impl Ui {
                 } else {
                     fill(&c.custom[i].btn.tooltip, &[("text", o.text.clone()), ("tooltip", o.tooltip.clone()), ("class", o.class.clone())])
                 };
-                (o.text, None, None, tip, 10.0)
+                if c.custom[i].track_file.is_empty() {
+                    (o.text, None, None, tip, 10.0)
+                } else if d.custom_file.get(i).copied().unwrap_or(false) {
+                    // `track_file`: odznak (ako CAPS), kým sledovaný súbor existuje
+                    (o.text, badge_acc, None, tip, 12.0)
+                } else {
+                    none
+                }
             }
         }
     }

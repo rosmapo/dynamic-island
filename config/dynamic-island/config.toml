@@ -174,8 +174,7 @@ tooltip = "{name}"   # {name} = label položky
 on_click_right = "radio"
 
 [recorder]
-file = "/tmp/RECORDING"
-on_click = "~/.config/wayfire/scripts/recorder.sh"
+on_click = "capture-stop"
 
 [inhibitor]            # ikona len zobrazuje existenciu súboru; vytvára/maže ho tvoj skript na Super+Z
 file = "/tmp/idleinhibit"
@@ -208,6 +207,12 @@ text = ""			#    
 on_click = "quickset"
 on_click_right = "~/.config/wayfire/scripts/wallpaper -r"
 # tooltip = "Leftt-click: quick setting, Right-click: random wallpaper"
+
+# Odznak v lište len kým existuje súbor (track_file), tvar ako CAPS; prázdne track_file = bežný modul.
+# [[custom]]
+# name = "busy"
+# text = "BUSY"
+# track_file = "/tmp/busy"
 
 ##### [[custom]]
 ##### name = "ram"

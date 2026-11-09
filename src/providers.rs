@@ -325,6 +325,9 @@ fn spawn_fast(cfg: Config, tx: Tx<Msg>) {
         let mut inh: Option<bool> = None;
         let mut rec: Option<String> = None;
         let mut layout: Option<String> = None;
+        // `[[custom]]` moduly s `track_file`: (index modulu, súbor, posledný stav)
+        let mut tracked: Vec<(usize, String, Option<bool>)> =
+            cfg.custom.iter().enumerate().filter(|(_, c)| !c.track_file.is_empty()).map(|(i, c)| (i, c.track_file.clone(), None)).collect();
         let mut ipc: Option<wayfire::Ipc> = None;
         let mut ipc_retry = 0u32;
         loop {
@@ -343,6 +346,13 @@ fn spawn_fast(cfg: Config, tx: Tx<Msg>) {
             if rec.as_ref() != Some(&r) {
                 rec = Some(r.clone());
                 tx.send(Msg::Rec(r));
+            }
+            for (idx, path, last) in tracked.iter_mut() {
+                let on = std::path::Path::new(path.as_str()).exists();
+                if *last != Some(on) {
+                    *last = Some(on);
+                    tx.send(Msg::CustomFile(*idx, on));
+                }
             }
             if ipc.is_none() {
                 if ipc_retry == 0 {

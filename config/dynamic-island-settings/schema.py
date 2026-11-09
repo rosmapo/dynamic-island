@@ -58,7 +58,7 @@ LABELS = {
     ('audio', 'panel_font_size'): 'Panel – veľkosť písma', ('audio', 'panel_width'): 'Panel – šírka', ('audio', 'panel_rows'): 'Panel – riadkov',
     ('media', 'icon_paused'): 'Ikona pozastavené', ('media', 'ignore'): 'Ignorované prehrávače', ('media', 'panel_width'): 'Šírka panela',
     ('media', 'art_size'): 'Veľkosť obalu',
-    ('recorder', 'file'): 'Súbor, ktorého existencia zapína REC', ('inhibitor', 'file'): 'Súbor, ktorého existencia zapína ikonu',
+    ('inhibitor', 'file'): 'Súbor, ktorého existencia zapína ikonu',
     ('disks', 'format'): 'Formát (jeden disk)', ('disks', 'format_many'): 'Formát (viac diskov)', ('disks', 'automount'): 'Automaticky pripájať médiá',
     ('disks', 'notify_timeout_ms'): 'Čas notifikácie (ms)',
     ('clipboard', 'max_items'): 'Najviac položiek', ('clipboard', 'list_command'): 'Príkaz na zoznam histórie',
@@ -103,7 +103,7 @@ CHOICES = {
 
 TYPE_OVERRIDE = {('island', 'colors_file'): 'path', ('wallpaper', 'directory'): 'path', ('wallpaper', 'cache_dir'): 'path',
                  ('wallpaper', 'themes_directory'): 'path', ('wallpaper', 'command'): 'command', ('capture', 'dir'): 'path',
-                 ('capture', 'video_dir'): 'path', ('notifications', 'history_file'): 'path', ('recorder', 'file'): 'path',
+                 ('capture', 'video_dir'): 'path', ('notifications', 'history_file'): 'path',
                  ('inhibitor', 'file'): 'path', ('clipboard', 'list_command'): 'command', ('clipboard', 'copy_command'): 'command',
                  ('monitor', 'night_switcher'): 'command', ('monitor', 'night_state'): 'command',
                  ('brightness', 'get'): 'command', ('brightness', 'set'): 'command', ('drun', 'terminal'): 'command',
@@ -191,6 +191,7 @@ CUSTOM_SPECS = _specs(
     _f('text', 'str', 'Pevný text / ikona', '', 'Namiesto exec – statické tlačidlo.'),
     _f('interval', 'int', 'Obnovovanie (s)', 0, '0 = trvalý proces.', min=0),
     _f('json', 'bool', 'Výstup je JSON', True, '{"text","tooltip","class"}; vypnuté = čistý text.'),
+    _f('track_file', 'path', 'Sledovaný súbor (odznak)', '', 'Modul je v lište ako odznak (ako CAPS), len kým súbor existuje; prázdne = bežný modul.'),
     _f('on_click', 'command', 'Ľavý klik', ''), _f('on_click_right', 'command', 'Pravý klik', ''),
     _f('on_click_middle', 'command', 'Stredný klik', ''), _f('tooltip', 'str', 'Tooltip', ''),
 )

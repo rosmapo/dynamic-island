@@ -185,6 +185,8 @@ pub enum Msg {
     Inhibit(bool),
     Rec(String),
     Custom(usize, CustomOut),
+    /// `[[custom]]` modul s `track_file`: súbor existuje (true) / neexistuje (false)
+    CustomFile(usize, bool),
     /// sledovaný proces (položka menu s `track`) sa spustil: skupina, jeho číslo a zobrazovaný názov
     TrackStart { group: String, id: u64, name: String },
     /// sledovaný proces so zadaným číslom skončil (ukončený alebo skončil sám)
@@ -214,6 +216,8 @@ pub struct Data {
     /// bežiace sledované procesy: skupina → (číslo procesu, názov)
     pub tracked: std::collections::HashMap<String, (u64, String)>,
     pub custom: Vec<CustomOut>,
+    /// pre každý `[[custom]]` modul: existuje jeho `track_file`? (bez `track_file` vždy false a nepoužíva sa)
+    pub custom_file: Vec<bool>,
     pub disks: Vec<DiskInfo>,
     pub clock: String,
     /// prehrávač MPRIS, ktorý sa práve zobrazuje (`None` = žiadny)
