@@ -327,6 +327,17 @@ fn run_action(a: Action, cfg: &Config, disk_tx: &Option<Tx<DiskCmd>>, tx: &Tx<Ms
 }
 
 pub fn run(cfg: Config) -> Result<(), String> {
+    run_with(cfg, None)
+}
+
+/// Samostatné okno `--action NAZOV`: ten istý panel ako v ostrovčeku, ale vo vlastnom okne v strede obrazovky
+/// (bez lišty a bez služieb ostrovčeka – notifikácie, disky, prehrávač). Po zatvorení panela proces skončí.
+pub fn run_panel(cfg: Config, name: String) -> Result<(), String> {
+    run_with(cfg, Some(name))
+}
+
+fn run_with(cfg: Config, panel: Option<String>) -> Result<(), String> {
+    let _guard = panel.as_ref().map(|_| crate::drun::PidGuard::new("action"));
     let waker = Waker::new();
     SIG_FD.store(waker.fd(), Ordering::SeqCst);
     sys::install_signal(sys::SIGUSR1, on_sigusr1);
@@ -336,7 +347,7 @@ pub fn run(cfg: Config) -> Result<(), String> {
     let fonts = Fonts::load(&cfg.font_family, &cfg.icon_family)?;
     let mut text = Text::new(Box::new(fonts));
 
-    let mut wl = Wl::new(cfg.surface_w, cfg.surface_h)?;
+    let mut wl = Wl::new_with(cfg.surface_w, cfg.surface_h, panel.is_some(), if panel.is_some() { "dynamic-island-panel" } else { "dynamic-island" })?;
     let mut scale = wl.st.scale.max(1);
     let egl = wl.create_egl((cfg.surface_w as i32) * scale, (cfg.surface_h as i32) * scale)?;
     let mut renderer = Renderer::new(&egl)?;
@@ -348,7 +359,7 @@ pub fn run(cfg: Config) -> Result<(), String> {
     let inotify = Inotify::new();
     let colors_path = crate::config::expand(&cfg.colors_file);
     let colors_name = std::path::Path::new(&colors_path).file_name().map(|s| s.to_string_lossy().into_owned()).unwrap_or_default();
-    let cfg_name = cfg.path.file_name().map(|s| s.to_string_lossy().into_owned()).unwrap_or_default();
+    let cfg_name = if panel.is_some() { String::new() } else { cfg.path.file_name().map(|s| s.to_string_lossy().into_owned()).unwrap_or_default() };
     if let Some(i) = &inotify {
         let mask = sys::IN_CLOSE_WRITE | sys::IN_MOVED_TO | sys::IN_CREATE;
         if let Some(d) = std::path::Path::new(&colors_path).parent() {
@@ -365,8 +376,10 @@ pub fn run(cfg: Config) -> Result<(), String> {
         i.watch(&hud_dir.to_string_lossy(), sys::IN_CLOSE_WRITE | sys::IN_MOVED_TO);
     }
 
-    providers::spawn_all(&cfg, &tx);
-    let notif_tx = if cfg.notif_enabled {
+    if panel.is_none() {
+        providers::spawn_all(&cfg, &tx);
+    }
+    let notif_tx = if panel.is_none() && cfg.notif_enabled {
         let nw = Waker::new();
         let (ntx, nrx) = sys::channel::<NotifCmd>(nw.clone());
         notify::spawn(tx.clone(), nrx, nw);
@@ -375,7 +388,7 @@ pub fn run(cfg: Config) -> Result<(), String> {
         None
     };
 
-    let disk_tx = if cfg.modules.iter().any(|m| m == "disks") {
+    let disk_tx = if panel.is_none() && cfg.modules.iter().any(|m| m == "disks") {
         let dw = Waker::new();
         let (dtx, drx) = sys::channel::<DiskCmd>(dw.clone());
         disks::spawn(disks::DiskCfg {
@@ -389,11 +402,17 @@ pub fn run(cfg: Config) -> Result<(), String> {
     } else {
         None
     };
-    if cfg.modules.iter().any(|m| m == "media") {
+    if panel.is_none() && cfg.modules.iter().any(|m| m == "media") {
         crate::mpris::spawn(cfg.media_ignore.clone(), tx.clone());
     }
-    let mut history = if cfg.history_max > 0 { Some(History::open(cfg.history_file.clone(), cfg.history_max)) } else { None };
+    let mut history = if panel.is_none() && cfg.history_max > 0 { Some(History::open(cfg.history_file.clone(), cfg.history_max)) } else { None };
 
+    if let Some(name) = &panel {
+        ui.external_action(name);
+        if !ui.is_centered() {
+            return Err(format!("'{name}' sa nedá otvoriť (neznámy názov alebo panel bez obsahu)"));
+        }
+    }
     let mut dirty = true;
     let mut animating = false;
     let mut last_frame = Instant::now();
@@ -565,6 +584,10 @@ pub fn run(cfg: Config) -> Result<(), String> {
             first_draw = false;
             last_frame = now;
             animating = ui.update(dt, now, &mut text);
+            // panel v samostatnom okne: po dobehnutí zatváracej animácie proces skončí
+            if panel.is_some() && !ui.is_centered() {
+                return Ok(());
+            }
             let frame = ui.build(&mut text);
             let ir = ui.input_rect();
             if last_input != Some(ir) {

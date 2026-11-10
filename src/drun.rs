@@ -308,7 +308,7 @@ impl Drop for PidGuard {
 
 pub fn run(cfg: Config) -> Result<(), String> {
     // druhé spustenie zatvorí prvé (prepínač), takže jedna klávesová skratka otvára aj zatvára
-    if close_running("drun", "--drun") {
+    if close_running("action", "--action") || close_running("drun", "--drun") {
         return Ok(());
     }
     let _guard = PidGuard::new("drun");

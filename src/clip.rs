@@ -245,7 +245,7 @@ fn copy(cmd: &str, raw: &str) {
 
 pub fn run(cfg: Config) -> Result<(), String> {
     // druhé spustenie zatvorí prvé (prepínač)
-    if close_running("clip", "--clip") {
+    if close_running("action", "--action") || close_running("clip", "--clip") {
         return Ok(());
     }
     let _guard = PidGuard::new("clip");

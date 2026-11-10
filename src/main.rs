@@ -40,10 +40,11 @@ mod xkb;
 
 use std::path::PathBuf;
 
-const HELP: &str = "dynamic-island [--config CESTA] [--check] [--snapshot ADRESÁR] [--volume up|down|mute|get|N] [--brightness up|down|get|N] [--hud brightness %] [--history [N]] [--drun] [--drun-list] [--clip]
+const HELP: &str = "dynamic-island [--config CESTA] [--check] [--snapshot ADRESÁR] [--volume up|down|mute|get|N] [--brightness up|down|get|N] [--hud brightness %] [--action NAZOV] [--history [N]] [--drun] [--drun-list] [--clip]
 
   --config CESTA      konfigurácia (predvolene ~/.config/dynamic-island/config.toml)
   --check             skontroluje konfiguráciu a skončí
+  --action NAZOV      samostatné okno s modulom / menu v strede obrazovky (sysmenu | trash), druhé spustenie ho zatvorí
   --drun-list         vypíše všetky nájdené .desktop súbory a prečo sa niektoré nezobrazia
   --clip              samostatné okno histórie schránky (cliphist), druhé spustenie ho zatvorí
   --drun              samostatný spúšťač aplikácií (ako rofi -show drun), nezávislý od ostrovčeka
@@ -63,6 +64,7 @@ fn main() {
     let mut drun = false;
     let mut drun_list = false;
     let mut clip = false;
+    let mut action: Option<String> = None;
     let mut i = 0;
     while i < args.len() {
         match args[i].as_str() {
@@ -120,6 +122,17 @@ fn main() {
                     }
                 }
             }
+            "--action" => {
+                // dynamic-island --action sysmenu  (samostatné okno s modulom / menu v strede obrazovky, prepínač)
+                i += 1;
+                action = args.get(i).map(|s| s.trim().to_string()).filter(|s| !s.is_empty());
+                // zatiaľ len tieto panely sa v samostatnom okne správajú správne
+                const ACTIONS: &[&str] = &["sysmenu", "trash"];
+                if !action.as_deref().map_or(false, |a| ACTIONS.contains(&a)) {
+                    eprintln!("použitie: dynamic-island --action {}", ACTIONS.join("|"));
+                    std::process::exit(2);
+                }
+            }
             "-h" | "--help" => {
                 println!("{HELP}");
                 return;
@@ -154,6 +167,17 @@ fn main() {
     if clip {
         if let Err(e) = clip::run(cfg) {
             eprintln!("dynamic-island --clip: {e}");
+            std::process::exit(1);
+        }
+        return;
+    }
+    if let Some(name) = action {
+        // druhé spustenie (aj `--drun` / `--clip`) okno zatvorí
+        if drun::close_running("action", "--action") {
+            return;
+        }
+        if let Err(e) = app::run_panel(cfg, name) {
+            eprintln!("dynamic-island --action: {e}");
             std::process::exit(1);
         }
         return;

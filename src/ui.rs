@@ -438,6 +438,10 @@ pub struct Ui {
     /// (nový panel môže mať inú veľkosť, takže myš po kliku často skončí mimo neho)
     /// Some(najskôr kedy ho pohyb myši môže zrušiť) = odklad zatvorenia je aktívny
     grace: Option<Instant>,
+    /// panel otvorený zvonka (`--action`): okno je v strede obrazovky, nie pri hornom okraji
+    centered: bool,
+    /// názov posledného externého príkazu (opakovaný rovnaký príkaz panel zatvorí)
+    ext_name: String,
 
     pub pill: Rect,
     hits: Vec<(Rect, Hit)>,
@@ -719,6 +723,8 @@ impl Ui {
             tip_pending: None,
             collapse_at: None,
             grace: None,
+            centered: false,
+            ext_name: String::new(),
             pill: Rect::new(0.0, 0.0, 0.0, 0.0),
             hits: Vec::new(),
         };
@@ -1176,6 +1182,15 @@ impl Ui {
         }
         if self.panel == Panel::None && self.panel_h.x < 0.5 && self.panel_h.settled() {
             self.panel_shown = Panel::None;
+        }
+        // zatvorený panel otvorený zvonka: späť k hornému okraju (po dobehnutí animácie, aby neprebliklo)
+        if self.centered && self.panel == Panel::None && self.menu_wait.is_none() && self.cal_t.x < 0.02 {
+            self.centered = false;
+            self.ext_name.clear();
+            if self.manual_hidden || self.auto_hidden || self.cap_hidden {
+                self.hide.snap(1.0);
+            }
+            busy = true;
         }
         busy
     }
@@ -2046,7 +2061,41 @@ impl Ui {
 
     /// Klávesnicu potrebujeme pri zadávaní hesla a pri otvorenom paneli schránky (filter).
     pub fn wants_keyboard(&self) -> bool {
-        self.typing_password() || self.panel == Panel::Clip || self.panel == Panel::Drun
+        self.typing_password() || self.panel == Panel::Clip || self.panel == Panel::Drun || (self.centered && self.panel != Panel::None)
+    }
+
+    /// Okno panela (`--action`) je otvorené alebo sa ešte zatvára; po dobehnutí zatváracej animácie proces skončí.
+    pub fn is_centered(&self) -> bool {
+        self.centered
+    }
+
+    /// Samostatné okno `dynamic-island --action NAZOV`: otvorí modul / menu (názvy ako v `on_click = "module:NAZOV"`).
+    pub fn external_action(&mut self, name: &str) {
+        let name = name.trim();
+        if name.is_empty() {
+            return;
+        }
+        if self.centered && self.panel != Panel::None && self.ext_name == name {
+            self.set_panel(Panel::None);
+            self.collapse_at = None;
+            return;
+        }
+        self.collapse_at = None;
+        if self.panel != Panel::None {
+            self.set_panel(Panel::None);
+        }
+        self.centered = true;
+        self.ext_name = name.to_string();
+        if let Some(a) = self.run_module(name) {
+            self.queued.push(a);
+        }
+        if !self.big_open() && self.menu_wait.is_none() {
+            // nič sa neotvorilo (neznámy názov, akcia bez panela) – ostaneme pri lište hore
+            self.centered = false;
+            self.ext_name.clear();
+            return;
+        }
+        self.grace = None;
     }
 
     /// Klávesnicu sa nepodarilo použiť (chýba mapa kláves) – zadávanie hesla sa zruší
@@ -2255,6 +2304,12 @@ impl Ui {
         }
         if self.panel == Panel::Drun {
             return self.drun_key(k);
+        }
+        // panel otvorený zvonka (`--action`) zatvorí Esc (okno drží klávesnicu výhradne)
+        if self.centered && self.panel != Panel::None && !self.typing_password() && k.sym == 0xff1b {
+            self.set_panel(Panel::None);
+            self.collapse_at = None;
+            return Vec::new();
         }
         self.wifi_pw_until = Some(Instant::now() + Duration::from_secs(WIFI_PW_IDLE_SECS));
         let mut out = Vec::new();
@@ -2644,7 +2699,7 @@ impl Ui {
         self.tip_pending = None;
         // práve otvorený panel (kliknutím na modul / položku menu): nový panel býva menší ako ostrovček,
         // takže myš po kliku zvyčajne skončí mimo neho – odchod sa ignoruje, kým do panela nevstúpi
-        if self.grace.is_some() || self.panel == Panel::Media {
+        if self.grace.is_some() || self.panel == Panel::Media || self.centered {
             return;
         }
         // počas písania hesla panel nezatvárame (zavrie ho Esc / odoslanie); rovnako pri rozpísanom filtri schránky
@@ -3398,7 +3453,7 @@ impl Ui {
 
     /// Oblasť, ktorá prijíma vstup (logické px) – zvyšok povrchu je priehľadný pre myš.
     pub fn input_rect(&self) -> Option<(i32, i32, i32, i32)> {
-        if self.hide.x > 0.92 || self.pill.w < 1.0 {
+        if (self.hide.x > 0.92 && !self.centered) || self.pill.w < 1.0 {
             return None;
         }
         let k = 1.0 / self.scale;
@@ -3497,7 +3552,11 @@ impl Ui {
         let pill_w = pill_w + (cal_w - pill_w) * ct;
         let pill_h = pill_h + (cal_h - pill_h) * ct;
         let hide_off = -(pill_h + self.s(self.cfg.top_margin) + self.s(24.0)) * self.hide.x;
-        let pill = Rect::new(((self.surf_w - pill_w) * 0.5).round(), self.s(self.cfg.top_margin) + hide_off, pill_w, pill_h);
+        // v strede (`--action`): okno je vertikálne v strede povrchu, ukotveného do stredu obrazovky
+        let pill_y = if self.centered { ((self.surf_h - pill_h) * 0.5).round() } else { self.s(self.cfg.top_margin) + hide_off };
+        let pill = Rect::new(((self.surf_w - pill_w) * 0.5).round(), pill_y, pill_w, pill_h);
+        // v strede sa okno „vynára“ – pozadie a tieň rastú s animáciou panela, takže prepnutie ukotvenia nie je vidieť
+        let center_a = if self.centered { ct.max(ht).max(nt) } else { 1.0 };
         self.pill = pill;
         self.hits.clear();
 
@@ -3510,11 +3569,11 @@ impl Ui {
                 r: Rect::new(pill.x + self.s(2.0), pill.y + self.s(5.0), pill.w - self.s(4.0), pill.h),
                 radius,
                 soft: self.s(12.0),
-                color: [0.0, 0.0, 0.0, 0.32],
+                color: [0.0, 0.0, 0.0, 0.32 * center_a],
             });
         }
         let mut bg = t.bg;
-        bg[3] *= self.cfg.opacity;
+        bg[3] *= self.cfg.opacity * center_a;
         let ut = if self.notif_urgent { nt } else { 0.0 };
         if ut > 0.01 {
             frame.back.push(Item::Rect { r: pill, radius, soft: 0.8, color: fade(t.urgent_border, ut) });
@@ -3527,7 +3586,7 @@ impl Ui {
         frame.clip = Some(Rect::new(pill.x, pill.y, pill.w, pill.h));
 
         // ---- riadok s modulmi
-        let row_alpha = (1.0 - ht) * (1.0 - nt) * (1.0 - ct);
+        let row_alpha = (1.0 - ht) * (1.0 - nt) * (1.0 - ct) * if self.centered { 0.0 } else { 1.0 };
         if row_alpha > 0.01 {
             let (asc, desc) = text.line_metrics(px);
             let row_cy = pill.y + row_h * 0.5;

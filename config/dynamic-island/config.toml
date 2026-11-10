@@ -116,7 +116,7 @@ format = "%A  %d. %B,  %H:%M"
 locale = "sk_SK.UTF-8"
 on_click = "calendar"                        # kalendár sa rozbalí priamo v ostrovčeku
 # on_click_middle = "drun"
-on_click_right = "sysmenu"
+on_click_right = "notifications"
 
 [network]
 interface = "wlan0"
@@ -140,7 +140,7 @@ on_click_right = "remmina"
 [keyboard]
 on_click = "layout-toggle"
 on_click_right = "clipboard"
-on_click_middle = "notifications"
+on_click_middle = ""
 tooltip = ""
 [keyboard.names]
 Slovak = "SK"

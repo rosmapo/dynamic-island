@@ -149,7 +149,7 @@ systemctl --user daemon-reload
 ```
 dynamic-island [--config CESTA] [--check] [--snapshot ADRESÁR]
                [--volume up|down|mute|get|N] [--brightness up|down|get|N]
-               [--hud brightness %] [--history [N]]
+               [--hud brightness %] [--action NAZOV] [--history [N]]
 ```
 
 | Prepínač | Význam |
@@ -160,6 +160,7 @@ dynamic-island [--config CESTA] [--check] [--snapshot ADRESÁR]
 | `--volume ...` | nastaví hlasitosť cez `wpctl` na `@DEFAULT_AUDIO_SINK@` (`up`/`down` o `[audio] step` %, strop `limit`, `mute` = prepnutie, `get`, `N` = percento); bežiaci ostrovček zmenu zachytí a ukáže HUD |
 | `--brightness ...` | spustí príkazy z `[brightness]`, vypíše nové percento a pošle HUD bežiacemu ostrovčeku |
 | `--hud brightness N` | iba pošle HUD jasu (pre externé skripty): zapíše `brightness N` do `$XDG_RUNTIME_DIR/dynamic-island/hud` |
+| `--action sysmenu\|trash` | **samostatné okno** v strede obrazovky (ako `--drun` / `--clip`; lišta ostrovčeka zostáva hore a nemení sa): `sysmenu` = vlastné `[[menu]]` s názvom `sysmenu`, `trash` = kôš. Iné názvy zatiaľ nie sú povolené. Je to prepínač: druhé spustenie okno zatvorí, rovnako `dynamic-island --drun` / `--clip` (jedna skratka launchera zatvorí aj panel). Zatvorí ho aj `Esc` alebo klik na položku menu. Príklad: `Exec=dynamic-island --action sysmenu`. |
 | `--history [N]` | vypíše posledných N (predvolene 20) notifikácií z histórie |
 
 Signály bežiacemu procesu: **SIGUSR1 = skryť**, **SIGUSR2 = zobraziť**.
