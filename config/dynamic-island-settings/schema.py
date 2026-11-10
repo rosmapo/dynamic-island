@@ -178,6 +178,7 @@ MENU_SPECS = _specs(
 )
 ITEM_SPECS = _specs(
     _f('separator', 'bool', 'Oddeľovač', False, 'Vodorovná čiara namiesto položky.'),
+    _f('line', 'str', 'Riadok (text na celú šírku)', '', 'Namiesto položky: text cez celú šírku menu ({} = výstup exec). Prázdny riadok len v config.toml: line = "".'),
     _f('icon', 'str', 'Ikona (súbor)', '', 'PNG v icons/ vedľa config.toml alebo plná cesta.'),
     _f('label', 'str', 'Text', '', 'S exec je to šablóna, {} sa nahradí výstupom.'),
     _f('command', 'command', 'Príkaz / akcia', '', 'Príkaz alebo akcia (napr. module:wallpaper).'),

@@ -187,6 +187,8 @@ enum Hit {
 enum MenuLayoutRow {
     Icons(Vec<usize>),
     Labels(Vec<usize>),
+    /// Riadok textu cez celú šírku (`line`), index do `menu.items`.
+    Line(usize),
     Separator,
 }
 
@@ -508,7 +510,7 @@ fn menu_content_width(kind: MenuKind, icon_grid_w: f32, text_grid_w: f32, m: &cr
         MenuKind::Icons => icon_grid_w,
         MenuKind::Hybrid => {
             let has_icons = m.items.iter().any(|it| !it.separator && !it.icon.is_empty());
-            let has_labels = m.items.iter().any(|it| !it.separator && it.icon.is_empty() && !it.label.is_empty());
+            let has_labels = m.items.iter().any(|it| !it.separator && !it.line && it.icon.is_empty() && !it.label.is_empty());
             let mut w = 0.0f32;
             if has_icons {
                 w = w.max(icon_grid_w);
@@ -1503,6 +1505,12 @@ impl Ui {
                 rows.push(MenuLayoutRow::Separator);
                 continue;
             }
+            if it.line {
+                flush_icons(&mut icons, &mut rows);
+                flush_labels(&mut labels, &mut rows);
+                rows.push(MenuLayoutRow::Line(i));
+                continue;
+            }
             match menu.kind {
                 MenuKind::Text => {
                     // text menu: všetky položky ako labely (label, alebo icon ako nerd-font glyf)
@@ -1546,7 +1554,7 @@ impl Ui {
         if let Some(max_rows) = menu.rows {
             let only_icons = menu.kind == MenuKind::Icons
                 || (menu.kind == MenuKind::Hybrid
-                    && menu.items.iter().all(|it| it.separator || !it.icon.is_empty() || (it.label.is_empty() && it.exec.is_empty())));
+                    && menu.items.iter().all(|it| it.separator || it.line || !it.icon.is_empty() || (it.label.is_empty() && it.exec.is_empty())));
             if only_icons {
                 rows.truncate(max_rows);
             }
@@ -1579,7 +1587,7 @@ impl Ui {
             }
             body_h += match row {
                 MenuLayoutRow::Icons(_) => icon_cell,
-                MenuLayoutRow::Labels(_) => label_h,
+                MenuLayoutRow::Labels(_) | MenuLayoutRow::Line(_) => label_h,
                 MenuLayoutRow::Separator => sep_h,
             };
         }
@@ -3817,6 +3825,38 @@ impl Ui {
                                     fg_col,
                                 );
                             }
+                        }
+                    }
+                    y += label_h;
+                }
+                MenuLayoutRow::Line(i) => {
+                    let i = *i;
+                    // zvýraznenie má po stranách odsadenie, aby nedosadalo na okraj menu (ako ostatné tlačidlá)
+                    let inset = 8.0 * s;
+                    let cell = Rect::new(grid_left + inset, y, (content_w - 2.0 * inset).max(0.0), label_h);
+                    // bez `command` je riadok len na zobrazenie: bez hoveru a bez reakcie na klik
+                    let clickable = menu.items.get(i).map_or(false, |it| !it.command.is_empty());
+                    let hov = clickable && self.hover == Some(Hit::MenuItem(i));
+                    if clickable {
+                        self.hits.push((cell, Hit::MenuItem(i)));
+                    }
+                    let fg_col = if hov { fade(t.menu_selected_text, pa) } else { fade(t.fg, pa) };
+                    if hov {
+                        frame.content.push(Item::Rect { r: cell, radius: 10.0 * s, soft: 0.8, color: fade(t.menu_selected, pa) });
+                    }
+                    if let Some(it) = menu.items.get(i) {
+                        let label = self.menu_item_label(mi, i, it);
+                        if !label.is_empty() {
+                            let shown = Self::ellipsize(text, &label, text_px, cell.w - 12.0 * s);
+                            let tw = text.measure(&shown, text_px);
+                            text.layout_to(
+                                &mut frame.content,
+                                &shown,
+                                text_px,
+                                cell.x + (cell.w - tw) * 0.5,
+                                y + label_h * 0.5 + (asc_t - desc_t) * 0.5,
+                                fg_col,
+                            );
                         }
                     }
                     y += label_h;

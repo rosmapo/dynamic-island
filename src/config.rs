@@ -56,6 +56,9 @@ pub struct MenuItemCfg {
     pub interval: f64,
     /// Vlastný riadok s oddelovačom; `icon`/`label`/`command` sa ignorujú.
     pub separator: bool,
+    /// Riadok textu cez celú šírku menu (`line = "text {}"`): text je v `label`, `exec`/`interval` fungujú ako pri
+    /// bežnej textovej položke; prázdny text = prázdny riadok. `command` je voliteľný (klik na celý riadok).
+    pub line: bool,
     /// Skupina sledovaného procesu (napr. `"radio"`): ostrovček si príkaz spustí sám, pamätá si ho (jeden proces na
     /// skupinu – nový štart predošlý ukončí) a modul s názvom skupiny ukáže ikonu, kým beží. Prázdne = bežný príkaz.
     pub track: String,
@@ -462,6 +465,18 @@ impl Config {
                                     });
                                     continue;
                                 }
+                                // `line = "text"`: riadok na celú šírku (aj prázdny = vynechaný riadok)
+                                if let Some(text) = it.get("line").and_then(|v| v.as_str()) {
+                                    items.push(MenuItemCfg {
+                                        label: text.to_string(),
+                                        command: it.str_or("command", ""),
+                                        exec: it.str_or("exec", ""),
+                                        interval: it.f64_or("interval", 0.0).max(0.0),
+                                        line: true,
+                                        ..Default::default()
+                                    });
+                                    continue;
+                                }
                                 let icon = it.str_or("icon", "");
                                 let label = it.str_or("label", "");
                                 let command = it.str_or("command", "");
@@ -482,6 +497,7 @@ impl Config {
                                     exec,
                                     interval: it.f64_or("interval", 0.0).max(0.0),
                                     separator: false,
+                                    line: false,
                                     track: it.str_or("track", "").trim().to_string(),
                                 });
                             }
@@ -885,6 +901,19 @@ mod tests {
         let t = toml::parse("[clipboard]\nfont_size=18\nrows=5\nwidth=500\n").unwrap();
         let c = Config::from_table(&t, PathBuf::new());
         assert_eq!((c.clip_font, c.clip_rows, c.clip_width), (18.0, 5, 500.0));
+    }
+
+    #[test]
+    fn menu_line_items() {
+        let t = toml::parse("[[menu]]\nname=\"m\"\n[[menu.item]]\nlabel=\"A\"\ncommand=\"x\"\n[[menu.item]]\nline=\"\"\n[[menu.item]]\nline=\"Hotovo\"\n[[menu.item]]\nline=\"CPU: {}\"\nexec=\"echo 1\"\ninterval=2\n[[menu.item]]\nseparator=true\n").unwrap();
+        let c = Config::from_table(&t, PathBuf::new());
+        let it = &c.menus[0].items;
+        assert_eq!(it.len(), 5);
+        assert!(!it[0].line && it[1].line && it[2].line && it[3].line && !it[4].line);
+        assert_eq!(it[1].label, "");
+        assert_eq!(it[2].label, "Hotovo");
+        assert_eq!((it[3].label.as_str(), it[3].exec.as_str(), it[3].interval), ("CPU: {}", "echo 1", 2.0));
+        assert!(it[4].separator);
     }
 
     #[test]

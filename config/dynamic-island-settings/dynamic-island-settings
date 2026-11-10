@@ -397,6 +397,8 @@ class Window(Adw.ApplicationWindow):
         if is_item:
             if f.get('separator'):
                 return '──── oddeľovač ────'
+            if 'line' in f:
+                return f'── riadok: {f["line"]}' if f['line'] else '── prázdny riadok ──'
             return (f.get('label') or f.get('icon') or f.get('command')
                     or f.get('exec') or f.get('track') or '(prázdna položka)')
         key = schema.ARRAYS[aid]['key']
