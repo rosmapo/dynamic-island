@@ -449,33 +449,21 @@ interval = 2
 separator = "center"
 
 [[menu.item]]
-label = "Root: {}"
+line = "Root: {}"
 exec = "builtin:disk:/"   # uprav na svoj pripojný bod
 [[menu.item]]
-label = "Data: {}"
+line = "Data: {}"
 exec = "builtin:disk:/media/mm/Data"   # uprav na svoj pripojný bod
-[[menu.item]]
-label = "{} %"
-exec = "builtin:disk-pct:/"   # uprav na svoj pripojný bod
-[[menu.item]]
-label = "{} %"
-exec = "builtin:disk-pct:/media/mm/Data"   # uprav na svoj pripojný bod
-[[menu.item]]
-separator = "center"
 # [[menu.item]]
-# label = "Efi: {}"
+# line = "Efi: {}"
 # exec = "builtin:disk:/boot/efi"
-# [[menu.item]]
-# label = "Backup: {}"
-# exec = "builtin:disk:/media/mm/backup"   # uprav na svoj pripojný bod
-# [[menu.item]]
-# label = "{} %"
-# exec = "builtin:disk-pct:/boot/efi"
-# [[menu.item]]
-# label = "{} %"
-# exec = "builtin:disk-pct:/media/mm/backup"   # uprav na svoj pripojný bod
+[[menu.item]]
+line = "Backup: {}"
+exec = "builtin:disk:/media/mm/backup"   # uprav na svoj pripojný bod
 # [[menu.item]]
 # separator = "center"
+[[menu.item]]
+separator = "center"
 
 # [[menu.item]]
 # label = "Teplota: {}"

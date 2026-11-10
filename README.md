@@ -888,8 +888,7 @@ rozloženie ostávajú rovnaké. Vyhodnocuje sa len pri otvorenom menu (a podľa
 | `swap` | `0 MB` | využitý swap (formát ako `ram`) |
 | `temp` | `52 °C` | najvyššia teplota z thermal zón (ako `temp.sh`), inak z hwmon; `n/a`, ak nič nie je |
 | `temp:NÁZOV` | `61 °C` | najvyššia zo snímačov, ktorých názov (`type` zóny, `name` + `temp*_label` v hwmon) obsahuje NÁZOV, bez ohľadu na veľkosť písmen (`coretemp`, `k10temp`, `nvme`, `Package`) |
-| `disk[:CESTA]` | `8,4 GB` / `63,2 MB` / `4,1 kB` | **obsadené miesto presne ako `df`/GNOME** (`statvfs`: `(blocks − bfree) × frsize`), **1 GB = 10⁹ B**, 1 desatinné miesto; CESTA = ľubovoľná cesta v danom súborovom systéme (predvolene `/`, `~/` sa rozvinie) |
-| `disk-pct[:CESTA]` | `7` (%) | **presne ako `df --output=pcent`**: `used / (used + avail)` zaokrúhlené nahor (rezerva pre root sa nepočíta) |
+| `disk[:CESTA]` | `8,4 GB     7 %` | **obsadené miesto a obsadenosť v %**, oddelené väčšou medzerou (5 medzier). Miesto presne ako `df`/GNOME (`statvfs`: `(blocks − bfree) × frsize`), **1 GB = 10⁹ B**, 1 desatinné miesto (`63,2 MB`, `4,1 kB` pri menších); percento presne ako `df --output=pcent`: `used / (used + avail)` zaokrúhlené nahor (rezerva pre root sa nepočíta); CESTA = ľubovoľná cesta v danom súborovom systéme (predvolene `/`, `~/` sa rozvinie). Samostatný zdroj `disk-pct` už nie je – v šablóne `label` stačí `{}` |
 | `disk-free[:CESTA]`, `disk-total[:CESTA]` | `29,3 GB` | voľné miesto pre bežného používateľa (`bavail`) / veľkosť; formát ako `disk` |
 | `net-down`, `net-up` | `0 kB/s` / `1,5 MB/s` | rozhranie s predvolenou trasou (`/proc/net/route`) alebo `[system] net_interface`; od 1 MB/s `MB/s` (1 MB = 1024²), inak celé `kB/s` (1 kB = 1024 B); bez trasy `n/a` |
 

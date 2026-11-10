@@ -8,8 +8,7 @@
 //! | `ram` | využitá pamäť (MemTotal − MemAvailable), `2.35 GB` (1 GB = 1024³ B) / `850 MB` |
 //! | `ram-pct`, `swap` | % využitej pamäte, využitý swap |
 //! | `temp[:NÁZOV]` | najvyššia teplota, `52 °C`; bez názvu z thermal zón, s názvom z hwmon / zón podľa mena |
-//! | `disk[:CESTA]` | obsadené miesto ako v `df` / GNOME (1 GB = 10⁹ B): `8.4 GB`, `63.2 MB` |
-//! | `disk-pct[:CESTA]` | obsadenosť v % presne ako `df --output=pcent` (zaokrúhlené nahor) |
+//! | `disk[:CESTA]` | obsadené miesto ako v `df` / GNOME (1 GB = 10⁹ B) a obsadenosť v % ako `df --output=pcent`, oddelené väčšou medzerou: `8.4 GB     7 %` |
 //! | `disk-free[:CESTA]`, `disk-total[:CESTA]` | voľné miesto (pre bežného používateľa), veľkosť |
 //! | `net-down`, `net-up` | rýchlosť rozhrania s predvolenou trasou: `0 kB/s`, `1.5 MB/s` |
 use std::sync::Mutex;
@@ -43,8 +42,7 @@ pub fn eval(spec: &str, o: &Opts) -> String {
         "ram-pct" => meminfo().map(|m| (m.used() * 100 / m.total.max(1)).to_string()),
         "swap" => meminfo().map(|m| fmt_ram(m.swap_used())),
         "temp" => temp(arg).map(|t| format!("{} °C", t / 1000)),
-        "disk" => disk(arg).map(|d| fmt_si(d.used)),
-        "disk-pct" => disk(arg).map(|d| pct_ceil(d.used as u128, d.avail as u128).to_string()),
+        "disk" => disk(arg).map(|d| fmt_disk(&d)),
         "disk-free" => disk(arg).map(|d| fmt_si(d.avail)),
         "disk-total" => disk(arg).map(|d| fmt_si(d.total)),
         "net-down" => net_rate("down", 0, &o.net_iface).map(fmt_rate),
@@ -89,6 +87,14 @@ pub fn fmt_rate(bytes_per_s: f64) -> String {
     } else {
         format!("{} kB/s", (bytes_per_s.max(0.0) / 1024.0) as u64)
     }
+}
+
+/// Počet medzier medzi údajom v GB a v % pri zdroji `disk`.
+const DISK_GAP: usize = 5;
+
+/// `disk`: obsadené miesto a obsadenosť v %, oddelené väčšou medzerou (`8.4 GB     7 %`).
+pub fn fmt_disk(d: &Disk) -> String {
+    format!("{}{}{} %", fmt_si(d.used), " ".repeat(DISK_GAP), pct_ceil(d.used as u128, d.avail as u128))
 }
 
 /// Percento obsadenosti ako `df`: `used / (used + avail)` zaokrúhlené nahor.
@@ -335,6 +341,14 @@ mod tests {
         assert_eq!(fmt_si(63_200_000), "63.2 MB");
         assert_eq!(fmt_si(950), "0.9 kB");
         assert_eq!(fmt_si(189_800_000_000), "189.8 GB");
+    }
+
+    #[test]
+    fn disk_shows_size_and_percent_with_gap() {
+        let d = Disk { used: 8_400_000_000, avail: 111_600_000_000, total: 120_000_000_000 };
+        assert_eq!(fmt_disk(&d), "8.4 GB     7 %");
+        let d = Disk { used: 71, avail: 929, total: 1000 };
+        assert_eq!(fmt_disk(&d), "0.1 kB     8 %");
     }
 
     #[test]
