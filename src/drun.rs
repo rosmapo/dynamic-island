@@ -3,14 +3,20 @@
 use crate::config::{Config, DrunCfg, Theme};
 use crate::desktop::{self, App};
 use crate::fonts::Fonts;
+use crate::gl::Egl;
 use crate::grid::{self, Grid, Nav};
 use crate::icons::IconCache;
 use crate::render::{Color, Frame, Item, Rect, Renderer};
 use crate::text::Text;
 use crate::wl::{KeyEvent, PtrEvent, Wl};
 use std::collections::HashMap;
+use std::time::{Duration, Instant};
 
 const BTN_LEFT: u32 = 272;
+/// Najdlhšie čakanie na prvý frame nového panela pri prechode z `--drun` (ms); potom spúšťač skončí aj bez neho.
+const PANEL_WAIT_MS: u64 = 700;
+/// Dĺžka fade-out okna spúšťača pri prechode do panela (s); panel medzitým vyrastá z jeho rozmerov.
+const HANDOFF_FADE_S: f32 = 0.13;
 
 /// Čo sa stalo po stlačení klávesy.
 #[derive(Debug, PartialEq)]
@@ -228,7 +234,9 @@ pub fn draw_cells(out: &mut Vec<Item>, g: &Grid, d: &DrunCfg, theme: &Theme, s: 
 }
 
 /// Vykreslí kartu so mriežkou aplikácií (samostatný spúšťač). Súradnice mriežky sú logické, výstup je v pixeloch (× `s`).
-fn build(st: &State, g: &Grid, d: &DrunCfg, theme: &Theme, opacity: f32, s: f32, text: &mut Text, icon_paths: &mut HashMap<usize, String>) -> Frame {
+/// `alpha` (0..1) vynásobí krytie všetkého – používa sa pri prechode do panela (`--action`).
+#[allow(clippy::too_many_arguments)]
+fn build(st: &State, g: &Grid, d: &DrunCfg, theme: &Theme, opacity: f32, s: f32, text: &mut Text, icon_paths: &mut HashMap<usize, String>, alpha: f32) -> Frame {
     let mut frame = Frame::default();
     let (w, h) = g.size();
     // pozadie má rovnaké krytie ako ostrovček (`[island] opacity`), ak `[drun] opacity` nie je nastavené
@@ -258,6 +266,7 @@ fn build(st: &State, g: &Grid, d: &DrunCfg, theme: &Theme, opacity: f32, s: f32,
         let tw = text.measure(&msg, npx);
         text.layout_to(&mut frame.content, &msg, npx, (w * s - tw) * 0.5, (g.top + g.pad) * s + (h * s - (g.top + g.pad) * s) * 0.5 + (a - dd) * 0.5, fade(theme.fg, 0.7));
     }
+    frame.fade(alpha);
     frame
 }
 
@@ -303,7 +312,139 @@ impl Drop for PidGuard {
         if std::fs::read_to_string(pid_file(&self.0)).map(|s| s.trim() == mine).unwrap_or(false) {
             let _ = std::fs::remove_file(pid_file(&self.0));
         }
+        // aj `.ready` signalizačný súbor (proces mohol skončiť skôr, než panel stihol otvoriť)
+        if std::fs::read_to_string(ready_file(&self.0)).map(|s| s.trim() == mine).unwrap_or(false) {
+            let _ = std::fs::remove_file(ready_file(&self.0));
+        }
     }
+}
+
+/// Súbor signalizujúci, že samostatné okno už zobrazilo prvý frame (`$XDG_RUNTIME_DIR/dynamic-island-<názov>.ready`,
+/// v strede je PID). Spúšťač `--drun` pri prechode do panela čaká naň, aby prechod nebol vidieť ako medzera.
+fn ready_file(name: &str) -> std::path::PathBuf {
+    pid_file(name).with_extension("ready")
+}
+
+/// Označí toto samostatné okno ako pripravené (prvý frame je namapovaný); volá ho `--action` z `app.rs`.
+pub(crate) fn signal_ready(name: &str) {
+    let _ = std::fs::write(ready_file(name), std::process::id().to_string());
+}
+
+/// Je príkaz spustenie nášho binárneho súboru s `--action NÁZOV` (presne 3 slová)? Vráti NÁZOV.
+fn panel_target(cmd: &str) -> Option<String> {
+    let exe = std::env::current_exe().ok()?;
+    panel_target_exe(cmd, exe.file_name()?)
+}
+
+fn panel_target_exe(cmd: &str, exe_name: &std::ffi::OsStr) -> Option<String> {
+    let mut words = cmd.split_whitespace();
+    let bin = words.next()?;
+    if words.next()? != "--action" {
+        return None;
+    }
+    let name = words.next()?;
+    if words.next().is_some() {
+        return None;
+    }
+    if std::path::Path::new(bin).file_name() == Some(exe_name) {
+        Some(name.to_string())
+    } else {
+        None
+    }
+}
+
+/// Čaká, kým proces `pid` (nové samostatné okno) zobrazí prvý frame (`.ready` s jeho PID); najviac `ms`.
+fn wait_for_window(wl: &mut Wl, pid: u32, ms: u64) {
+    let deadline = Instant::now() + Duration::from_millis(ms);
+    while Instant::now() < deadline {
+        if wl.st.closed {
+            return;
+        }
+        let ok = std::fs::read_to_string(ready_file("action"))
+            .ok()
+            .and_then(|s| s.trim().parse::<u32>().ok())
+            .map(|p| p == pid && is_window_process(p as i32, "--action"))
+            .unwrap_or(false);
+        if ok {
+            return;
+        }
+        if wl.wait_events(&[], 8).is_err() {
+            return;
+        }
+    }
+}
+
+/// Fade-out okna spúšťača (kým nový panel vyrastá z jeho rozmerov); po dobehnutí sa povrch zavrie.
+#[allow(clippy::too_many_arguments)]
+fn fade_out(
+    wl: &mut Wl,
+    egl: &Egl,
+    renderer: &mut Renderer,
+    text: &mut Text,
+    st: &State,
+    g: &Grid,
+    d: &DrunCfg,
+    theme: &Theme,
+    opacity: f32,
+    scale: i32,
+    icons: &mut IconCache,
+    icon_paths: &mut HashMap<usize, String>,
+    wu: u32,
+    hu: u32,
+) -> Result<(), String> {
+    let start = Instant::now();
+    loop {
+        let t = (start.elapsed().as_secs_f32() / HANDOFF_FADE_S).min(1.0);
+        let frame = build(st, g, d, theme, opacity, scale as f32, text, icon_paths, 1.0 - t);
+        renderer.draw(wu * scale as u32, hu * scale as u32, &frame, text, icons);
+        if !egl.swap() {
+            return Err("eglSwapBuffers zlyhalo".into());
+        }
+        if t >= 1.0 || wl.st.closed {
+            return Ok(());
+        }
+        wl.wait_events(&[], 8)?;
+    }
+}
+
+/// Spustí vybranú položku a skončí. Pri `binárka --action NÁZOV` (detached panel) dostane nový proces premennú
+/// `DI_ACTION_FROM` s rozmerom tohto okna; spúšťač počká, kým panel zobrazí prvý frame, rýchlo zosvetlí a skončí –
+/// vznikne tak pružinový prechod z drun do panela (rovnaký, ako prepínanie panelov v jednom okne). Obyčajná
+/// aplikácia sa spustí bez čakania, ako doteraz.
+#[allow(clippy::too_many_arguments)]
+fn launch_and_exit(
+    wl: &mut Wl,
+    egl: &Egl,
+    renderer: &mut Renderer,
+    text: &mut Text,
+    st: &State,
+    g: &Grid,
+    d: &DrunCfg,
+    theme: &Theme,
+    opacity: f32,
+    scale: i32,
+    icons: &mut IconCache,
+    icon_paths: &mut HashMap<usize, String>,
+    wu: u32,
+    hu: u32,
+    cmd: &str,
+) -> Result<(), String> {
+    if panel_target(cmd).is_some() {
+        let mut c = crate::app::session_command(cmd);
+        c.env("DI_ACTION_FROM", format!("{wu}x{hu}"));
+        if let Ok(mut child) = c.spawn() {
+            let pid = child.id();
+            // potomok si žije vlastný život (vlastná session); tu len čakáme na jeho prvý frame
+            std::thread::spawn(move || {
+                let _ = child.wait();
+            });
+            wait_for_window(wl, pid, PANEL_WAIT_MS);
+            return fade_out(wl, egl, renderer, text, st, g, d, theme, opacity, scale, icons, icon_paths, wu, hu);
+        }
+        return Ok(());
+    }
+    crate::app::spawn_detached(cmd);
+    Ok(())
 }
 
 pub fn run(cfg: Config) -> Result<(), String> {
@@ -344,6 +485,7 @@ pub fn run(cfg: Config) -> Result<(), String> {
         if wl.st.closed {
             return Ok(());
         }
+        let mut launch: Option<String> = None;
 
         for e in std::mem::take(&mut wl.st.ptr_events) {
             match e {
@@ -362,8 +504,7 @@ pub fn run(cfg: Config) -> Result<(), String> {
                     // klik spustí bunku pod ukazovateľom (aj pri vypnutom hover)
                     if let Some(i) = g.hit(ptr.0, ptr.1).and_then(|s| st.at_slot(s, g.line_len())) {
                         if let Some(cmd) = st.launch_cmd(i, &d) {
-                            crate::app::spawn_detached(&cmd);
-                            return Ok(());
+                            launch = Some(cmd);
                         }
                     }
                 }
@@ -381,17 +522,18 @@ pub fn run(cfg: Config) -> Result<(), String> {
                 KeyOut::Close => return Ok(()),
                 KeyOut::Launch(i) => {
                     if let Some(cmd) = st.launch_cmd(i, &d) {
-                        crate::app::spawn_detached(&cmd);
-                        return Ok(());
+                        launch = Some(cmd);
                     }
                 }
-                KeyOut::Raw(cmd) => {
-                    crate::app::spawn_detached(&cmd);
-                    return Ok(());
-                }
+                KeyOut::Raw(cmd) => launch = Some(cmd),
                 KeyOut::Redraw => dirty = true,
                 KeyOut::None => {}
             }
+        }
+
+        // spustenie vybranej položky (klikom, Enter alebo napísaný príkaz) a koniec
+        if let Some(cmd) = launch {
+            return launch_and_exit(&mut wl, &egl, &mut renderer, &mut text, &st, &g, &d, &theme, cfg.opacity, scale, &mut icons, &mut icon_paths, wu, hu, &cmd);
         }
 
         if wl.st.scale_dirty {
@@ -402,7 +544,7 @@ pub fn run(cfg: Config) -> Result<(), String> {
         }
 
         if dirty && !wl.st.frame_pending {
-            let frame = build(&st, &g, &d, &theme, cfg.opacity, scale as f32, &mut text, &mut icon_paths);
+            let frame = build(&st, &g, &d, &theme, cfg.opacity, scale as f32, &mut text, &mut icon_paths, 1.0);
             renderer.draw(wu * scale as u32, hu * scale as u32, &frame, &mut text, &mut icons);
             wl.request_frame();
             if !egl.swap() {
@@ -410,5 +552,23 @@ pub fn run(cfg: Config) -> Result<(), String> {
             }
             dirty = false;
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn panel_cmd_detection() {
+        let exe = std::ffi::OsStr::new("dynamic-island");
+        assert_eq!(panel_target_exe("dynamic-island --action sysmenu", exe).as_deref(), Some("sysmenu"));
+        assert_eq!(panel_target_exe("/usr/local/bin/dynamic-island --action trash", exe).as_deref(), Some("trash"));
+        // privátny panel nie je spúšťaný našou binárkou, alebo príkaz obsahuje viac argumentov / iný prepínač
+        assert_eq!(panel_target_exe("firefox --action sysmenu", exe), None);
+        assert_eq!(panel_target_exe("dynamic-island --action sysmenu --extra", exe), None);
+        assert_eq!(panel_target_exe("dynamic-island --drun", exe), None);
+        assert_eq!(panel_target_exe("dynamic-island", exe), None);
+        assert_eq!(panel_target_exe("foot bash -c 'dynamic-island --action trash'", exe), None);
     }
 }

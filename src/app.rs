@@ -47,7 +47,7 @@ fn simple_command(cmd: &str) -> Option<Vec<String>> {
 }
 
 /// Príkaz pripravený na spustenie oddelene od ostrovčeka (vlastná session = vlastná skupina procesov).
-fn session_command(cmd: &str) -> Command {
+pub(crate) fn session_command(cmd: &str) -> Command {
     // Jednoduchý príkaz (len program a argumenty, bez shell syntaxe) sa spustí priamo – inak by v zozname
     // procesov ostal medzistupeň `sh -c program` (dash nerobí `exec` sám). Zložitejšie príkazy idú cez `sh -c`.
     let mut c = match simple_command(cmd) {
@@ -421,6 +421,8 @@ fn run_with(cfg: Config, panel: Option<String>) -> Result<(), String> {
     let mut last_clock = String::new();
     let mut first_draw = true;
     let mut kb_on = false;
+    // samostatné okno signalizuje spúšťaču (prechod panela z `--drun`) mapovanie prvým frame-om
+    let mut first_frame_done = false;
 
     loop {
         let now = Instant::now();
@@ -598,6 +600,11 @@ fn run_with(cfg: Config, panel: Option<String>) -> Result<(), String> {
             wl.request_frame();
             if !egl.swap() {
                 return Err("eglSwapBuffers zlyhalo".into());
+            }
+            // prvý frame je na obrazovke (povrch namapovaný): spúšťač, z ktorého panel prešiel, môže prepustiť scénu
+            if panel.is_some() && !first_frame_done {
+                first_frame_done = true;
+                crate::drun::signal_ready("action");
             }
             dirty = false;
         }

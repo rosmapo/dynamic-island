@@ -303,6 +303,9 @@ pub struct Ui {
     /// veľký panel sa práve otvára z ostrovčeka: veľkosť okna sa nastaví naraz, každá ďalšia zmena veľkosti (prepnutie
     /// panela v kontajneri / mimo neho, zmena obsahu) ide pružinami
     big_snap: bool,
+    /// Detached panel otvorený zo samostatného spúšťača (`--drun`): logická veľkosť jeho okna (premenná prostredia
+    /// `DI_ACTION_FROM`), z ktorej má pružina prechod spustiť; `None` = bežné otvorenie (bez predchodcu).
+    detach_from: Option<(f32, f32)>,
     panel_h: Spring,
     panel_w: Spring,
     panel_a: Spring,
@@ -463,6 +466,14 @@ fn fade(c: Color, a: f32) -> Color {
     [c[0], c[1], c[2], c[3] * a.clamp(0.0, 1.0)]
 }
 
+/// Rozbor `DI_ACTION_FROM` (`ŠÍRKAxVÝŠKA` v logických px) – veľkosť okna samostatného spúšťača,
+/// z ktorej má detached panel spustiť pružinový prechod; `None` = premenná chýba alebo je nulová.
+fn parse_from(s: &str) -> Option<(f32, f32)> {
+    let (w, h) = s.trim().split_once('x')?;
+    let (w, h) = (w.trim().parse::<f32>().ok()?, h.trim().parse::<f32>().ok()?);
+    (w.is_finite() && h.is_finite() && w > 20.0 && h > 20.0).then_some((w, h))
+}
+
 pub fn days_in_month(year: i32, month0: i32) -> i32 {
     match month0 {
         0 | 2 | 4 | 6 | 7 | 9 | 11 => 31,
@@ -617,6 +628,7 @@ impl Ui {
             hw_w: Spring::with(0.0, 240.0, 26.0),
             hw_h: Spring::with(0.0, 240.0, 26.0),
             big_snap: false,
+            detach_from: None,
             panel_h: Spring::with(0.0, 240.0, 26.0),
             panel_w: Spring::with(0.0, 240.0, 26.0),
             panel_a: Spring::with(0.0, 420.0, 42.0),
@@ -1169,8 +1181,14 @@ impl Ui {
             let (w, h) = if self.hw_view() { self.hw_target() } else { self.panel_dims(self.big) };
             if self.big_snap {
                 self.big_snap = false;
-                self.hw_w.snap(w);
-                self.hw_h.snap(h);
+                if let Some((fw, fh)) = self.detach_from {
+                    // prechod z okna spúšťača (`--drun`): pružina začína na jeho veľkosti a plynule dobieha na panel
+                    self.hw_w.snap(fw * self.scale);
+                    self.hw_h.snap(fh * self.scale);
+                } else {
+                    self.hw_w.snap(w);
+                    self.hw_h.snap(h);
+                }
             } else {
                 self.hw_w.set(w);
                 self.hw_h.set(h);
@@ -1179,6 +1197,11 @@ impl Ui {
         for sp in [&mut self.panel_h, &mut self.panel_w, &mut self.panel_a, &mut self.radius, &mut self.hud_t, &mut self.hide, &mut self.notif_t, &mut self.notif_w, &mut self.notif_h, &mut self.cal_t, &mut self.hw_w, &mut self.hw_h] {
             sp.step(dt);
             busy |= !sp.settled();
+        }
+        // prechod zo spúšťača sa použije len raz – po dobehnutí otváracej animácie sa zabudne
+        if self.detach_from.is_some() && self.cal_t.x > 0.99 && self.cal_t.settled() {
+            self.detach_from = None;
+            busy = true;
         }
         if self.panel == Panel::None && self.panel_h.x < 0.5 && self.panel_h.settled() {
             self.panel_shown = Panel::None;
@@ -1643,6 +1666,8 @@ impl Ui {
         self.panel = p;
         if p == Panel::None {
             self.grace = None;
+            // zatvára sa okno (aj detached): prechod zo spúšťača už nerekne nikomu
+            self.detach_from = None;
         } else {
             // iný panel otvorený samostatne = už nie je v kontajneri (zatvorenie ho ponechá kvôli animácii)
             self.hw = false;
@@ -2088,6 +2113,8 @@ impl Ui {
         if name.is_empty() {
             return;
         }
+        // prechod zo spúšťača: veľkosť jeho okna (logické px, `ŠÍRKAxVÝŠKA`) odovzdáva pri štarte panela
+        self.detach_from = parse_from(&std::env::var("DI_ACTION_FROM").unwrap_or_default());
         if self.centered && self.panel != Panel::None && self.ext_name == name {
             self.set_panel(Panel::None);
             self.collapse_at = None;
@@ -3556,14 +3583,19 @@ impl Ui {
         let content_w = row_w + (hud_w - row_w) * ht;
 
         let nt = self.notif_t.x.clamp(0.0, 1.0);
-        let pill_w0 = (content_w + 2.0 * pad_x).max(self.panel_w.x).max(self.s(40.0));
-        let pill_h0 = row_h + self.panel_h.x.max(0.0);
-        let pill_w = pill_w0 + (self.notif_w.x - pill_w0) * nt;
-        let pill_h = pill_h0 + (self.notif_h.x - pill_h0) * nt;
         let ct = self.cal_t.x.clamp(0.0, 1.0);
         let (cal_w, cal_h) = self.cal_size();
-        let pill_w = pill_w + (cal_w - pill_w) * ct;
-        let pill_h = pill_h + (cal_h - pill_h) * ct;
+        // prechod zo spúšťača (`--drun`): obdĺžnik rastie priamo pružinou z jeho veľkosti, nie z lišty ostrovčeka
+        let handoff = if ct < 0.999 { self.detach_from } else { None };
+        let (pill_w, pill_h) = if handoff.is_some() {
+            (cal_w, cal_h)
+        } else {
+            let pill_w0 = (content_w + 2.0 * pad_x).max(self.panel_w.x).max(self.s(40.0));
+            let pill_h0 = row_h + self.panel_h.x.max(0.0);
+            let pw = pill_w0 + (self.notif_w.x - pill_w0) * nt;
+            let ph = pill_h0 + (self.notif_h.x - pill_h0) * nt;
+            (pw + (cal_w - pw) * ct, ph + (cal_h - ph) * ct)
+        };
         let hide_off = -(pill_h + self.s(self.cfg.top_margin) + self.s(24.0)) * self.hide.x;
         // v strede (`--action`): okno je vertikálne v strede povrchu, ukotveného do stredu obrazovky
         let pill_y = if self.centered { ((self.surf_h - pill_h) * 0.5).round() } else { self.s(self.cfg.top_margin) + hide_off };
@@ -5910,5 +5942,13 @@ mod tests {
     fn caps() {
         assert_eq!(capitalize("november 2026"), "November 2026");
         assert_eq!(capitalize(""), "");
+    }
+    #[test]
+    fn from_size() {
+        assert_eq!(parse_from("800x520"), Some((800.0, 520.0)));
+        assert_eq!(parse_from(" 480 x 320 "), Some((480.0, 320.0)));
+        assert_eq!(parse_from("0x0"), None);
+        assert_eq!(parse_from("800"), None);
+        assert_eq!(parse_from(""), None);
     }
 }
