@@ -177,7 +177,8 @@ MENU_SPECS = _specs(
     _f('wait_timeout_ms', 'int', 'Najdlhšie čakanie (ms)', 1500, min=100, max=30000),
 )
 ITEM_SPECS = _specs(
-    _f('separator', 'bool', 'Oddeľovač', False, 'Vodorovná čiara namiesto položky.'),
+    _f('separator', 'enum', 'Oddeľovač', '', 'Vodorovná čiara namiesto položky; poloha čiary v riadku.', choices=['', 'top', 'center', 'bottom'],
+       choice_labels={'': 'nie je oddeľovač', 'top': 'čiara hore', 'center': 'čiara v strede', 'bottom': 'čiara dole'}),
     _f('line', 'str', 'Riadok (text na celú šírku)', '', 'Namiesto položky: text cez celú šírku menu ({} = výstup exec). Prázdny riadok len v config.toml: line = "".'),
     _f('icon', 'str', 'Ikona (súbor)', '', 'PNG v icons/ vedľa config.toml alebo plná cesta.'),
     _f('label', 'str', 'Text', '', 'S exec je to šablóna, {} sa nahradí výstupom.'),

@@ -424,7 +424,7 @@ line = "Uptime: {}"
 # command = ""
 exec = "uptime -p | awk '{for(i=2;i<=NF;i+=2){n=$i;u=$(i+1);if(u~/day/)printf \"%s %s \",n,n==1?\"deň\":n<5?\"dni\":\"dní\";else if(u~/hour/)printf \"%s %s \",n,n==1?\"hodina\":n<5?\"hodiny\":\"hodín\";else if(u~/minute/)printf \"%s %s \",n,n==1?\"minúta\":n<5?\"minúty\":\"minút\"};print \"\"}'"
 [[menu.item]]
-separator = true
+separator = "center"
 ### Dashboard ###
 # Natívne zdroje (bez skriptov): exec = "builtin:ZDROJ[:ARGUMENT]" – cpu, ram, ram-pct, swap, temp[:názov],
 # disk[:cesta], disk-pct[:cesta], disk-free[:cesta], disk-total[:cesta], net-down, net-up. Pozri README (6.18b).
@@ -446,7 +446,7 @@ label = "↑ {}"
 exec = "builtin:net-up"
 interval = 2
 [[menu.item]]
-separator = true
+separator = "center"
 
 [[menu.item]]
 label = "Root: {}"
@@ -461,7 +461,7 @@ exec = "builtin:disk-pct:/"   # uprav na svoj pripojný bod
 label = "{} %"
 exec = "builtin:disk-pct:/media/mm/Data"   # uprav na svoj pripojný bod
 [[menu.item]]
-separator = true
+separator = "center"
 # [[menu.item]]
 # label = "Efi: {}"
 # exec = "builtin:disk:/boot/efi"
@@ -475,7 +475,7 @@ separator = true
 # label = "{} %"
 # exec = "builtin:disk-pct:/media/mm/backup"   # uprav na svoj pripojný bod
 # [[menu.item]]
-# separator = true
+# separator = "center"
 
 # [[menu.item]]
 # label = "Teplota: {}"
@@ -486,7 +486,7 @@ label = "Kôš {}"
 exec = "~/.config/dynamic-island/scripts/trash.sh"
 command = "module:trash"                               # voliteľné: klik otvorí kôš
 [[menu.item]]
-separator = true
+separator = "center"
 ### System Tools ###
 [[menu.item]]
 icon = "axagon.png"
@@ -519,8 +519,6 @@ cell_width = 180
 gap = 5
 padding = 12
 [[menu.item]]
-separator = true
-[[menu.item]]
 label = "Rádio Slovensko"
 command = "mpv https://icecast.stv.livebox.sk/slovensko_128.mp3 --no-config"
 track = "radio"
@@ -537,7 +535,7 @@ label = "Rádio 7"
 command = "mpv https://play.radio7.sk/128 --no-config"
 track = "radio"
 [[menu.item]]
-separator = true
+separator = "center"
 [[menu.item]]
 label = "Fun 80.90.Roky"
 command = "mpv http://stream.funradio.sk:8000/80-90-128.mp3 --no-config"
@@ -547,44 +545,17 @@ label = "Rádio Melody"
 command = "mpv https://stream.bauermedia.sk/melody-hi.mp3 --no-config"
 track = "radio"
 [[menu.item]]
-separator = true
+separator = "center"
 [[menu.item]]
 label = "Slobodný vysielač"
 command = "mpv https://vysielanie.online/radio/8020/SV128.mp3 --no-config"
 track = "radio"
 [[menu.item]]
-separator = true
+line = ""
 [[menu.item]]
 label = "  Vypnúť rádio"
 command = "module:track-stop:radio"
 
-# ### Power menu #######################################################################
-# [[menu]]
-# name = "power"
-# title = ""
-# text_columns = 5
-# rows = 1
-# text_size = 48
-# cell_width = 100
-# gap = 6
-# padding = 12
-# separator_thickness = 2
-# separator_length = 0.8
-# [[menu.item]]
-# label = ""
-# command = "swaylock -f -i /home/mm/.config/wayfire/media/lockscreen.jpg --show-keyboard-layout --indicator-radius 100 --indicator-thickness 7"
-# [[menu.item]]
-# label = "󰍃"
-# command = "logout_to_tty.sh"
-# [[menu.item]]
-# label = ""
-# command = "systemctl suspend"
-# [[menu.item]]
-# label = ""
-# command = "sudo reboot"
-# [[menu.item]]
-# label = ""
-# command = "sudo poweroff"
 
 #### Settings #################################################################
 [[menu]]
@@ -602,7 +573,8 @@ separator_thickness = 2
 separator_length = 0.8
 
 [[menu.item]]
-separator = true
+separator = "bottom"
+
 [[menu.item]]
 label = "Wayfire"
 command = "wcm"
@@ -613,7 +585,7 @@ command = "wstroke-config"
 label = "MX Master"
 command = "solaar"
 #[[menu.item]]
-#separator = true
+#separator = "center"
 [[menu.item]]
 label = "Firewall"
 command = "rungufw.sh"
@@ -624,7 +596,7 @@ command = "QDiskInfo"
 label = "Island"
 command = "~/.config/dynamic-island/dynamic-island-settings/dynamic-island-settings"
 [[menu.item]]
-separator = true
+separator = "top"
 [[menu.item]]
 icon = "themes.png"
 command = "module:wallpaper"

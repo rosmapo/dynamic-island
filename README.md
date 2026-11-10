@@ -855,7 +855,7 @@ Menu sa spúšťa akciou s jeho názvom (`on_click = "apps"`) alebo `module:apps
 | `command` | shell príkaz, alebo `module:…` (pozri 6.4). **Prázdny = položka len na zobrazenie** (bez hoveru a kliku) |
 | `exec` | príkaz, ktorého prvý neprázdny riadok výstupu sa zobrazí (max. 5 s, cez `sh -c`, bez ANSI); `builtin:ZDROJ` = natívny zdroj bez procesu, pozri 6.18b |
 | `interval` | obnovovanie `exec` počas otvoreného menu v s; `0` = raz pri otvorení |
-| `separator` | `true` = oddeľovací riadok (ostatné kľúče sa ignorujú) |
+| `separator` | oddeľovací riadok (ostatné kľúče sa ignorujú); hodnota určuje polohu čiary v riadku: `"top"` (hore), `"center"` (v strede), `"bottom"` (dole). Staré `true` = `"center"`; `false` / `""` = nie je oddeľovač |
 | `line` | riadok textu cez celú šírku menu (vycentrovaný): `line = "text"`; pri `exec` je to šablóna s `{}` ako pri `label`; `line = ""` = prázdny riadok (vynechanie riadku). `exec`, `interval` a voliteľný `command` fungujú ako pri textovej položke; `icon`/`label` sa ignorujú |
 | `track` | skupina sledovaného procesu (pozri 6.19) |
 

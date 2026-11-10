@@ -45,6 +45,15 @@ pub enum MenuKind {
     Hybrid,
 }
 
+/// Poloha čiary oddeľovača v jeho riadku (`separator = "top" | "center" | "bottom"`).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum SepAlign {
+    Top,
+    #[default]
+    Center,
+    Bottom,
+}
+
 #[derive(Clone, Debug, Default)]
 pub struct MenuItemCfg {
     pub icon: String,
@@ -56,6 +65,8 @@ pub struct MenuItemCfg {
     pub interval: f64,
     /// Vlastný riadok s oddelovačom; `icon`/`label`/`command` sa ignorujú.
     pub separator: bool,
+    /// Poloha čiary oddeľovača v riadku (len pri `separator`).
+    pub sep_align: SepAlign,
     /// Riadok textu cez celú šírku menu (`line = "text {}"`): text je v `label`, `exec`/`interval` fungujú ako pri
     /// bežnej textovej položke; prázdny text = prázdny riadok. `command` je voliteľný (klik na celý riadok).
     pub line: bool,
@@ -457,10 +468,21 @@ impl Config {
                     if let Some(ia) = m.get("item").and_then(|v| v.as_arr()) {
                         for iv in ia {
                             if let Value::Table(it) = iv {
-                                let separator = it.bool_or("separator", false);
-                                if separator {
+                                // `separator = "top" | "center" | "bottom"` (staré `true` = center; `false` / "" = nie je oddeľovač)
+                                let sep_align = match it.get("separator") {
+                                    Some(Value::Bool(true)) => Some(SepAlign::Center),
+                                    Some(Value::Str(s)) => match s.trim().to_lowercase().as_str() {
+                                        "" | "false" | "none" => None,
+                                        "top" => Some(SepAlign::Top),
+                                        "bottom" => Some(SepAlign::Bottom),
+                                        _ => Some(SepAlign::Center),
+                                    },
+                                    _ => None,
+                                };
+                                if let Some(sep_align) = sep_align {
                                     items.push(MenuItemCfg {
                                         separator: true,
+                                        sep_align,
                                         ..Default::default()
                                     });
                                     continue;
@@ -497,6 +519,7 @@ impl Config {
                                     exec,
                                     interval: it.f64_or("interval", 0.0).max(0.0),
                                     separator: false,
+                                    sep_align: SepAlign::Center,
                                     line: false,
                                     track: it.str_or("track", "").trim().to_string(),
                                 });
@@ -901,6 +924,21 @@ mod tests {
         let t = toml::parse("[clipboard]\nfont_size=18\nrows=5\nwidth=500\n").unwrap();
         let c = Config::from_table(&t, PathBuf::new());
         assert_eq!((c.clip_font, c.clip_rows, c.clip_width), (18.0, 5, 500.0));
+    }
+
+    #[test]
+    fn menu_separator_positions() {
+        let t = toml::parse("[[menu]]\nname=\"m\"\n[[menu.item]]\nseparator=true\n[[menu.item]]\nseparator=\"top\"\n[[menu.item]]\nseparator=\"center\"\n[[menu.item]]\nseparator=\"bottom\"\n[[menu.item]]\nseparator=false\nlabel=\"A\"\n[[menu.item]]\nseparator=\"\"\nlabel=\"B\"\n").unwrap();
+        let c = Config::from_table(&t, PathBuf::new());
+        let it = &c.menus[0].items;
+        assert_eq!(it.len(), 6);
+        let al: Vec<_> = it.iter().map(|i| (i.separator, i.sep_align)).collect();
+        assert_eq!(al[0], (true, SepAlign::Center));
+        assert_eq!(al[1], (true, SepAlign::Top));
+        assert_eq!(al[2], (true, SepAlign::Center));
+        assert_eq!(al[3], (true, SepAlign::Bottom));
+        assert!(!it[4].separator && it[4].label == "A");
+        assert!(!it[5].separator && it[5].label == "B");
     }
 
     #[test]

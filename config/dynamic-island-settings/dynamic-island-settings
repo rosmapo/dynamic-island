@@ -396,7 +396,8 @@ class Window(Adw.ApplicationWindow):
         f = rec['fields']
         if is_item:
             if f.get('separator'):
-                return '──── oddeľovač ────'
+                pos = {'top': ' (hore)', 'bottom': ' (dole)'}.get(f['separator'], '')
+                return f'──── oddeľovač{pos} ────'
             if 'line' in f:
                 return f'── riadok: {f["line"]}' if f['line'] else '── prázdny riadok ──'
             return (f.get('label') or f.get('icon') or f.get('command')
@@ -824,6 +825,10 @@ class Window(Adw.ApplicationWindow):
         if t == 'enum':
             choices = e['choices']
             labels = e.get('choice_labels') or {}
+            if val is True:        # staré `separator = true` = čiara v strede
+                val = 'center'
+            elif val is False:
+                val = ''
             row = Adw.ComboRow(title=title, subtitle=sub,
                                model=Gtk.StringList.new([labels.get(c, c) for c in choices]))
             row.set_selected(choices.index(val) if val in choices else 0)

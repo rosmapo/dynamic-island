@@ -1,7 +1,7 @@
 //! Stav a rozloženie ostrovčeka: položky, HUD, kalendár, tooltipy, animácie.
 //! Všetky rozmery sa tu počítajú vo FYZICKÝCH pixeloch (logické * scale).
 use crate::anim::Spring;
-use crate::config::{Btn, Color, Config, MenuKind, Theme};
+use crate::config::{Btn, Color, Config, MenuKind, SepAlign, Theme};
 use crate::icons::IconCache;
 use crate::data::*;
 use crate::render::{Frame, Item, Rect};
@@ -189,7 +189,8 @@ enum MenuLayoutRow {
     Labels(Vec<usize>),
     /// Riadok textu cez celú šírku (`line`), index do `menu.items`.
     Line(usize),
-    Separator,
+    /// Oddeľovač s polohou čiary v riadku.
+    Separator(SepAlign),
 }
 
 /// Udalosti pre D-Bus vlákno (zatvorenie / akcia notifikácie).
@@ -1502,7 +1503,7 @@ impl Ui {
             if it.separator {
                 flush_icons(&mut icons, &mut rows);
                 flush_labels(&mut labels, &mut rows);
-                rows.push(MenuLayoutRow::Separator);
+                rows.push(MenuLayoutRow::Separator(it.sep_align));
                 continue;
             }
             if it.line {
@@ -1588,7 +1589,7 @@ impl Ui {
             body_h += match row {
                 MenuLayoutRow::Icons(_) => icon_cell,
                 MenuLayoutRow::Labels(_) | MenuLayoutRow::Line(_) => label_h,
-                MenuLayoutRow::Separator => sep_h,
+                MenuLayoutRow::Separator(_) => sep_h,
             };
         }
         if layout.is_empty() {
@@ -3861,10 +3862,16 @@ impl Ui {
                     }
                     y += label_h;
                 }
-                MenuLayoutRow::Separator => {
+                MenuLayoutRow::Separator(pos) => {
                     let line_w = content_w * menu.separator_length;
                     let lx = grid_left + (content_w - line_w) * 0.5;
-                    let ly = y + (sep_h - sep_thick) * 0.5;
+                    // čiara v strede riadku, alebo bližšie k hornému / dolnému okraju (štvrtina voľného miesta)
+                    let free = sep_h - sep_thick;
+                    let ly = y + match pos {
+                        SepAlign::Top => free * 0.25,
+                        SepAlign::Center => free * 0.5,
+                        SepAlign::Bottom => free * 0.75,
+                    };
                     frame.content.push(Item::Rect {
                         r: Rect::new(lx, ly, line_w, sep_thick),
                         radius: sep_thick * 0.5,
