@@ -306,6 +306,10 @@ pub struct Ui {
     /// Detached panel otvorený zo samostatného spúšťača (`--drun`): logická veľkosť jeho okna (premenná prostredia
     /// `DI_ACTION_FROM`), z ktorej má pružina prechod spustiť; `None` = bežné otvorenie (bez predchodcu).
     detach_from: Option<(f32, f32)>,
+    /// Odložené okamžité zatvorenie samostatného okna (`--action` / `--clip`): `set_panel(None)` ho len označí a
+    /// `update()` ho vykoná, ak sa medzitým neotvoril iný panel – prepínanie panelov (položka menu s `module:…`)
+    /// tak zostane plynulé, skutočné zatvorenie (Esc, spustenie príkazu) je naďalej bez animácie.
+    close_snap: bool,
     panel_h: Spring,
     panel_w: Spring,
     panel_a: Spring,
@@ -629,6 +633,7 @@ impl Ui {
             hw_h: Spring::with(0.0, 240.0, 26.0),
             big_snap: false,
             detach_from: None,
+            close_snap: false,
             panel_h: Spring::with(0.0, 240.0, 26.0),
             panel_w: Spring::with(0.0, 240.0, 26.0),
             panel_a: Spring::with(0.0, 420.0, 42.0),
@@ -1145,6 +1150,17 @@ impl Ui {
 
     /// Posun animácií; vráti true, kým sa niečo hýbe.
     pub fn update(&mut self, dt: f32, now: Instant, text: &mut Text) -> bool {
+        // odložené okamžité zatvorenie samostatného okna: ak sa medzi `set_panel(None)` a touto aktualizáciou
+        // neotvoril iný panel (skutočné zatvorenie, napr. Esc), springy sa snapnú tu – ešte pred prvým frame-om
+        if self.close_snap {
+            self.close_snap = false;
+            if self.panel == Panel::None {
+                self.cal_t.snap(0.0);
+                self.panel_h.snap(0.0);
+                self.panel_w.snap(0.0);
+                self.panel_a.snap(0.0);
+            }
+        }
         self.tick(now);
         self.refresh_items(text);
         if self.notif_dirty {
@@ -1671,6 +1687,9 @@ impl Ui {
         } else {
             // iný panel otvorený samostatne = už nie je v kontajneri (zatvorenie ho ponechá kvôli animácii)
             self.hw = false;
+            // hneď po zavretí sa otvára iný panel (položka menu s `module:…` v samostatnom okne):
+            // odložené okamžité zatvorenie sa zruší a prepínanie animujú pružiny ako v ostrovčeku
+            self.close_snap = false;
         }
         if Self::is_big(p) {
             // naraz sa nastaví len veľkosť okna, ktoré je zatvorené; ak sa ešte zatvára (`set_panel(None)` tesne pred
@@ -1684,7 +1703,9 @@ impl Ui {
         if Self::is_big(p) {
             self.cal_t.set(1.0);
         } else if self.centered {
-            self.cal_t.snap(0.0);
+            // okamžité zatvorenie sa vykoní až v `update` – keď sa hneď otvára iný panel, prepínanie
+            // nespôsobí prebliknutie (pružiny pokračujú z aktuálnej veľkosti, ako v ostrovčeku)
+            self.close_snap = true;
         } else {
             self.cal_t.set(0.0);
         }
@@ -1759,14 +1780,17 @@ impl Ui {
         }
         match p {
             Panel::None => {
-                if self.centered {
-                    self.panel_h.snap(0.0);
-                    self.panel_w.snap(0.0);
-                    self.panel_a.snap(0.0);
-                } else {
-                    self.panel_h.set(0.0);
-                    self.panel_w.set(0.0);
-                    self.panel_a.set(0.0);
+                // pri odloženom okamžitom zatvorení (samostatné okno) springy snapne `update`
+                if !self.close_snap {
+                    if self.centered {
+                        self.panel_h.snap(0.0);
+                        self.panel_w.snap(0.0);
+                        self.panel_a.snap(0.0);
+                    } else {
+                        self.panel_h.set(0.0);
+                        self.panel_w.set(0.0);
+                        self.panel_a.set(0.0);
+                    }
                 }
             }
             Panel::Calendar | Panel::Disks | Panel::Menu(_) | Panel::Clip | Panel::Trash | Panel::Wall | Panel::Wifi | Panel::Audio | Panel::Monitor | Panel::Capture | Panel::Drun | Panel::Bluetooth | Panel::NotifHist | Panel::Media => {
@@ -5950,5 +5974,81 @@ mod tests {
         assert_eq!(parse_from("0x0"), None);
         assert_eq!(parse_from("800"), None);
         assert_eq!(parse_from(""), None);
+    }
+
+    /// Text bez fontov – pre testy `update` (prázdny config nič nemeriava).
+    struct DummySource;
+    impl crate::text::GlyphSource for DummySource {
+        fn rasterize(&mut self, _ch: char, _px: f32, _icon: bool) -> Option<crate::text::RawGlyph> {
+            None
+        }
+        fn line_metrics(&mut self, px: f32) -> (f32, f32) {
+            (px * 0.8, px * 0.2)
+        }
+    }
+
+    /// Ui s menu `sysmenu` (položka s `module:trash`) a trash panelom; `--action sysmenu` (centered).
+    fn menu_ui() -> Ui {
+        let t = crate::toml::parse("[[menu]]\nname=\"sysmenu\"\n[[menu.item]]\nlabel=\"A\"\ncommand=\"module:trash\"\n").unwrap();
+        let cfg = Config::from_table(&t, std::path::PathBuf::new());
+        let theme = Theme::load(&cfg);
+        Ui::new(cfg, theme, 1.0)
+    }
+
+    /// Pružiny dobehnú (60 fps × 2 s).
+    fn settle(ui: &mut Ui) {
+        for _ in 0..120 {
+            ui.cal_t.step(1.0 / 60.0);
+            ui.hw_w.step(1.0 / 60.0);
+            ui.hw_h.step(1.0 / 60.0);
+        }
+    }
+
+    #[test]
+    fn detached_panel_switch_stays_smooth() {
+        let mut ui = menu_ui();
+        ui.external_action("sysmenu");
+        assert!(ui.is_centered() && matches!(ui.panel, Panel::Menu(0)));
+        // prvý frame otvorenia skonzumuje `big_snap` (snap rozmeru) – simulá reality
+        ui.big_snap = false;
+        settle(&mut ui);
+        assert!(ui.cal_t.x > 0.99);
+        // klik na položku menu s `module:trash`: zatvorenie menu + otvorenie koša v jednom okne
+        ui.set_panel(Panel::None);
+        ui.run_module("trash");
+        // okno nesmie zmiznúť ani skočiť na nový rozmer – prepínanie animujú pružiny (ako v ostrovčeku)
+        assert!(!ui.close_snap, "prepínanie panelov musí zrušiť odložené okamžité zatvorenie");
+        assert!(ui.cal_t.x > 0.99, "cal_t nesmie byť snapnuté na 0 pri prepínaní panelov");
+        assert!(!ui.big_snap, "rozmery nesmú byť snapnuté, pružiny ich majú prepínanie");
+        assert_eq!(ui.panel, Panel::Trash);
+    }
+
+    #[test]
+    fn detached_close_is_instant_after_update() {
+        let mut ui = menu_ui();
+        ui.external_action("sysmenu");
+        settle(&mut ui);
+        ui.set_panel(Panel::None);
+        // medzi `set_panel(None)` a `update` sa nič nekreslí ani nesnapne
+        assert!(ui.close_snap);
+        assert!(ui.cal_t.x > 0.99);
+        let mut text = crate::text::Text::new(Box::new(DummySource));
+        ui.update(1.0 / 60.0, Instant::now(), &mut text);
+        // skutočné zatvorenie: okamžité (bez animácie) a proces skončí
+        assert_eq!(ui.cal_t.x, 0.0);
+        assert!(!ui.is_centered());
+    }
+
+    #[test]
+    fn island_close_stays_animated() {
+        let mut ui = menu_ui();
+        ui.toggle_trash();
+        settle(&mut ui);
+        assert!(ui.cal_t.x > 0.99);
+        ui.set_panel(Panel::None);
+        // ostrovček: žiadny snap, pružina len dobieha na 0 (zatváranie ostáva animované)
+        assert!(!ui.close_snap);
+        assert!(ui.cal_t.x > 0.99);
+        assert_eq!(ui.cal_t.target, 0.0);
     }
 }
