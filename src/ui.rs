@@ -1655,7 +1655,14 @@ impl Ui {
             }
             self.big = p;
         }
-        self.cal_t.set(if Self::is_big(p) { 1.0 } else { 0.0 });
+        // detached okno (--action / --clip): zatvorenie bez animácie; prepínanie panelov a ostrovček animujú ďalej
+        if Self::is_big(p) {
+            self.cal_t.set(1.0);
+        } else if self.centered {
+            self.cal_t.snap(0.0);
+        } else {
+            self.cal_t.set(0.0);
+        }
         if p != Panel::Wifi {
             self.wifi_pw = None;
         }
@@ -1727,9 +1734,15 @@ impl Ui {
         }
         match p {
             Panel::None => {
-                self.panel_h.set(0.0);
-                self.panel_w.set(0.0);
-                self.panel_a.set(0.0);
+                if self.centered {
+                    self.panel_h.snap(0.0);
+                    self.panel_w.snap(0.0);
+                    self.panel_a.snap(0.0);
+                } else {
+                    self.panel_h.set(0.0);
+                    self.panel_w.set(0.0);
+                    self.panel_a.set(0.0);
+                }
             }
             Panel::Calendar | Panel::Disks | Panel::Menu(_) | Panel::Clip | Panel::Trash | Panel::Wall | Panel::Wifi | Panel::Audio | Panel::Monitor | Panel::Capture | Panel::Drun | Panel::Bluetooth | Panel::NotifHist | Panel::Media => {
                 if p == Panel::Calendar {
