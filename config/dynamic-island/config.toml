@@ -420,9 +420,9 @@ command = "foot bash -c '/home/mm/.config/dynamic-island/scripts/dotfilesbkp.sh;
 icon = "timeshift.png"
 command = "timeshift-launcher"
 [[menu.item]]
-label = "up: {}"
-command = ""
-exec = "uptime -p | sed -E 's/up //; s/ days?,?//; s/ hours?/ hod./; s/,//; s/ minutes?/ min./'"
+line = "Uptime: {}"
+# command = ""
+exec = "uptime -p | awk '{for(i=2;i<=NF;i+=2){n=$i;u=$(i+1);if(u~/day/)printf \"%s %s \",n,n==1?\"deň\":n<5?\"dni\":\"dní\";else if(u~/hour/)printf \"%s %s \",n,n==1?\"hodina\":n<5?\"hodiny\":\"hodín\";else if(u~/minute/)printf \"%s %s \",n,n==1?\"minúta\":n<5?\"minúty\":\"minút\"};print \"\"}'"
 [[menu.item]]
 separator = true
 ### Dashboard ###
@@ -462,25 +462,25 @@ label = "{} %"
 exec = "builtin:disk-pct:/media/mm/Data"   # uprav na svoj pripojný bod
 [[menu.item]]
 separator = true
-[[menu.item]]
-label = "Efi: {}"
-exec = "builtin:disk:/boot/efi"
-[[menu.item]]
-label = "Backup: {}"
-exec = "builtin:disk:/media/mm/backup"   # uprav na svoj pripojný bod
-[[menu.item]]
-label = "{} %"
-exec = "builtin:disk-pct:/boot/efi"
-[[menu.item]]
-label = "{} %"
-exec = "builtin:disk-pct:/media/mm/backup"   # uprav na svoj pripojný bod
-[[menu.item]]
-separator = true
+# [[menu.item]]
+# label = "Efi: {}"
+# exec = "builtin:disk:/boot/efi"
+# [[menu.item]]
+# label = "Backup: {}"
+# exec = "builtin:disk:/media/mm/backup"   # uprav na svoj pripojný bod
+# [[menu.item]]
+# label = "{} %"
+# exec = "builtin:disk-pct:/boot/efi"
+# [[menu.item]]
+# label = "{} %"
+# exec = "builtin:disk-pct:/media/mm/backup"   # uprav na svoj pripojný bod
+# [[menu.item]]
+# separator = true
 
-#[[menu.item]]
-#label = "Teplota: {}"
-#exec = "builtin:temp"                     # builtin:temp:NÁZOV = konkrétny snímač (napr. coretemp, nvme)
-#interval = 5
+# [[menu.item]]
+# label = "Teplota: {}"
+# exec = "builtin:temp"                     # builtin:temp:NÁZOV = konkrétny snímač (napr. coretemp, nvme)
+# interval = 5
 [[menu.item]]
 label = "Kôš {}"
 exec = "~/.config/dynamic-island/scripts/trash.sh"
