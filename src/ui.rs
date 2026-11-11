@@ -1949,6 +1949,8 @@ impl Ui {
         let idx = tab.unwrap_or(self.hw_tab).min(n - 1);
         let Some(p) = self.tab_panel(&self.cfg.hw.tabs[idx].module) else { return };
         let fresh = !(self.hw && Self::is_hw_inner(self.panel));
+        // okno už otvorené iným panelom (napr. drun): rozmer sa nesnapne, pružiny ho prepnú z aktuálneho
+        let was_open = self.big_open();
         // záložka s menu: spustí `exec` jeho položiek (`wait_exec` sa v kontajneri neuplatní, okno sa otvára hneď)
         if let Panel::Menu(mi) = p {
             self.menu_start(mi);
@@ -1961,7 +1963,7 @@ impl Ui {
             // `ddcutil` je pomalý – údaje monitora sa načítajú vopred, kým používateľ pracuje s inou záložkou
             self.queued.push(Action::Monitor(crate::monitor::MonitorCmd::Load));
         }
-        if fresh {
+        if fresh && !was_open {
             // pri otvorení okno nezačína od nuly – rozmer vyrastá z ostrovčeka ako pri iných paneloch
             let (w, h) = self.hw_target();
             self.hw_w.snap(w);
@@ -6050,6 +6052,23 @@ mod tests {
         assert!(ui.cal_t.x > 0.99, "cal_t nesmie byť snapnuté na 0 pri prepínaní panelov");
         assert!(!ui.big_snap, "rozmery nesmú byť snapnuté, pružiny ich majú prepínanie");
         assert_eq!(ui.panel, Panel::Trash);
+    }
+
+    #[test]
+    fn drun_to_quickset_animates_size() {
+        let t = crate::toml::parse("[quickset]\ntab1=\"audio\"\ntab2=\"wifi\"\n").unwrap();
+        let cfg = Config::from_table(&t, std::path::PathBuf::new());
+        let theme = Theme::load(&cfg);
+        let mut ui = Ui::new(cfg, theme, 1.0);
+        ui.external_action("drun");
+        assert!(matches!(ui.panel, Panel::Drun));
+        ui.big_snap = false;
+        settle(&mut ui);
+        let (w0, h0) = (ui.hw_w.x, ui.hw_h.x);
+        // otvorenie quickset z otvoreného drun: rozmer sa nesmie snapnúť na cieľ
+        ui.run_module("quickset");
+        assert!(ui.hw && ui.panel == Panel::Audio);
+        assert_eq!((ui.hw_w.x, ui.hw_h.x), (w0, h0), "rozmer sa musí meniť pružinou, nie skokom");
     }
 
     fn text_dummy() -> crate::text::Text {
