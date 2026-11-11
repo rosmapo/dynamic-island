@@ -476,7 +476,12 @@ fn panel_target(cmd: &str) -> Option<String> {
 }
 
 fn panel_target_exe(cmd: &str, exe_name: &std::ffi::OsStr) -> Option<String> {
-    let mut words = cmd.split_whitespace();
+    // Položka `.desktop` môže obsahovať zálohu: `dynamic-island --action sysmenu || dynamic-launcher --action sysmenu`.
+    // Bez bežiaceho ostrovčeka sa vykoná druhá vetva; s ním by sa ale obe poslali do shellu (druhá vetva by zlyhala
+    // a ostrovček by navyše dostal druhý povel). Preto zoberieme len prvú vetvu pred `||` / `&&` / `;` a tú rozparsujeme.
+    // Ak prvá vetva patrí nášmu bináru s `--action NAZOV`, otvoríme panel priamo v tomto procese (s animáciou).
+    let first_branch = cmd.split(['|', '&', ';']).next()?.trim();
+    let mut words = first_branch.split_whitespace();
     let bin = words.next()?;
     if words.next()? != "--action" {
         return None;
@@ -6005,6 +6010,15 @@ mod tests {
         assert_eq!(panel_target_exe("firefox --action sysmenu", exe), None);
         assert_eq!(panel_target_exe("dynamic-island --action sysmenu --x", exe), None);
         assert_eq!(panel_target_exe("dynamic-island --drun", exe), None);
+        // záloha v `.desktop`: `dynamic-island --action X || dynamic-launcher --action X` – treba použiť prvú vetvu
+        assert_eq!(panel_target_exe("dynamic-island --action sysmenu || dynamic-launcher --action sysmenu", exe).as_deref(), Some("sysmenu"));
+        // `;` a `&&` sa majú správať rovnako (prvá vetva, ak je naša)
+        assert_eq!(panel_target_exe("dynamic-island --action sysmenu ; true", exe).as_deref(), Some("sysmenu"));
+        assert_eq!(panel_target_exe("dynamic-island --action sysmenu && notify-send ok", exe).as_deref(), Some("sysmenu"));
+        // ak prvá vetva nie je naša, fallback sa nerozpozná (ostrovček nespúšťa launcher)
+        assert_eq!(panel_target_exe("dynamic-launcher --action sysmenu || dynamic-island --action sysmenu", exe), None);
+        // `||` s cestou k binárke
+        assert_eq!(panel_target_exe("/usr/local/bin/dynamic-island --action sysmenu || dynamic-launcher --action sysmenu", exe).as_deref(), Some("sysmenu"));
     }
 
     /// Text bez fontov – pre testy `update` (prázdny config nič nemeriava).
