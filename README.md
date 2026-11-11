@@ -149,7 +149,7 @@ systemctl --user daemon-reload
 ```
 dynamic-island [--config CESTA] [--check] [--snapshot ADRESÁR]
                [--volume up|down|mute|get|N] [--brightness up|down|get|N]
-               [--hud brightness %] [--action NAZOV] [--history [N]]
+               [--hud brightness %] [--drun] [--clip] [--action NAZOV] [--history [N]]
 ```
 
 | Prepínač | Význam |
@@ -160,7 +160,9 @@ dynamic-island [--config CESTA] [--check] [--snapshot ADRESÁR]
 | `--volume ...` | nastaví hlasitosť cez `wpctl` na `@DEFAULT_AUDIO_SINK@` (`up`/`down` o `[audio] step` %, strop `limit`, `mute` = prepnutie, `get`, `N` = percento); bežiaci ostrovček zmenu zachytí a ukáže HUD |
 | `--brightness ...` | spustí príkazy z `[brightness]`, vypíše nové percento a pošle HUD bežiacemu ostrovčeku |
 | `--hud brightness N` | iba pošle HUD jasu (pre externé skripty): zapíše `brightness N` do `$XDG_RUNTIME_DIR/dynamic-island/hud` |
-| `--action sysmenu\|trash` | **samostatné okno** v strede obrazovky (ako `--drun` / `--clip`; lišta ostrovčeka zostáva hore a nemení sa): `sysmenu` = vlastné `[[menu]]` s názvom `sysmenu`, `trash` = kôš. Iné názvy zatiaľ nie sú povolené. Je to prepínač: druhé spustenie okno zatvorí, rovnako `dynamic-island --drun` / `--clip` (jedna skratka launchera zatvorí aj panel). Zatvorí ho aj `Esc` alebo klik na položku menu. Príklad: `Exec=dynamic-island --action sysmenu`. Pri spustení zo samostatného spúšťača (`--drun`) panel nepriblikne nanovo: spúšťač počká, kým okno panela zobrazí prvý frame, zosvetlí a panel pružinou vyrastie z rozmerov okna spúšťača (rovnaký prechod, ako prepínanie panelov v jednom okne). Obyčajné aplikácie sa spúšťajú bez čakania, ako doteraz. Položka menu s `module:…` (napr. kôš v `sysmenu`) prepne obsah tohto okna pružinami – obdĺžnik plynulo prejde z rozmeru panela na rozmer nového panela, ako prepínanie panelov v ostrovčeku; zatvorenie (`Esc`, prepínač) ostáva bez animácie. |
+| `--drun` | **spúšťač aplikácií v strede obrazovky**: príkaz pre bežiaci ostrovček, ktorý sa premení na okno spúšťača (lišta zmizne) a po zatvorení sa vráti hore. Prepínač: druhé spustenie okno zatvorí, a ak je otvorený iný panel, zatvorí ten |
+| `--clip` | to isté pre históriu schránky |
+| `--action NAZOV` | to isté pre ľubovoľný panel alebo vlastné menu (`sysmenu`, `trash`, `quickset`, `quickset:wifi`, `wallpaper`, …); zatvorí ho `Esc`, klik na položku menu alebo opätovné spustenie. Príklad v `.desktop`: `Exec=dynamic-island --action sysmenu`. Položka menu s `module:…` prepne obsah okna pružinou. Všetky tri vyžadujú **bežiaci** ostrovček (inak skončia s chybou); počas otvoreného okna sa notifikácie a HUD odkladajú a zobrazia sa po zatvorení |
 | `--history [N]` | vypíše posledných N (predvolene 20) notifikácií z histórie |
 
 Signály bežiacemu procesu: **SIGUSR1 = skryť**, **SIGUSR2 = zobraziť**.
@@ -253,7 +255,7 @@ cez frontu s `eventfd`.
 | `audio.rs`, `monitor.rs` | panel zvuku (`pactl`), panel monitora (`ddcutil`) |
 | `desktop.rs` | spúšťač `--drun`: čítanie `.desktop` súborov (NoDisplay, TryExec, duplicity), Exec, ikony (jedna téma, PNG + SVG cez cache), filtrovanie |
 | `grid.rs` | spúšťač `--drun`: geometria mriežky, zásah myšou, navigácia a posun |
-| `drun.rs` | spúšťač `--drun`: samostatné okno, vykreslenie, vstup, spustenie |
+| `drun.rs` | spúšťač `drun`: spoločné kreslenie mriežky a poľa hľadania (panel v ostrovčeku) |
 | `capture.rs` | panel snímania: `grim` / `slurp` / `wf-recorder`, odpočet, odznak REC; aktívne okno cez Wayfire IPC (`wayfire.rs`) |
 | `wallpaper.rs`, `trash.rs`, `quickset.rs` | panely tapiet, koša, kontajner záložiek |
 | `icons.rs`, `json.rs`, `sys.rs`, `snapshot.rs` | PNG ikony, JSON parser, tenká vrstva nad libc, `--snapshot` |
@@ -806,11 +808,9 @@ História sa musí plniť externe (`wl-paste --watch cliphist store`). Panel má
 bez ohľadu na veľkosť písmen.
 
 **Dva spôsoby spustenia** (rovnako ako `drun`): ako panel/modul ostrovčeka (`on_click = "clipboard"` alebo záložka
-`quickset`) a ako **samostatné okno v strede obrazovky** `dynamic-island --clip` (na klávesovú skratku, napr.
-`bindsym`/Wayfire `command_clip = dynamic-island --clip`). Samostatné okno je prepínač: druhé spustenie ho zatvorí.
-Používa rovnaké voľby `[clipboard]` a krytie `[island] opacity`; zaoblenie rohov nastavuje `window_radius` (24).
-Enter / klik skopíruje položku a okno sa zavrie. `search = false` skryje pole hľadania (písaním sa filtruje ďalej,
-len bez zobrazeného dotazu).
+`quickset`) a ako **okno v strede obrazovky** `dynamic-island --clip` (na klávesovú skratku). Ostrovček sa v strede
+premení na okno schránky a po zatvorení sa vráti hore; druhé spustenie ho zatvorí. Používa voľby `[clipboard]`.
+Enter / klik skopíruje položku a okno sa zavrie.
 
 ### 6.17 `[trash]`
 
@@ -906,11 +906,12 @@ potrebné len `/proc` a `/sys` (Linux); žiadne externé programy.
 
 ### 6.18c Spúšťač aplikácií `--drun`
 
-`dynamic-island --drun` otvorí mriežku aplikácií z `.desktop` súborov (náhrada `rofi -show drun`). Je to **samostatný
-proces so samostatným povrchom** v strede obrazovky: nepotrebuje bežiaci ostrovček a po spustení aplikácie, Esc alebo
-zatvorení povrchu skončí. Farby (`[colors]`, `colors.css`), písmo a tvar sú rovnaké ako v ostrovčeku.
+`dynamic-island --drun` otvorí mriežku aplikácií z `.desktop` súborov (náhrada `rofi -show drun`). Nie je to samostatný
+proces: príkaz dostane **bežiaci ostrovček**, ktorý sa premení na okno spúšťača v strede obrazovky (lišta zmizne) a po
+zatvorení (aplikácia, `Esc`, klik na položku menu, opätovná skratka) sa vráti hore. Ak ostrovček nebeží, `--drun` skončí
+s chybou (záloha môže byť napr. `dynamic-launcher`). Farby (`[colors]`), písmo a tvar sú rovnaké ako v ostrovčeku.
 
-Wayfire (`wayfire.ini`, plugin `command`):
+Wayfire (`wayfire.ini`, plugin `command`) – stačí jedna skratka, ostatné panely sa otvárajú z drun alebo z ostrovčeka:
 
 ```ini
 [command]
@@ -918,15 +919,14 @@ binding_drun = <super> KEY_SPACE
 command_drun = dynamic-island --drun
 ```
 
-`--drun` je **prepínač** (ako `pkill rofi || rofi`): ak spúšťač už beží, druhé spustenie ho zatvorí. Nič ako `pkill` netreba
-(`pkill dynamic-island` by zabilo aj ostrovček); PID bežiaceho spúšťača je v `$XDG_RUNTIME_DIR/dynamic-island-drun.pid`.
+`--drun` je **prepínač**: druhé spustenie okno zatvorí; ak je otvorený iný panel, zatvorí ten. Okno v strede sa nezatvára
+odchodom myši. Počas otvoreného okna sa notifikácie a HUD odkladajú a zobrazia sa po zatvorení. Zoznam aplikácií sa po
+zatvorení uvoľní (cache ikon ostáva).
 
 **Z ostrovčeka:** akcia `drun` je **panel ostrovčeka** ako ostatné moduly (ostrovček sa rozbalí do mriežky aplikácií na
-svojom mieste, nie v strede obrazovky). Dá sa dať do `on_click*` ľubovoľného modulu, do položky menu (`module:drun`) alebo na
-tlačidlo druhej lišty kontajnera (`inversetab1 = "drun"`, predvolená ikona `\uf00a`); opätovný klik panel zavrie. Panel
-používa tie isté voľby `[drun]` (mriežka, `show`, `order`, `icon_theme`…) a rovnaké vykresľovanie; písaním sa filtruje,
-šípky menia výber, Enter spustí, Esc zavrie, koleso posúva. Ako záložka kontajnera `quickset` sa neponúka. Samostatný
-`dynamic-island --drun` (klávesová skratka) zostáva a otvára sa v strede obrazovky.
+svojom mieste). Dá sa dať do `on_click*` ľubovoľného modulu, do položky menu (`module:drun`) alebo na tlačidlo druhej lišty
+kontajnera (`inversetab1 = "drun"`, predvolená ikona `\uf00a`); opätovný klik panel zavrie. Písaním sa filtruje, šípky menia
+výber, Enter spustí, Esc zavrie, koleso posúva. Ako záložka kontajnera `quickset` sa neponúka.
 
 **Zoradenie aplikácií** nerieši `order`: ten určuje len smer vypĺňania mriežky. Aplikácie sú zoradené podľa poľa `Name=`
 z `.desktop` súboru (anglický základný názov, bez lokalizovaných `Name[sk]`), bez ohľadu na veľkosť písmen. Pri písaní sa
@@ -935,7 +935,6 @@ najprv radia zhody na začiatku názvu, potom ostatné (názov, všeobecný náz
 | Kľúč `[drun]` | Predvolené | Popis |
 |---|---|---|
 | `columns`, `rows` | `5`, `4` | veľkosť mriežky (viditeľná stránka; ďalej sa posúva kolieskom a šípkami) |
-| `opacity` | *(ako `[island] opacity`)* | krytie pozadia samostatného `--drun` (0–1); v paneli ostrovčeka platí `[island] opacity` |
 | `order` | `"horizontal"` | zoraďovanie: `horizontal` = ďalšia aplikácia je **vedľa** predošlej (po riadkoch, posun po riadkoch); `vertical` = ďalšia je **pod** predošlou (po stĺpcoch, posun po stĺpcoch; koleso aj šípky idú po stĺpcoch) |
 | `show` | `"icon"` | `icon`, `name`, `icon+name-right` (názov vedľa ikony), `icon+name-below` (názov pod ikonou) |
 | `icon_size`, `name_size` | `64`, `14` | veľkosť ikony a názvu (px) |
@@ -953,7 +952,7 @@ začínajúce dotazom idú prvé), šípky / Tab pohybujú výberom (cyklicky), 
 
 **Spustenie čohokoľvek (ako v rofi):** ak napísaný text nič nenájde (napr. aplikácia s `NoDisplay=true`, ako `gt6ct`),
 Enter ho spustí ako príkaz (`sh -c`). Ak niečo nájde, Enter spustí vybranú aplikáciu; **Ctrl+Enter** spustí napísaný text
-ako príkaz aj vtedy. Platí v samostatnom okne aj v paneli ostrovčeka; pri prázdnom výsledku sa zobrazí nápoveda.
+ako príkaz aj vtedy. Platí v okne v strede aj v paneli ostrovčeka; pri prázdnom výsledku sa zobrazí nápoveda.
 
 Zoznam sa číta z `$XDG_DATA_HOME/applications` a `$XDG_DATA_DIRS/*/applications` (štandardne `~/.local/share`,
 `/usr/local/share`, `/usr/share`). Preskočia sa záznamy s `NoDisplay=true` alebo `Hidden=true` (kdekoľvek v skupine

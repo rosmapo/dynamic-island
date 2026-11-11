@@ -327,17 +327,6 @@ fn run_action(a: Action, cfg: &Config, disk_tx: &Option<Tx<DiskCmd>>, tx: &Tx<Ms
 }
 
 pub fn run(cfg: Config) -> Result<(), String> {
-    run_with(cfg, None)
-}
-
-/// Samostatné okno `--action NAZOV`: ten istý panel ako v ostrovčeku, ale vo vlastnom okne v strede obrazovky
-/// (bez lišty a bez služieb ostrovčeka – notifikácie, disky, prehrávač). Po zatvorení panela proces skončí.
-pub fn run_panel(cfg: Config, name: String) -> Result<(), String> {
-    run_with(cfg, Some(name))
-}
-
-fn run_with(cfg: Config, panel: Option<String>) -> Result<(), String> {
-    let _guard = panel.as_ref().map(|_| crate::drun::PidGuard::new("action"));
     let waker = Waker::new();
     SIG_FD.store(waker.fd(), Ordering::SeqCst);
     sys::install_signal(sys::SIGUSR1, on_sigusr1);
@@ -347,7 +336,7 @@ fn run_with(cfg: Config, panel: Option<String>) -> Result<(), String> {
     let fonts = Fonts::load(&cfg.font_family, &cfg.icon_family)?;
     let mut text = Text::new(Box::new(fonts));
 
-    let mut wl = Wl::new_with(cfg.surface_w, cfg.surface_h, panel.is_some(), if panel.is_some() { "dynamic-island-panel" } else { "dynamic-island" })?;
+    let mut wl = Wl::new(cfg.surface_w, cfg.surface_h)?;
     let mut scale = wl.st.scale.max(1);
     let egl = wl.create_egl((cfg.surface_w as i32) * scale, (cfg.surface_h as i32) * scale)?;
     let mut renderer = Renderer::new(&egl)?;
@@ -359,7 +348,7 @@ fn run_with(cfg: Config, panel: Option<String>) -> Result<(), String> {
     let inotify = Inotify::new();
     let colors_path = crate::config::expand(&cfg.colors_file);
     let colors_name = std::path::Path::new(&colors_path).file_name().map(|s| s.to_string_lossy().into_owned()).unwrap_or_default();
-    let cfg_name = if panel.is_some() { String::new() } else { cfg.path.file_name().map(|s| s.to_string_lossy().into_owned()).unwrap_or_default() };
+    let cfg_name = cfg.path.file_name().map(|s| s.to_string_lossy().into_owned()).unwrap_or_default();
     if let Some(i) = &inotify {
         let mask = sys::IN_CLOSE_WRITE | sys::IN_MOVED_TO | sys::IN_CREATE;
         if let Some(d) = std::path::Path::new(&colors_path).parent() {
@@ -372,14 +361,21 @@ fn run_with(cfg: Config, panel: Option<String>) -> Result<(), String> {
 
     let hud_dir = crate::config::hud_dir();
     let _ = std::fs::create_dir_all(&hud_dir);
+    // povely z minulého behu sa nesmú vykonať; PID určuje adresáta pre `--drun` / `--action`
+    if let Ok(rd) = std::fs::read_dir(&hud_dir) {
+        for e in rd.flatten() {
+            if e.file_name().to_string_lossy().starts_with("action.") {
+                let _ = std::fs::remove_file(e.path());
+            }
+        }
+    }
+    let _ = std::fs::write(crate::config::island_pid_file(), std::process::id().to_string());
     if let Some(i) = &inotify {
         i.watch(&hud_dir.to_string_lossy(), sys::IN_CLOSE_WRITE | sys::IN_MOVED_TO);
     }
 
-    if panel.is_none() {
-        providers::spawn_all(&cfg, &tx);
-    }
-    let notif_tx = if panel.is_none() && cfg.notif_enabled {
+    providers::spawn_all(&cfg, &tx);
+    let notif_tx = if cfg.notif_enabled {
         let nw = Waker::new();
         let (ntx, nrx) = sys::channel::<NotifCmd>(nw.clone());
         notify::spawn(tx.clone(), nrx, nw);
@@ -388,7 +384,7 @@ fn run_with(cfg: Config, panel: Option<String>) -> Result<(), String> {
         None
     };
 
-    let disk_tx = if panel.is_none() && cfg.modules.iter().any(|m| m == "disks") {
+    let disk_tx = if cfg.modules.iter().any(|m| m == "disks") {
         let dw = Waker::new();
         let (dtx, drx) = sys::channel::<DiskCmd>(dw.clone());
         disks::spawn(disks::DiskCfg {
@@ -402,17 +398,11 @@ fn run_with(cfg: Config, panel: Option<String>) -> Result<(), String> {
     } else {
         None
     };
-    if panel.is_none() && cfg.modules.iter().any(|m| m == "media") {
+    if cfg.modules.iter().any(|m| m == "media") {
         crate::mpris::spawn(cfg.media_ignore.clone(), tx.clone());
     }
-    let mut history = if panel.is_none() && cfg.history_max > 0 { Some(History::open(cfg.history_file.clone(), cfg.history_max)) } else { None };
+    let mut history = if cfg.history_max > 0 { Some(History::open(cfg.history_file.clone(), cfg.history_max)) } else { None };
 
-    if let Some(name) = &panel {
-        ui.external_action(name);
-        if !ui.is_centered() {
-            return Err(format!("'{name}' sa nedá otvoriť (neznámy názov alebo panel bez obsahu)"));
-        }
-    }
     let mut dirty = true;
     let mut animating = false;
     let mut last_frame = Instant::now();
@@ -421,8 +411,8 @@ fn run_with(cfg: Config, panel: Option<String>) -> Result<(), String> {
     let mut last_clock = String::new();
     let mut first_draw = true;
     let mut kb_on = false;
-    // samostatné okno signalizuje spúšťaču (prechod panela z `--drun`) mapovanie prvým frame-om
-    let mut first_frame_done = false;
+    // povrch je práve v strede obrazovky (okno spúšťača / panela zvonka), nie ako lišta hore
+    let mut surface_centered = false;
 
     loop {
         let now = Instant::now();
@@ -493,6 +483,17 @@ fn run_with(cfg: Config, panel: Option<String>) -> Result<(), String> {
         if ready[1] {
             if let Some(i) = &inotify {
                 let names = i.read_names();
+                // povely od `dynamic-island --drun` / `--action NAZOV`: súbory `action.*` s názvom panela
+                let mut cmds: Vec<&String> = names.iter().filter(|n| n.starts_with("action.") && !n.ends_with(".tmp")).collect();
+                cmds.sort();
+                for n in cmds {
+                    let p = hud_dir.join(n);
+                    if let Ok(s) = std::fs::read_to_string(&p) {
+                        ui.external_action(s.trim());
+                        dirty = true;
+                    }
+                    let _ = std::fs::remove_file(&p);
+                }
                 if names.iter().any(|n| n == "hud") {
                     if let Ok(s) = std::fs::read_to_string(hud_dir.join("hud")) {
                         let mut it = s.split_whitespace();
@@ -586,9 +587,11 @@ fn run_with(cfg: Config, panel: Option<String>) -> Result<(), String> {
             first_draw = false;
             last_frame = now;
             animating = ui.update(dt, now, &mut text);
-            // panel v samostatnom okne: po dobehnutí zatváracej animácie proces skončí
-            if panel.is_some() && !ui.is_centered() {
-                return Ok(());
+            // okno v strede (spúšťač, panel zvonka) ↔ lišta hore: kotva povrchu sa prepne spolu s týmto framom
+            if ui.is_centered() != surface_centered {
+                surface_centered = ui.is_centered();
+                wl.set_centered(surface_centered);
+                last_input = None;
             }
             let frame = ui.build(&mut text);
             let ir = ui.input_rect();
@@ -600,11 +603,6 @@ fn run_with(cfg: Config, panel: Option<String>) -> Result<(), String> {
             wl.request_frame();
             if !egl.swap() {
                 return Err("eglSwapBuffers zlyhalo".into());
-            }
-            // prvý frame je na obrazovke (povrch namapovaný): spúšťač, z ktorého panel prešiel, môže prepustiť scénu
-            if panel.is_some() && !first_frame_done {
-                first_frame_done = true;
-                crate::drun::signal_ready("action");
             }
             dirty = false;
         }

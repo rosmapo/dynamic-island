@@ -238,10 +238,8 @@ font_size = 17    # veľkosť písma
 rows = 10          # koľko riadkov je vidieť, viac = skrolovanie
 width = 600       # šírka panela
 max_items = 200   # koľko najnovších položiek sa načíta
-search = false		# skryje vyhladacie pole, ale vyhladava nadalej
 # list_command = "cliphist list"
 # copy_command = "cliphist decode | wl-copy"
-# window_radius = 24   # zaoblenie okna samostatného režimu `dynamic-island --clip`
 
 [trash]
 width = 600

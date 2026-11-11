@@ -5,7 +5,6 @@ mod app;
 mod audio;
 mod bluetooth;
 mod capture;
-mod clip;
 mod config;
 mod data;
 mod dbus;
@@ -44,10 +43,12 @@ const HELP: &str = "dynamic-island [--config CESTA] [--check] [--snapshot ADRES�
 
   --config CESTA      konfigurácia (predvolene ~/.config/dynamic-island/config.toml)
   --check             skontroluje konfiguráciu a skončí
-  --action NAZOV      samostatné okno s modulom / menu v strede obrazovky (sysmenu | trash), druhé spustenie ho zatvorí
+  --drun              spúšťač aplikácií (ako rofi -show drun): bežiaci ostrovček sa premení na okno v strede obrazovky,
+                      po zatvorení sa lišta vráti hore; ak je nejaký panel otvorený, povel ho zatvorí
+  --action NAZOV      to isté pre iný panel alebo vlastné menu (sysmenu, trash, quickset, quickset:wifi, wallpaper, …)
+  --clip              to isté pre históriu schránky (cliphist)
   --drun-list         vypíše všetky nájdené .desktop súbory a prečo sa niektoré nezobrazia
-  --clip              samostatné okno histórie schránky (cliphist), druhé spustenie ho zatvorí
-  --drun              samostatný spúšťač aplikácií (ako rofi -show drun), nezávislý od ostrovčeka
+  (--drun / --action / --clip vyžadujú bežiaci dynamic-island)
   --history [N]       vypíše posledných N (predvolene 20) notifikácií z histórie
   --snapshot ADRESÁR  vykreslí ukážkové stavy bez kompozitora (surové RGBA súbory)
 
@@ -61,9 +62,7 @@ fn main() {
     let mut bright: Option<String> = None;
     let mut volume: Option<String> = None;
     let mut history: Option<usize> = None;
-    let mut drun = false;
     let mut drun_list = false;
-    let mut clip = false;
     let mut action: Option<String> = None;
     let mut i = 0;
     while i < args.len() {
@@ -77,9 +76,9 @@ fn main() {
                 snap = args.get(i).cloned();
             }
             "--check" => check = true,
-            "--drun" => drun = true,
+            "--drun" => action = Some("drun".into()),
             "--drun-list" => drun_list = true,
-            "--clip" => clip = true,
+            "--clip" => action = Some("clipboard".into()),
             "--history" => {
                 let n = args.get(i + 1).and_then(|s| s.parse::<usize>().ok());
                 if n.is_some() {
@@ -123,13 +122,11 @@ fn main() {
                 }
             }
             "--action" => {
-                // dynamic-island --action sysmenu  (samostatné okno s modulom / menu v strede obrazovky, prepínač)
+                // dynamic-island --action sysmenu  (panel / menu v strede obrazovky, prepínač)
                 i += 1;
                 action = args.get(i).map(|s| s.trim().to_string()).filter(|s| !s.is_empty());
-                // zatiaľ len tieto panely sa v samostatnom okne správajú správne
-                const ACTIONS: &[&str] = &["sysmenu", "trash"];
-                if !action.as_deref().map_or(false, |a| ACTIONS.contains(&a)) {
-                    eprintln!("použitie: dynamic-island --action {}", ACTIONS.join("|"));
+                if action.is_none() {
+                    eprintln!("použitie: dynamic-island --action NAZOV");
                     std::process::exit(2);
                 }
             }
@@ -164,33 +161,16 @@ fn main() {
     if let Some(arg) = bright {
         std::process::exit(brightness(&cfg, &arg));
     }
-    if clip {
-        if let Err(e) = clip::run(cfg) {
-            eprintln!("dynamic-island --clip: {e}");
-            std::process::exit(1);
-        }
-        return;
-    }
     if let Some(name) = action {
-        // druhé spustenie (aj `--drun` / `--clip`) okno zatvorí
-        if drun::close_running("action", "--action") {
-            return;
-        }
-        if let Err(e) = app::run_panel(cfg, name) {
-            eprintln!("dynamic-island --action: {e}");
+        // povel bežiacemu ostrovčeku: otvorí panel v strede obrazovky (alebo ho zatvorí)
+        if let Err(e) = config::send_action(&name) {
+            eprintln!("dynamic-island: {e}");
             std::process::exit(1);
         }
         return;
     }
     if drun_list {
         desktop::print_list(&cfg.drun.desktop);
-        return;
-    }
-    if drun {
-        if let Err(e) = drun::run(cfg) {
-            eprintln!("dynamic-island --drun: {e}");
-            std::process::exit(1);
-        }
         return;
     }
     sys::set_time_locale(&cfg.clock_locale);

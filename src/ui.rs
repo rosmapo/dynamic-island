@@ -303,9 +303,6 @@ pub struct Ui {
     /// veľký panel sa práve otvára z ostrovčeka: veľkosť okna sa nastaví naraz, každá ďalšia zmena veľkosti (prepnutie
     /// panela v kontajneri / mimo neho, zmena obsahu) ide pružinami
     big_snap: bool,
-    /// Detached panel otvorený zo samostatného spúšťača (`--drun`): logická veľkosť jeho okna (premenná prostredia
-    /// `DI_ACTION_FROM`), z ktorej má pružina prechod spustiť; `None` = bežné otvorenie (bez predchodcu).
-    detach_from: Option<(f32, f32)>,
     /// Odložené okamžité zatvorenie samostatného okna (`--action` / `--clip`): `set_panel(None)` ho len označí a
     /// `update()` ho vykoná, ak sa medzitým neotvoril iný panel – prepínanie panelov (položka menu s `module:…`)
     /// tak zostane plynulé, skutočné zatvorenie (Esc, spustenie príkazu) je naďalej bez animácie.
@@ -329,6 +326,8 @@ pub struct Ui {
     cal_key: (i32, i32, i32),
     tip_lines: Vec<String>,
     notifs: Vec<NotifItem>,
+    /// notifikácie došlé počas okna v strede (spúšťač a ďalšie panely zvonka): zobrazia sa až po jeho zatvorení
+    notif_hold: Vec<crate::data::Notification>,
     notif_dirty: bool,
     notif_urgent: bool,
     notif_t: Spring,
@@ -470,12 +469,27 @@ fn fade(c: Color, a: f32) -> Color {
     [c[0], c[1], c[2], c[3] * a.clamp(0.0, 1.0)]
 }
 
-/// Rozbor `DI_ACTION_FROM` (`ŠÍRKAxVÝŠKA` v logických px) – veľkosť okna samostatného spúšťača,
-/// z ktorej má detached panel spustiť pružinový prechod; `None` = premenná chýba alebo je nulová.
-fn parse_from(s: &str) -> Option<(f32, f32)> {
-    let (w, h) = s.trim().split_once('x')?;
-    let (w, h) = (w.trim().parse::<f32>().ok()?, h.trim().parse::<f32>().ok()?);
-    (w.is_finite() && h.is_finite() && w > 20.0 && h > 20.0).then_some((w, h))
+/// Je príkaz spustenie nášho binárneho súboru s `--action NÁZOV` (presne 3 slová)? Vráti NÁZOV.
+fn panel_target(cmd: &str) -> Option<String> {
+    let exe = std::env::current_exe().ok()?;
+    panel_target_exe(cmd, exe.file_name()?)
+}
+
+fn panel_target_exe(cmd: &str, exe_name: &std::ffi::OsStr) -> Option<String> {
+    let mut words = cmd.split_whitespace();
+    let bin = words.next()?;
+    if words.next()? != "--action" {
+        return None;
+    }
+    let name = words.next()?;
+    if words.next().is_some() {
+        return None;
+    }
+    if std::path::Path::new(bin).file_name() == Some(exe_name) {
+        Some(name.to_string())
+    } else {
+        None
+    }
 }
 
 pub fn days_in_month(year: i32, month0: i32) -> i32 {
@@ -632,7 +646,7 @@ impl Ui {
             hw_w: Spring::with(0.0, 240.0, 26.0),
             hw_h: Spring::with(0.0, 240.0, 26.0),
             big_snap: false,
-            detach_from: None,
+            notif_hold: Vec::new(),
             close_snap: false,
             panel_h: Spring::with(0.0, 240.0, 26.0),
             panel_w: Spring::with(0.0, 240.0, 26.0),
@@ -770,6 +784,7 @@ impl Ui {
         match m {
             Msg::Notif(n) => self.add_notif(n, now),
             Msg::NotifClose(id) => {
+                self.notif_hold.retain(|x| x.id != id);
                 let before = self.notifs.len();
                 self.notifs.retain(|x| x.n.id != id);
                 if self.notifs.len() != before {
@@ -954,7 +969,7 @@ impl Ui {
                 self.data.muted = muted;
                 self.data.volume = volume;
                 self.data.audio_known = true;
-                if changed && self.cfg.audio_hud && self.panel != Panel::Audio {
+                if changed && self.cfg.audio_hud && self.panel != Panel::Audio && !self.centered {
                     self.data.hud_bright = false;
                     self.hud_until = Some(now + Duration::from_millis(self.cfg.hud_ms));
                     self.hud_t.set(1.0);
@@ -963,8 +978,10 @@ impl Ui {
             Msg::Brightness(b) => {
                 self.data.bright = b.clamp(0.0, 1.0);
                 self.data.hud_bright = true;
-                self.hud_until = Some(now + Duration::from_millis(self.cfg.hud_ms));
-                self.hud_t.set(1.0);
+                if !self.centered {
+                    self.hud_until = Some(now + Duration::from_millis(self.cfg.hud_ms));
+                    self.hud_t.set(1.0);
+                }
             }
             Msg::Caps(c) => self.data.caps = c,
             Msg::Inhibit(i) => self.data.inhibit = i,
@@ -1197,14 +1214,8 @@ impl Ui {
             let (w, h) = if self.hw_view() { self.hw_target() } else { self.panel_dims(self.big) };
             if self.big_snap {
                 self.big_snap = false;
-                if let Some((fw, fh)) = self.detach_from {
-                    // prechod z okna spúšťača (`--drun`): pružina začína na jeho veľkosti a plynule dobieha na panel
-                    self.hw_w.snap(fw * self.scale);
-                    self.hw_h.snap(fh * self.scale);
-                } else {
-                    self.hw_w.snap(w);
-                    self.hw_h.snap(h);
-                }
+                self.hw_w.snap(w);
+                self.hw_h.snap(h);
             } else {
                 self.hw_w.set(w);
                 self.hw_h.set(h);
@@ -1214,11 +1225,6 @@ impl Ui {
             sp.step(dt);
             busy |= !sp.settled();
         }
-        // prechod zo spúšťača sa použije len raz – po dobehnutí otváracej animácie sa zabudne
-        if self.detach_from.is_some() && self.cal_t.x > 0.99 && self.cal_t.settled() {
-            self.detach_from = None;
-            busy = true;
-        }
         if self.panel == Panel::None && self.panel_h.x < 0.5 && self.panel_h.settled() {
             self.panel_shown = Panel::None;
         }
@@ -1226,6 +1232,14 @@ impl Ui {
         if self.centered && self.panel == Panel::None && self.menu_wait.is_none() && self.cal_t.x < 0.02 {
             self.centered = false;
             self.ext_name.clear();
+            // lišta je späť hore: uvoľní sa zoznam aplikácií spúšťača a zobrazia sa odložené notifikácie
+            self.drun_apps = Vec::new();
+            self.drun_icons = Vec::new();
+            self.drun_hits = Vec::new();
+            self.drun_loaded = false;
+            for n in std::mem::take(&mut self.notif_hold) {
+                self.add_notif(n, now);
+            }
             if self.manual_hidden || self.auto_hidden || self.cap_hidden {
                 self.hide.snap(1.0);
             }
@@ -1247,6 +1261,11 @@ impl Ui {
     }
 
     fn add_notif(&mut self, mut n: Notification, now: Instant) {
+        if self.centered {
+            self.notif_hold.retain(|x| x.id != n.id);
+            self.notif_hold.push(n);
+            return;
+        }
         n.summary = strip_markup(&n.summary);
         n.body = strip_markup(&n.body);
         let rule_timeout = self.rule_for(&n).and_then(|r| r.timeout_ms);
@@ -1682,8 +1701,6 @@ impl Ui {
         self.panel = p;
         if p == Panel::None {
             self.grace = None;
-            // zatvára sa okno (aj detached): prechod zo spúšťača už nerekne nikomu
-            self.detach_from = None;
         } else {
             // iný panel otvorený samostatne = už nie je v kontajneri (zatvorenie ho ponechá kvôli animácii)
             self.hw = false;
@@ -2131,23 +2148,29 @@ impl Ui {
         self.centered
     }
 
-    /// Samostatné okno `dynamic-island --action NAZOV`: otvorí modul / menu (názvy ako v `on_click = "module:NAZOV"`).
+    /// Povel `dynamic-island --drun` / `--action NAZOV` (príde cez súbor od druhého procesu): otvorí panel `name`
+    /// (názvy ako v `on_click = "module:NAZOV"`) v strede obrazovky namiesto lišty. Ak je už nejaký panel otvorený
+    /// (aj z lišty), povel ho zatvorí – jedna skratka tak otvára aj zatvára. Po zatvorení sa lišta vráti hore.
     pub fn external_action(&mut self, name: &str) {
         let name = name.trim();
         if name.is_empty() {
             return;
         }
-        // prechod zo spúšťača: veľkosť jeho okna (logické px, `ŠÍRKAxVÝŠKA`) odovzdáva pri štarte panela
-        self.detach_from = parse_from(&std::env::var("DI_ACTION_FROM").unwrap_or_default());
-        if self.centered && self.panel != Panel::None && self.ext_name == name {
+        if self.panel != Panel::None {
             self.set_panel(Panel::None);
             self.collapse_at = None;
             return;
         }
-        self.collapse_at = None;
-        if self.panel != Panel::None {
-            self.set_panel(Panel::None);
+        // už zobrazené notifikácie sa odložia (panel v strede by ich prekrýval a zatvoril)
+        if !self.notifs.is_empty() {
+            for n in std::mem::take(&mut self.notifs) {
+                self.notif_hold.push(n.n);
+            }
+            self.notif_dirty = true;
         }
+        self.hud_t.snap(0.0);
+        self.hud_until = None;
+        self.collapse_at = None;
         self.centered = true;
         self.ext_name = name.to_string();
         if let Some(a) = self.run_module(name) {
@@ -2157,6 +2180,9 @@ impl Ui {
             // nič sa neotvorilo (neznámy názov, akcia bez panela) – ostaneme pri lište hore
             self.centered = false;
             self.ext_name.clear();
+            for n in std::mem::take(&mut self.notif_hold) {
+                self.add_notif(n, Instant::now());
+            }
             return;
         }
         self.grace = None;
@@ -2252,6 +2278,12 @@ impl Ui {
     fn drun_launch(&mut self, i: usize) -> Option<Action> {
         let app = self.drun_apps.get(*self.drun_hits.get(i)?)?;
         let cmd = crate::desktop::launch_cmd(app, &self.cfg.drun.terminal);
+        // položka `.desktop` s `Exec=dynamic-island --action NAZOV` otvorí panel priamo v tomto procese –
+        // prepnutie z mriežky na panel animujú pružiny
+        if let Some(name) = panel_target(&cmd) {
+            self.collapse_at = None;
+            return self.run_module(&name);
+        }
         self.set_panel(Panel::None);
         self.collapse_at = None;
         Some(Action::Run(cmd))
@@ -3609,11 +3641,7 @@ impl Ui {
         let nt = self.notif_t.x.clamp(0.0, 1.0);
         let ct = self.cal_t.x.clamp(0.0, 1.0);
         let (cal_w, cal_h) = self.cal_size();
-        // prechod zo spúšťača (`--drun`): obdĺžnik rastie priamo pružinou z jeho veľkosti, nie z lišty ostrovčeka
-        let handoff = if ct < 0.999 { self.detach_from } else { None };
-        let (pill_w, pill_h) = if handoff.is_some() {
-            (cal_w, cal_h)
-        } else {
+        let (pill_w, pill_h) = {
             let pill_w0 = (content_w + 2.0 * pad_x).max(self.panel_w.x).max(self.s(40.0));
             let pill_h0 = row_h + self.panel_h.x.max(0.0);
             let pw = pill_w0 + (self.notif_w.x - pill_w0) * nt;
@@ -5968,12 +5996,13 @@ mod tests {
         assert_eq!(capitalize(""), "");
     }
     #[test]
-    fn from_size() {
-        assert_eq!(parse_from("800x520"), Some((800.0, 520.0)));
-        assert_eq!(parse_from(" 480 x 320 "), Some((480.0, 320.0)));
-        assert_eq!(parse_from("0x0"), None);
-        assert_eq!(parse_from("800"), None);
-        assert_eq!(parse_from(""), None);
+    fn panel_command_detection() {
+        let exe = std::ffi::OsStr::new("dynamic-island");
+        assert_eq!(panel_target_exe("dynamic-island --action sysmenu", exe).as_deref(), Some("sysmenu"));
+        assert_eq!(panel_target_exe("/usr/local/bin/dynamic-island --action trash", exe).as_deref(), Some("trash"));
+        assert_eq!(panel_target_exe("firefox --action sysmenu", exe), None);
+        assert_eq!(panel_target_exe("dynamic-island --action sysmenu --x", exe), None);
+        assert_eq!(panel_target_exe("dynamic-island --drun", exe), None);
     }
 
     /// Text bez fontov – pre testy `update` (prázdny config nič nemeriava).
@@ -6021,6 +6050,61 @@ mod tests {
         assert!(ui.cal_t.x > 0.99, "cal_t nesmie byť snapnuté na 0 pri prepínaní panelov");
         assert!(!ui.big_snap, "rozmery nesmú byť snapnuté, pružiny ich majú prepínanie");
         assert_eq!(ui.panel, Panel::Trash);
+    }
+
+    fn text_dummy() -> crate::text::Text {
+        crate::text::Text::new(Box::new(DummySource))
+    }
+
+    fn note(id: u32) -> Notification {
+        Notification { id, app: "a".into(), summary: format!("s{id}"), body: String::new(), icon: String::new(), timeout_ms: -1, urgency: 1, ..Default::default() }
+    }
+
+    #[test]
+    fn second_command_closes_open_panel() {
+        let mut ui = menu_ui();
+        ui.external_action("sysmenu");
+        assert!(ui.is_centered() && ui.panel != Panel::None);
+        // druhá skratka (aj s iným názvom) otvorený panel zatvorí
+        ui.external_action("drun");
+        assert_eq!(ui.panel, Panel::None);
+        let mut text = text_dummy();
+        ui.update(1.0 / 60.0, Instant::now(), &mut text);
+        assert!(!ui.is_centered());
+    }
+
+    #[test]
+    fn unknown_command_keeps_bar() {
+        let mut ui = menu_ui();
+        ui.external_action("neexistuje");
+        assert!(!ui.is_centered());
+        assert_eq!(ui.panel, Panel::None);
+    }
+
+    #[test]
+    fn notifications_wait_until_window_closes() {
+        let mut ui = menu_ui();
+        ui.external_action("sysmenu");
+        ui.apply(Msg::Notif(note(1)), Instant::now());
+        assert!(ui.notifs.is_empty(), "počas okna v strede sa notifikácia nezobrazí");
+        assert_eq!(ui.panel, Panel::Menu(0), "notifikácia okno nezatvorí");
+        ui.set_panel(Panel::None);
+        let mut text = text_dummy();
+        ui.update(1.0 / 60.0, Instant::now(), &mut text);
+        assert!(!ui.is_centered());
+        assert_eq!(ui.notifs.len(), 1, "po zatvorení sa odložená notifikácia zobrazí");
+    }
+
+    #[test]
+    fn visible_notification_is_held_when_window_opens() {
+        let mut ui = menu_ui();
+        ui.apply(Msg::Notif(note(7)), Instant::now());
+        assert_eq!(ui.notifs.len(), 1);
+        ui.external_action("sysmenu");
+        assert!(ui.notifs.is_empty());
+        assert_eq!(ui.notif_hold.len(), 1);
+        ui.apply(Msg::NotifClose(7), Instant::now());
+        assert!(ui.notif_hold.is_empty(), "zatvorená notifikácia sa po zatvorení okna nevráti");
     }
 
     #[test]

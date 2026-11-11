@@ -85,7 +85,7 @@ impl Wl {
         Wl::new_with(width, height, false, "dynamic-island")
     }
 
-    /// `centered`: povrch bez kotvy (kompozitor ho vycentruje) s výhradnou klávesnicou – samostatný spúšťač `--drun`.
+    /// `centered`: povrch bez kotvy (kompozitor ho vycentruje) s výhradnou klávesnicou.
     pub fn new_with(width: u32, height: u32, centered: bool, namespace: &str) -> Result<Wl, String> {
         let conn = Connection::connect_to_env().map_err(|e| format!("nepodarilo sa pripojiť k Waylandu: {e}"))?;
         let (globals, mut queue) = registry_queue_init::<WlState>(&conn).map_err(|e| format!("wl_registry: {e}"))?;
@@ -159,6 +159,13 @@ impl Wl {
             w.resize(pw, ph, 0, 0);
         }
         self.st.scale_dirty = false;
+    }
+
+    /// Za behu prepne povrch medzi lištou (kotva hore) a oknom v strede obrazovky (bez kotvy, exkluzívna zóna −1).
+    /// Zmena sa uplatní až pri ďalšom `commit` (nasledujúci `eglSwapBuffers`), takže sa spolu s ňou objaví aj nový obsah.
+    pub fn set_centered(&mut self, on: bool) {
+        self.st.layer.set_anchor(if on { Anchor::empty() } else { Anchor::Top });
+        self.st.layer.set_exclusive_zone(if on { -1 } else { 0 });
     }
 
     /// Výhradné zachytávanie klávesnice len počas písania (heslo); inak ostrovček klávesnicu nechá.

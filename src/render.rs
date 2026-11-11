@@ -33,18 +33,6 @@ pub enum Item {
     Image { r: Rect, path: String, color: Color, radius: f32 },
 }
 
-impl Item {
-    /// Vynásobí krytie položky číslom `f` (0..1); používa fade-out okna spúšťača pri prechode do panela.
-    pub fn fade(&mut self, f: f32) {
-        let c = match self {
-            Item::Rect { color, .. } => color,
-            Item::Glyph(q) => &mut q.color,
-            Item::Image { color, .. } => color,
-        };
-        c[3] *= f.clamp(0.0, 1.0);
-    }
-}
-
 #[derive(Default)]
 pub struct Frame {
     /// pozadie, tieň (bez orezania)
@@ -52,15 +40,6 @@ pub struct Frame {
     /// obsah (orezaný na `clip`)
     pub content: Vec<Item>,
     pub clip: Option<Rect>,
-}
-
-impl Frame {
-    /// Vynásobí krytie všetkých položiek (pozadia aj obsahu) číslom `f` (0..1).
-    pub fn fade(&mut self, f: f32) {
-        for it in self.back.iter_mut().chain(self.content.iter_mut()) {
-            it.fade(f);
-        }
-    }
 }
 
 const RECT_VS: &str = "

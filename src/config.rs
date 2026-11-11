@@ -144,8 +144,6 @@ pub struct DrunCfg {
     pub cell_radius: f32,
     /// zoraďovanie (`order = "vertical"`): ďalšia položka je pod predošlou (po stĺpcoch), inak vedľa nej (po riadkoch)
     pub vertical: bool,
-    /// krytie pozadia samostatného spúšťača; záporné = ako `[island] opacity`
-    pub opacity: f32,
     /// zvýraznenie bunky pod ukazovateľom
     pub hover: bool,
     /// riadok hľadania vždy viditeľný (písaním sa filtruje aj bez neho)
@@ -174,7 +172,6 @@ impl DrunCfg {
             padding: d.f64_or("padding", 15.0).clamp(0.0, 100.0) as f32,
             radius: d.f64_or("radius", 30.0).clamp(0.0, 100.0) as f32,
             cell_radius: d.f64_or("cell_radius", 15.0).clamp(0.0, 100.0) as f32,
-            opacity: d.f64_or("opacity", -1.0) as f32,
             vertical: matches!(d.str_or("order", "horizontal").trim().to_lowercase().as_str(), "vertical" | "vertikalne" | "columns"),
             hover: d.bool_or("hover", true),
             search: d.bool_or("search", false),
@@ -275,10 +272,6 @@ pub struct Config {
     pub clip_max: usize,
     pub clip_list: String,
     pub clip_copy: String,
-    /// zaoblenie rohov samostatného okna `--clip`
-    pub clip_window_radius: f32,
-    /// zobraziť pole hľadania v samostatnom okne `--clip` (filtrovanie písaním funguje aj bez neho)
-    pub clip_search: bool,
     /// modul wallpaper – `[wallpaper]`
     pub wall: crate::wallpaper::WallCfg,
     /// modul Wi-Fi – `[wifi]`
@@ -754,8 +747,6 @@ BUILTIN_MODULES.map(String::from).to_vec()
             clip_max: clip.f64_or("max_items", 200.0).clamp(1.0, 5000.0) as usize,
             clip_list: clip.str_or("list_command", "cliphist list"),
             clip_copy: clip.str_or("copy_command", "cliphist decode | wl-copy"),
-            clip_search: clip.bool_or("search", true),
-            clip_window_radius: clip.f64_or("window_radius", 24.0).clamp(0.0, 100.0) as f32,
             wall: crate::wallpaper::WallCfg::from_table(&t.sub("wallpaper")),
             wifi: crate::wifi::WifiCfg::from_table(&t.sub("wifi")),
             audio_panel: crate::audio::AudioCfg::from_table(&audio),
@@ -1021,4 +1012,27 @@ mod tests {
 pub fn hud_dir() -> PathBuf {
     let base = std::env::var("XDG_RUNTIME_DIR").ok().filter(|s| !s.is_empty()).unwrap_or_else(|| "/tmp".into());
     PathBuf::from(base).join("dynamic-island")
+}
+
+/// Súbor s PID bežiaceho ostrovčeka (v `hud_dir`), podľa ktorého `--drun` / `--action` zistia, komu poslať povel.
+pub fn island_pid_file() -> PathBuf {
+    hud_dir().join("island.pid")
+}
+
+/// Pošle bežiacemu ostrovčeku povel: otvor panel `name` v strede obrazovky (alebo ho zatvor, ak je nejaký otvorený).
+/// Povel je súbor `action.<čas>` v `hud_dir` (zapíše sa a premenuje naraz), ktorý ostrovček sleduje cez inotify.
+pub fn send_action(name: &str) -> Result<(), String> {
+    let pid = std::fs::read_to_string(island_pid_file()).ok().and_then(|s| s.trim().parse::<i32>().ok()).ok_or("dynamic-island nebeží")?;
+    let exe = std::fs::read_link(format!("/proc/{pid}/exe")).map_err(|_| "dynamic-island nebeží".to_string())?;
+    let me = std::env::current_exe().map_err(|e| e.to_string())?;
+    let name_of = |p: &std::path::Path| p.file_name().map(|n| n.to_string_lossy().trim_end_matches(" (deleted)").to_string());
+    if name_of(&exe) != name_of(&me) {
+        return Err("dynamic-island nebeží".into());
+    }
+    let dir = hud_dir();
+    std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+    let stamp = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_nanos()).unwrap_or(0);
+    let tmp = dir.join(format!("action.{stamp}.tmp"));
+    std::fs::write(&tmp, name).map_err(|e| e.to_string())?;
+    std::fs::rename(&tmp, dir.join(format!("action.{stamp}"))).map_err(|e| e.to_string())
 }
