@@ -9,7 +9,7 @@
 # ============================================================================
 
 # poradie modulov (ako group/island vo waybare)
-modules = ["network", "vpn", "clock", "keyboard", "audio", "radio", "media", "capslock", "inhibitor", "recorder", "quick", "disks"]
+modules = ["network", "vpn", "clock", "keyboard", "audio", "radio", "media", "capslock", "inhibitor", "recorder", "disks"]
 
 
 # ============================================================================
@@ -33,6 +33,7 @@ surface_height = 580
 tooltip_delay_ms  = 450
 collapse_delay_ms = 200
 poll_ms = 300           # kontrola caps/inhibitor/rec/rozloženia
+window_animation = false   # predvolene true
 
 [colors]  # voliteľné prepisy: "@meno" z colors_file alebo "#rrggbb"
 # background = "@surface"
@@ -64,31 +65,32 @@ tab4 = "monitor"
 tab5 = "audio"
 tab6 = "menu:radio"				# povolené sú aj clipboard, trash, notifications a wallpaper
 tab1_icon = ""          # ikona je voliteľná, predvolene ozubené koleso "\U000f0493"
-tab2_icon = ""
-tab3_icon = ""
-tab4_icon = ""
-tab5_icon = ""
+# tab2_icon = ""
+# tab3_icon = ""
+# tab4_icon = ""
+# tab5_icon = ""
 tab6_icon = "" 		# 
 
 # Druhá lišta na opačnej strane. tlačidlá neotvárajú panel v kontajneri.
 inversetab = true
 inversetab_gap = 10			# pre 5 tlacidiel gap=23
-inversetab1 = "sudo poweroff"
-inversetab2 = "sudo reboot"
-inversetab3 = "systemctl suspend"
-inversetab4 = "logout_to_tty.sh"
-inversetab5 = "swaylock -f -i /home/mm/.config/wayfire/media/lockscreen.jpg --show-keyboard-layout --indicator-radius 100 --indicator-thickness 7"
-inversetab6 = "module:capture"
-inversetab1_icon = ""
-inversetab2_icon = ""
-inversetab3_icon = ""
-inversetab4_icon = "󰍃"
-inversetab5_icon = ""
-inversetab6_icon = "󱣴"
+inversetab1 = "module:capture"
+inversetab2 = "swaylock -f -i /home/mm/.config/wayfire/media/lockscreen.jpg --show-keyboard-layout --indicator-radius 100 --indicator-thickness 7"
+inversetab3 = "logout_to_tty.sh"
+inversetab4 = "systemctl suspend"
+inversetab5 = "sudo reboot"
+inversetab6 = "sudo poweroff"
+inversetab1_icon = "󱣴"
+inversetab2_icon = ""
+inversetab3_icon = "󰍃"
+inversetab4_icon = ""
+inversetab5_icon = ""
+inversetab6_icon = ""
 
 # --- drun: spúšťač aplikácií (dynamic-island --drun, modul "drun") ---
 [drun]					# librsvg2-bin nainstalovat kvoli konverzii svg ikon
 # columns = 5
+columns = 5
 rows = 3
 order = "vertical"    # "horizontal" = ďalšia aplikácia vedľa predošlej, "vertical" = pod predošlou
 show = "icon"           # "icon" | "name" | "icon+name-right" | "icon+name-below"
@@ -116,7 +118,8 @@ format = "%A  %d. %B,  %H:%M"
 locale = "sk_SK.UTF-8"
 on_click = "calendar"                        # kalendár sa rozbalí priamo v ostrovčeku
 # on_click_middle = "drun"
-on_click_right = "notifications"
+on_click_middle = ""
+on_click_right = "~/.config/wayfire/scripts/wallpaper -r"
 
 [network]
 interface = "wlan0"
@@ -139,7 +142,7 @@ on_click_right = "remmina"
 
 [keyboard]
 on_click = "layout-toggle"
-on_click_right = "clipboard"
+on_click_right = "notifications"
 on_click_middle = ""
 tooltip = ""
 [keyboard.names]
@@ -201,11 +204,11 @@ tooltip = "{list}"    # {list} = „názov (veľkosť)  →  bod pripojenia“ p
 # --- Vlastné moduly ([[custom]]) ---
 # Ľubovoľný externý modul: trvalý proces (interval = 0) alebo periodický.
 # Výstup: JSON {"text","tooltip","class"} alebo čistý text (json = false).
-[[custom]]
-name = "quick"
-text = ""			#    
-on_click = "quickset"
-on_click_right = "~/.config/wayfire/scripts/wallpaper -r"
+##[[custom]]
+##name = "quick"
+##text = ""			#    
+##on_click = "quickset"
+##on_click_right = "~/.config/wayfire/scripts/wallpaper -r"
 # tooltip = "Leftt-click: quick setting, Right-click: random wallpaper"
 
 # Odznak v lište len kým existuje súbor (track_file), tvar ako CAPS; prázdne track_file = bežný modul.
@@ -219,6 +222,7 @@ on_click_right = "~/.config/wayfire/scripts/wallpaper -r"
 ##### exec = "awk '/MemTotal/{t=$2} /MemAvailable/{a=$2} END{printf \"\uf2db %.1f GB\", (t-a)/1048576}' /proc/meminfo"
 ##### interval = 5
 ##### json = false
+json = false
 ##### tooltip = "Použitá pamäť"
 
 # [[custom]]
@@ -238,8 +242,10 @@ font_size = 17    # veľkosť písma
 rows = 10          # koľko riadkov je vidieť, viac = skrolovanie
 width = 600       # šírka panela
 max_items = 200   # koľko najnovších položiek sa načíta
+search = false		# skryje vyhladacie pole, ale vyhladava nadalej
 # list_command = "cliphist list"
 # copy_command = "cliphist decode | wl-copy"
+# window_radius = 24   # zaoblenie okna samostatného režimu `dynamic-island --clip`
 
 [trash]
 width = 600
