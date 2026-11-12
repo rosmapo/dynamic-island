@@ -1,5 +1,6 @@
 //! Náhrada udiskie: UDisks2 cez systémovú zbernicu – automount, zoznam pripojených médií,
-//! bezpečné odpojenie (unmount + eject/power-off) a notifikácie o tom.
+//! bezpečné odpojenie (unmount + eject/power-off / loop Delete) a notifikácie o tom.
+//! Podporuje aj loop zariadenia (ISO pripojené cez udisksctl loop-setup).
 use crate::data::{DiskInfo, Msg, Notification};
 use crate::dbus::*;
 use crate::sys::{self, PollFd, Tx, Waker, POLLIN};
@@ -30,6 +31,8 @@ const ROOT: &str = "/org/freedesktop/UDisks2";
 const I_BLOCK: &str = "org.freedesktop.UDisks2.Block";
 const I_FS: &str = "org.freedesktop.UDisks2.Filesystem";
 const I_DRIVE: &str = "org.freedesktop.UDisks2.Drive";
+const I_LOOP: &str = "org.freedesktop.UDisks2.Loop";
+const I_PART: &str = "org.freedesktop.UDisks2.Partition";
 
 type Props = HashMap<String, V>;
 type Objects = HashMap<String, HashMap<String, Props>>;
@@ -124,7 +127,7 @@ fn parse_objects(v: V) -> Objects {
     out
 }
 
-fn label_of(block: &Props, drive: Option<&Props>) -> String {
+fn label_of(block: &Props, drive: Option<&Props>, loop_p: Option<&Props>) -> String {
     let l = gs(block, "IdLabel");
     if !l.is_empty() {
         return l;
@@ -133,6 +136,13 @@ fn label_of(block: &Props, drive: Option<&Props>) -> String {
         let s = format!("{} {}", gs(d, "Vendor").trim(), gs(d, "Model").trim()).trim().to_string();
         if !s.is_empty() {
             return s;
+        }
+    }
+    // loop (ISO): názov zo súboru
+    if let Some(lp) = loop_p {
+        let path = bytes_to_string(lp.get("BackingFile").unwrap_or(&V::Arr(Vec::new())));
+        if let Some(name) = path.rsplit('/').next().filter(|s| !s.is_empty()) {
+            return name.to_string();
         }
     }
     let dev = bytes_to_string(block.get("PreferredDevice").unwrap_or(&V::Arr(Vec::new())));
@@ -145,7 +155,7 @@ struct Snap {
     unmounted: Vec<(String, String)>,
 }
 
-/// Externé (nie systémové) súborové systémy.
+/// Externé (nie systémové) súborové systémy + používateľské loop (ISO).
 fn snapshot(o: &Objects) -> Snap {
     let mut groups: Vec<(String, DiskInfo)> = Vec::new();
     let mut unmounted = Vec::new();
@@ -154,18 +164,46 @@ fn snapshot(o: &Objects) -> Snap {
     for path in paths {
         let ifs = &o[path];
         let (Some(block), Some(fs)) = (ifs.get(I_BLOCK), ifs.get(I_FS)) else { continue };
-        if gb(block, "HintIgnore") || gb(block, "HintSystem") {
+        // loop = samotné zariadenie s Loop, alebo oddiel tabuľky na loop
+        let is_loop = ifs.contains_key(I_LOOP)
+            || ifs
+                .get(I_PART)
+                .map(|p| {
+                    let table = gs(p, "Table");
+                    !table.is_empty() && o.get(&table).map(|i| i.contains_key(I_LOOP)).unwrap_or(false)
+                })
+                .unwrap_or(false);
+        // systémové a skryté preskočiť; loop (ISO z loop-setup) nechať aj pri HintSystem
+        if gb(block, "HintIgnore") || (gb(block, "HintSystem") && !is_loop) {
             continue;
         }
         let drive = o.get(&gs(block, "Drive")).and_then(|d| d.get(I_DRIVE));
-        let label = label_of(block, drive);
+        let loop_p = ifs.get(I_LOOP).or_else(|| {
+            ifs.get(I_PART)
+                .map(|p| gs(p, "Table"))
+                .filter(|t| !t.is_empty())
+                .and_then(|t| o.get(&t))
+                .and_then(|i| i.get(I_LOOP))
+        });
+        let label = label_of(block, drive, loop_p);
         let dev = bytes_to_string(block.get("Device").unwrap_or(&V::Arr(Vec::new())));
         let mounts = mounts_of(fs);
         if !mounts.is_empty() {
-            // jeden záznam na fyzický disk (nie na oddiel)
+            // jeden záznam na fyzický disk (nie na oddiel); loop = vlastný kľúč (path)
             let key = gs(block, "Drive");
             let key = if key.is_empty() || key == "/" { path.clone() } else { key };
-            let size = drive.and_then(|d| if let Some(V::U64(n)) = d.get("Size") { Some(*n) } else { None }).map(human_size).unwrap_or_default();
+            let size = drive
+                .and_then(|d| if let Some(V::U64(n)) = d.get("Size") { Some(*n) } else { None })
+                .or_else(|| {
+                    // loop nemá Drive: veľkosť z Block
+                    if let Some(V::U64(n)) = block.get("Size") {
+                        Some(*n)
+                    } else {
+                        None
+                    }
+                })
+                .map(human_size)
+                .unwrap_or_default();
             match groups.iter_mut().find(|g| g.0 == key) {
                 Some(g) => {
                     if !g.1.label.split(" + ").any(|l| l == label) {
@@ -221,15 +259,37 @@ fn short_err(e: &std::io::Error) -> String {
     s.rsplit(':').next().unwrap_or(&s).trim().to_string()
 }
 
+/// Cesta k loop objektu: samotný blok s Loop, alebo Partition.Table rodič.
+fn loop_object(o: &Objects, path: &str) -> Option<String> {
+    let ifs = o.get(path)?;
+    if ifs.contains_key(I_LOOP) {
+        return Some(path.to_string());
+    }
+    let table = ifs.get(I_PART).map(|p| gs(p, "Table")).filter(|t| !t.is_empty() && t != "/")?;
+    if o.get(&table).map(|i| i.contains_key(I_LOOP)).unwrap_or(false) {
+        Some(table)
+    } else {
+        None
+    }
+}
+
 fn eject(c: &mut Conn, cfg: &DiskCfg, tx: &Tx<Msg>, ids: &mut u32, blocks: &[String]) -> std::io::Result<()> {
     let o = managed(c)?;
-    // všetky pripojené časti rovnakých fyzických zariadení
+    // všetky pripojené časti rovnakých fyzických zariadení + loop ciele
     let mut drives: Vec<String> = Vec::new();
+    let mut loops: Vec<String> = Vec::new();
     let mut targets: Vec<String> = Vec::new();
     for b in blocks {
-        if let Some(d) = o.get(b).and_then(|i| i.get(I_BLOCK)).map(|p| gs(p, "Drive")) {
-            if !d.is_empty() && d != "/" && !drives.contains(&d) {
-                drives.push(d);
+        if let Some(lp) = loop_object(&o, b) {
+            if !loops.contains(&lp) {
+                loops.push(lp);
+            }
+        }
+        if let Some(ifs) = o.get(b) {
+            if let Some(d) = ifs.get(I_BLOCK).map(|p| gs(p, "Drive")) {
+                if !d.is_empty() && d != "/" && !drives.contains(&d) {
+                    drives.push(d);
+                }
             }
         }
         if !targets.contains(b) {
@@ -243,15 +303,38 @@ fn eject(c: &mut Conn, cfg: &DiskCfg, tx: &Tx<Msg>, ids: &mut u32, blocks: &[Str
             }
         }
     }
+    // aj oddiely toho istého loop zariadenia
+    for lp in &loops {
+        for (p, ifs) in &o {
+            if let (Some(_), Some(fs)) = (ifs.get(I_BLOCK), ifs.get(I_FS)) {
+                if loop_object(&o, p).as_ref() == Some(lp) && !mounts_of(fs).is_empty() && !targets.contains(p) {
+                    targets.push(p.clone());
+                }
+            }
+        }
+    }
     for t in &targets {
         let Some(ifs) = o.get(t) else { continue };
         if ifs.get(I_FS).map(|f| mounts_of(f).is_empty()).unwrap_or(true) {
             continue;
         }
-        let label = label_of(&ifs[I_BLOCK], o.get(&gs(&ifs[I_BLOCK], "Drive")).and_then(|d| d.get(I_DRIVE)));
+        let label = label_of(
+            &ifs[I_BLOCK],
+            o.get(&gs(&ifs[I_BLOCK], "Drive")).and_then(|d| d.get(I_DRIVE)),
+            ifs.get(I_LOOP).or_else(|| loops.first().and_then(|lp| o.get(lp)).and_then(|i| i.get(I_LOOP))),
+        );
         if let Err(e) = c.call(DEST, t, I_FS, "Unmount", "a{sv}", empty_opts()) {
             if cfg.notify_error {
                 notice(tx, ids, cfg.timeout_ms, &format!("Nepodarilo sa odpojiť {label}"), &short_err(&e), 2);
+            }
+            return Ok(());
+        }
+    }
+    // loop (ISO): po unmount zmazať loop zariadenie
+    for lp in &loops {
+        if let Err(e) = c.call(DEST, lp, I_LOOP, "Delete", "a{sv}", empty_opts()) {
+            if cfg.notify_error {
+                notice(tx, ids, cfg.timeout_ms, "ISO sa nepodarilo odpojiť", &short_err(&e), 2);
             }
             return Ok(());
         }
@@ -275,7 +358,18 @@ fn eject(c: &mut Conn, cfg: &DiskCfg, tx: &Tx<Msg>, ids: &mut u32, blocks: &[Str
         }
     }
     if cfg.notify_unmount {
-        let name = targets.first().and_then(|t| o.get(t)).map(|i| label_of(&i[I_BLOCK], None)).filter(|s| !s.is_empty()).unwrap_or(label);
+        let name = targets
+            .first()
+            .and_then(|t| o.get(t))
+            .map(|i| {
+                label_of(
+                    &i[I_BLOCK],
+                    None,
+                    i.get(I_LOOP).or_else(|| loops.first().and_then(|lp| o.get(lp)).and_then(|x| x.get(I_LOOP))),
+                )
+            })
+            .filter(|s| !s.is_empty())
+            .unwrap_or(label);
         notice(tx, ids, cfg.timeout_ms, "Médium odpojené", &format!("{name} môžeš bezpečne vybrať."), 1);
     }
     Ok(())
@@ -433,5 +527,86 @@ mod tests {
         assert_eq!(human_size(500 * 1024 * 1024), "500M");
         assert_eq!(human_size(1024u64.pow(4)), "1T");
         assert_eq!(human_size(15_664_000_000), "14.6G");
+    }
+
+    #[test]
+    fn loop_iso_allowed() {
+        // ISO cez loop-setup: HintSystem=true, má Loop interface
+        let loop_whole = obj(
+            "/org/freedesktop/UDisks2/block_devices/loop0",
+            vec![
+                iface(
+                    I_BLOCK,
+                    vec![
+                        prop("IdLabel", V::Str("".into())),
+                        prop("Device", cstr("/dev/loop0")),
+                        prop("Drive", V::Str("/".into())),
+                        prop("HintSystem", V::Bool(true)),
+                        prop("HintIgnore", V::Bool(false)),
+                        prop("Size", V::U64(700_000_000)),
+                    ],
+                ),
+                iface(I_LOOP, vec![prop("BackingFile", cstr("/home/u/image.iso")), prop("SetupByUID", V::U32(1000))]),
+            ],
+        );
+        let loop_part = obj(
+            "/org/freedesktop/UDisks2/block_devices/loop0p1",
+            vec![
+                iface(
+                    I_BLOCK,
+                    vec![
+                        prop("IdLabel", V::Str("Ubuntu".into())),
+                        prop("Device", cstr("/dev/loop0p1")),
+                        prop("Drive", V::Str("/".into())),
+                        prop("HintSystem", V::Bool(true)),
+                        prop("Size", V::U64(700_000_000)),
+                    ],
+                ),
+                iface(I_FS, vec![prop("MountPoints", V::Arr(vec![]))]),
+                iface(I_PART, vec![prop("Table", V::Str("/org/freedesktop/UDisks2/block_devices/loop0".into()))]),
+            ],
+        );
+        // systémový snap loop – HintSystem + bez užitočného FS / alebo by mal byť ignorovaný ak nemá Loop... má Loop, ale to je OK pre test – reálne snap má často HintIgnore
+        let snap = obj(
+            "/org/freedesktop/UDisks2/block_devices/loop9",
+            vec![
+                iface(I_BLOCK, vec![prop("HintSystem", V::Bool(true)), prop("HintIgnore", V::Bool(true)), prop("Device", cstr("/dev/loop9"))]),
+                iface(I_FS, vec![prop("MountPoints", V::Arr(vec![cstr("/snap/core")]))]),
+                iface(I_LOOP, vec![prop("BackingFile", cstr("/var/lib/snapd/snaps/core.snap"))]),
+            ],
+        );
+        let o = parse_objects(V::Arr(vec![loop_whole, loop_part, snap]));
+        let s = snapshot(&o);
+        // snap má HintIgnore → mimo; loop0p1 je unmounted ISO oddiel
+        assert_eq!(s.disks.len(), 0);
+        assert_eq!(s.unmounted.len(), 1);
+        assert_eq!(s.unmounted[0].0, "/org/freedesktop/UDisks2/block_devices/loop0p1");
+        assert_eq!(s.unmounted[0].1, "Ubuntu");
+
+        // namountované ISO
+        let loop_part_m = obj(
+            "/org/freedesktop/UDisks2/block_devices/loop0p1",
+            vec![
+                iface(
+                    I_BLOCK,
+                    vec![
+                        prop("IdLabel", V::Str("Ubuntu".into())),
+                        prop("Device", cstr("/dev/loop0p1")),
+                        prop("Drive", V::Str("/".into())),
+                        prop("HintSystem", V::Bool(true)),
+                        prop("Size", V::U64(700_000_000)),
+                    ],
+                ),
+                iface(I_FS, vec![prop("MountPoints", V::Arr(vec![cstr("/run/media/u/Ubuntu")]))]),
+                iface(I_PART, vec![prop("Table", V::Str("/org/freedesktop/UDisks2/block_devices/loop0".into()))]),
+            ],
+        );
+        let o2 = parse_objects(V::Arr(vec![loop_whole, loop_part_m]));
+        let s2 = snapshot(&o2);
+        assert_eq!(s2.disks.len(), 1);
+        assert_eq!(s2.disks[0].label, "Ubuntu");
+        assert_eq!(s2.disks[0].mount, "/run/media/u/Ubuntu");
+        assert_eq!(s2.disks[0].size, "667.6M");
+        assert_eq!(loop_object(&o2, "/org/freedesktop/UDisks2/block_devices/loop0p1").as_deref(), Some("/org/freedesktop/UDisks2/block_devices/loop0"));
     }
 }
