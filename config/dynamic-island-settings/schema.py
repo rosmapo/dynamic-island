@@ -37,7 +37,7 @@ LABELS = {
     ('island', 'font_scale'): 'Násobiteľ všetkých písem', ('island', 'font_size'): 'Základná veľkosť písma',
     ('island', 'height'): 'Výška kapsuly', ('island', 'margin_top'): 'Odstup od horného okraja',
     ('island', 'radius'): 'Zaoblenie kapsuly', ('island', 'radius_expanded'): 'Zaoblenie rozbaleného panela',
-    ('island', 'shadow'): 'Tieň', ('island', 'surface_width'): 'Šírka priehľadného povrchu',
+    ('island', 'shadow'): 'Tieň', ('island', 'window_animation'): 'Animácia otvorenia okna (drun a panely)', ('island', 'surface_width'): 'Šírka priehľadného povrchu',
     ('island', 'surface_height'): 'Výška priehľadného povrchu', ('island', 'tooltip_delay_ms'): 'Oneskorenie tooltipu (ms)',
     ('island', 'collapse_delay_ms'): 'Oneskorenie zbalenia (ms)', ('island', 'poll_ms'): 'Kontrola stavu (ms)',
     ('island', 'colors_file'): 'Súbor s farbami (matugen)', ('island', 'font_family'): 'Písmo (zoznam, záložné za čiarkou)',

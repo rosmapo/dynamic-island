@@ -2,6 +2,7 @@
 use crate::config::{Config, Theme};
 use crate::data::Msg;
 use crate::fonts::Fonts;
+use crate::gl::Egl;
 use crate::providers;
 use crate::render::Renderer;
 use crate::sys::{self, Inotify, Tx, Waker};
@@ -326,6 +327,41 @@ fn run_action(a: Action, cfg: &Config, disk_tx: &Option<Tx<DiskCmd>>, tx: &Tx<Ms
     }
 }
 
+// ------------------------------------------------------------ okno v strede (spúšťač a panely zvonka)
+
+/// Okno v strede obrazovky (`--drun`, `--action`, `--clip`): samostatný povrch layer-shell s vlastným Wayland spojením,
+/// EGL kontextom a rendererom. Vzniká pri otvorení a zaniká po zatvorení; lišta hore je na ňom nezávislá, takže ostáva
+/// stále viditeľná. Obsah okna kreslí vlastná inštancia `Ui` (`win_ui` v `run`).
+struct Win {
+    // poradie polí = poradie zničenia: najprv renderer, potom EGL povrch a nakoniec okno so spojením
+    renderer: Renderer,
+    egl: Egl,
+    wl: Wl,
+    scale: i32,
+    dirty: bool,
+    animating: bool,
+    first_draw: bool,
+    last_frame: Instant,
+    last_input: Option<Option<(i32, i32, i32, i32)>>,
+}
+
+fn open_win(cfg: &Config) -> Result<Win, String> {
+    let mut wl = Wl::new_with(cfg.surface_w, cfg.surface_h, true, "dynamic-island")?;
+    let scale = wl.st.scale.max(1);
+    let egl = wl.create_egl(cfg.surface_w as i32 * scale, cfg.surface_h as i32 * scale)?;
+    let renderer = Renderer::new(&egl)?;
+    Ok(Win { renderer, egl, wl, scale, dirty: true, animating: false, first_draw: true, last_frame: Instant::now(), last_input: None })
+}
+
+/// Správy, ktoré patria len lište (notifikácie, HUD jasu, skrývanie); okno v strede ich nedostane.
+/// Všetky ostatné (stav modulov, výsledky načítania panelov) dostávajú obe inštancie `Ui`.
+fn bar_only(m: &Msg) -> bool {
+    matches!(m, Msg::Notif(_) | Msg::NotifClose(_) | Msg::Hide | Msg::Show | Msg::AutoHide(_) | Msg::Brightness(_))
+}
+
+/// Číslo otvorenia menu, od ktorého počíta okno (lišta počíta od 0) – pozri `Ui::set_menu_gen`.
+const WIN_MENU_GEN: u64 = 1 << 48;
+
 pub fn run(cfg: Config) -> Result<(), String> {
     let waker = Waker::new();
     SIG_FD.store(waker.fd(), Ordering::SeqCst);
@@ -343,6 +379,10 @@ pub fn run(cfg: Config) -> Result<(), String> {
 
     let mut theme = Theme::load(&cfg);
     let mut ui = Ui::new(cfg.clone(), theme, scale as f32);
+    // okno v strede: vlastná `Ui` (stále existuje a dostáva stav modulov), povrch sa vytvára len kým je otvorené
+    let mut win_ui = Ui::new(cfg.clone(), theme, scale as f32);
+    win_ui.set_menu_gen(WIN_MENU_GEN);
+    let mut win: Option<Win> = None;
 
     // sledovanie zmeny farieb (matugen) a konfigurácie
     let inotify = Inotify::new();
@@ -411,8 +451,6 @@ pub fn run(cfg: Config) -> Result<(), String> {
     let mut last_clock = String::new();
     let mut first_draw = true;
     let mut kb_on = false;
-    // povrch je práve v strede obrazovky (okno spúšťača / panela zvonka), nie ako lišta hore
-    let mut surface_centered = false;
 
     loop {
         let now = Instant::now();
@@ -423,6 +461,7 @@ pub fn run(cfg: Config) -> Result<(), String> {
             let s = sys::strftime_str(&cfg.clock_format, &tm);
             if s != last_clock {
                 last_clock = s.clone();
+                win_ui.set_clock(s.clone());
                 ui.set_clock(s);
                 dirty = true;
             }
@@ -443,11 +482,27 @@ pub fn run(cfg: Config) -> Result<(), String> {
             run_action(a, &cfg, &disk_tx, &tx);
         }
 
+        // časovače okna v strede (obnovenie položiek menu s `interval`, poistka hesla Wi-Fi)
+        if let Some(w) = win.as_mut() {
+            if win_ui.tick(now) {
+                w.dirty = true;
+            }
+            for a in win_ui.take_queued() {
+                run_action(a, &cfg, &disk_tx, &tx);
+            }
+        }
+
         // koľko môžeme spať
-        let can_draw = (dirty || animating) && !wl.st.frame_pending;
+        let win_can_draw = win.as_ref().is_some_and(|w| (w.dirty || w.animating) && !w.wl.st.frame_pending);
+        let can_draw = ((dirty || animating) && !wl.st.frame_pending) || win_can_draw;
         let mut deadline = clock_next;
         if let Some(d) = ui.next_deadline() {
             deadline = deadline.min(d);
+        }
+        if win.is_some() {
+            if let Some(d) = win_ui.next_deadline() {
+                deadline = deadline.min(d);
+            }
         }
         let timeout_ms = if can_draw {
             0
@@ -455,10 +510,22 @@ pub fn run(cfg: Config) -> Result<(), String> {
             deadline.saturating_duration_since(now).as_millis().min(60_000) as i32 + 1
         };
 
-        let extra = [waker.fd(), inotify.as_ref().map(|i| i.fd()).unwrap_or(-1)];
+        if let Some(w) = win.as_ref() {
+            w.wl.flush();
+        }
+        let extra = [waker.fd(), inotify.as_ref().map(|i| i.fd()).unwrap_or(-1), win.as_ref().map(|w| w.wl.fd()).unwrap_or(-1)];
         let ready = wl.wait_events(&extra, timeout_ms)?;
         if wl.st.closed {
             return Ok(());
+        }
+        // udalosti okna v strede (vlastné spojenie); jeho strata (kompozitor povrch zrušil) lištu nezhodí
+        let mut win_lost = false;
+        if let Some(w) = win.as_mut() {
+            if let Err(e) = w.wl.wait_events(&[], 0) {
+                eprintln!("dynamic-island: okno v strede: {e}");
+                win_lost = true;
+            }
+            win_lost |= w.wl.st.closed;
         }
 
         if ready[0] {
@@ -466,6 +533,12 @@ pub fn run(cfg: Config) -> Result<(), String> {
             while let Ok(m) = rx.try_recv() {
                 if let (Msg::Notif(n), Some(h)) = (&m, history.as_mut()) {
                     h.append(n);
+                }
+                if !bar_only(&m) {
+                    win_ui.apply(m.clone(), Instant::now());
+                    if let Some(w) = win.as_mut() {
+                        w.dirty = true;
+                    }
                 }
                 ui.apply(m, Instant::now());
                 dirty = true;
@@ -489,8 +562,28 @@ pub fn run(cfg: Config) -> Result<(), String> {
                 for n in cmds {
                     let p = hud_dir.join(n);
                     if let Ok(s) = std::fs::read_to_string(&p) {
-                        ui.external_action(s.trim());
-                        dirty = true;
+                        // povel patrí oknu v strede; lišta sa ho netýka (ostáva hore)
+                        let name = s.trim();
+                        if win.is_none() {
+                            win_ui.set_scale(scale as f32);
+                        }
+                        win_ui.external_action(name);
+                        if win.is_none() && win_ui.is_centered() {
+                            match open_win(&cfg) {
+                                Ok(w) => {
+                                    win_ui.set_scale(w.scale as f32);
+                                    win = Some(w);
+                                }
+                                Err(e) => {
+                                    eprintln!("dynamic-island: okno v strede sa nepodarilo otvoriť: {e}");
+                                    win_ui.close_window();
+                                    win_ui.update(0.0, Instant::now(), &mut text);
+                                }
+                            }
+                        }
+                        if let Some(w) = win.as_mut() {
+                            w.dirty = true;
+                        }
                     }
                     let _ = std::fs::remove_file(&p);
                 }
@@ -516,6 +609,10 @@ pub fn run(cfg: Config) -> Result<(), String> {
                 if names.iter().any(|n| *n == colors_name) && !colors_name.is_empty() {
                     theme = Theme::load(&cfg);
                     ui.theme = theme;
+                    win_ui.theme = theme;
+                    if let Some(w) = win.as_mut() {
+                        w.dirty = true;
+                    }
                     dirty = true;
                 }
             }
@@ -562,6 +659,48 @@ pub fn run(cfg: Config) -> Result<(), String> {
             dirty = true;
         }
 
+        // ukazovateľ a klávesnica okna v strede (okno drží klávesnicu výhradne, kým je otvorené)
+        if let Some(w) = win.as_mut() {
+            let evs: Vec<PtrEvent> = std::mem::take(&mut w.wl.st.ptr_events);
+            for e in evs {
+                let now = Instant::now();
+                match e {
+                    PtrEvent::Enter(x, y) | PtrEvent::Motion(x, y) => win_ui.pointer_move(x as f32, y as f32, now),
+                    PtrEvent::Leave => win_ui.pointer_leave(now),
+                    PtrEvent::Button(b, true) => {
+                        for a in win_ui.click(b, now) {
+                            run_action(a, &cfg, &disk_tx, &tx);
+                        }
+                    }
+                    PtrEvent::Button(b, false) => win_ui.release(b, now),
+                    PtrEvent::Scroll(v) => win_ui.scroll(v as f32),
+                }
+                for a in win_ui.take_queued() {
+                    run_action(a, &cfg, &disk_tx, &tx);
+                }
+                w.dirty = true;
+            }
+            for k in std::mem::take(&mut w.wl.st.key_events) {
+                for a in win_ui.key(&k) {
+                    run_action(a, &cfg, &disk_tx, &tx);
+                }
+                w.dirty = true;
+            }
+            // akcie vzniknuté klávesou / otvorením panela (načítanie zoznamov)
+            for a in win_ui.take_queued() {
+                run_action(a, &cfg, &disk_tx, &tx);
+            }
+            if win_ui.wants_keyboard() && !w.wl.keyboard_ready() {
+                win_ui.keyboard_unavailable();
+            }
+            if w.wl.st.scale_dirty {
+                w.scale = w.wl.st.scale.max(1);
+                w.wl.apply_scale(cfg.surface_w as i32 * w.scale, cfg.surface_h as i32 * w.scale);
+                win_ui.set_scale(w.scale as f32);
+                w.dirty = true;
+            }
+        }
+
         // udalosti notifikácií späť do D-Bus vlákna (vypršanie, zatvorenie, akcia)
         for e in ui.take_events() {
             if let Some(n) = &notif_tx {
@@ -587,24 +726,60 @@ pub fn run(cfg: Config) -> Result<(), String> {
             first_draw = false;
             last_frame = now;
             animating = ui.update(dt, now, &mut text);
-            // okno v strede (spúšťač, panel zvonka) ↔ lišta hore: kotva povrchu sa prepne spolu s týmto framom
-            if ui.is_centered() != surface_centered {
-                surface_centered = ui.is_centered();
-                wl.set_centered(surface_centered);
-                last_input = None;
-            }
             let frame = ui.build(&mut text);
             let ir = ui.input_rect();
             if last_input != Some(ir) {
                 wl.set_input_region(ir);
                 last_input = Some(ir);
             }
+            // lišta a okno v strede majú každé vlastný EGL kontext: pred kreslením sa vždy nastaví ten správny
+            egl.make_current();
             renderer.draw(cfg.surface_w * scale as u32, cfg.surface_h * scale as u32, &frame, &mut text, &mut ui.icons);
             wl.request_frame();
             if !egl.swap() {
                 return Err("eglSwapBuffers zlyhalo".into());
             }
             dirty = false;
+        }
+
+        // kreslenie okna v strede; po dobehnutí zatváracej animácie sa povrch zničí
+        if let Some(w) = win.as_mut() {
+            if !win_lost && (w.dirty || w.animating) && !w.wl.st.frame_pending {
+                let now = Instant::now();
+                let dt = if w.first_draw { 0.0 } else { now.duration_since(w.last_frame).as_secs_f32().min(0.05) };
+                w.first_draw = false;
+                w.last_frame = now;
+                w.animating = win_ui.update(dt, now, &mut text);
+                if win_ui.is_centered() {
+                    let frame = win_ui.build(&mut text);
+                    let ir = win_ui.input_rect();
+                    if w.last_input != Some(ir) {
+                        w.wl.set_input_region(ir);
+                        w.last_input = Some(ir);
+                    }
+                    w.egl.make_current();
+                    w.renderer.draw(cfg.surface_w * w.scale as u32, cfg.surface_h * w.scale as u32, &frame, &mut text, &mut win_ui.icons);
+                    w.wl.request_frame();
+                    if !w.egl.swap() {
+                        eprintln!("dynamic-island: eglSwapBuffers okna v strede zlyhalo");
+                        win_lost = true;
+                    }
+                    w.dirty = false;
+                } else {
+                    // zatvorené: `Ui` sa vrátila do pokoja, povrch netreba
+                    win_lost = true;
+                }
+            }
+        }
+        if win_lost {
+            if win.is_some() {
+                // povrch zanikol zvonka alebo sa okno zatvorilo: `Ui` sa dostane do pokoja a povrch sa zničí
+                if win_ui.is_centered() {
+                    win_ui.close_window();
+                    win_ui.update(0.0, Instant::now(), &mut text);
+                }
+                win = None;
+            }
         }
     }
 }

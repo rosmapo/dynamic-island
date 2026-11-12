@@ -132,7 +132,7 @@ pub fn menu_item_text(label: &str, out: Option<&str>) -> String {
     }
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub enum Msg {
     /// výstup príkazu `exec` položky menu: (generácia otvorenia menu, index položky, prvý riadok výstupu)
     MenuExec(u64, usize, String),

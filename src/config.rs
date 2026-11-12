@@ -194,6 +194,8 @@ pub struct Config {
     pub radius_expanded: f32,
     pub opacity: f32,
     pub shadow: bool,
+    /// animácia otvorenia okna v strede (spúšťač, panely zvonka); ostatné animácie sa nemenia
+    pub window_animation: bool,
     pub surface_w: u32,
     pub surface_h: u32,
     pub hover_ms: u64,
@@ -614,6 +616,7 @@ BUILTIN_MODULES.map(String::from).to_vec()
             radius_expanded: isl.f64_or("radius_expanded", 26.0) as f32,
             opacity: isl.f64_or("opacity", 0.75) as f32,
             shadow: isl.bool_or("shadow", true),
+            window_animation: isl.bool_or("window_animation", true),
             surface_w: isl.f64_or("surface_width", 760.0) as u32,
             surface_h: isl.f64_or("surface_height", 560.0) as u32,
             hover_ms: isl.f64_or("tooltip_delay_ms", 450.0) as u64,

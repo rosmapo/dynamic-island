@@ -113,7 +113,7 @@ pub struct Renderer {
     image_radius: i32,
     vbo: u32,
     tex: u32,
-    tex_gen: u32,
+    tex_ver: u64,
     /// path → GL texture id
     img_tex: HashMap<String, u32>,
     verts: Vec<f32>,
@@ -164,7 +164,7 @@ impl Renderer {
                 image_radius,
                 vbo,
                 tex,
-                tex_gen: u32::MAX,
+                tex_ver: u64::MAX,
                 img_tex: HashMap::new(),
                 verts: Vec::new(),
             })
@@ -213,7 +213,9 @@ impl Renderer {
     }
 
     fn upload_atlas(&mut self, text: &mut Text) {
-        if !text.dirty {
+        // každý renderer (lišta aj okno v strede) má vlastnú textúru, preto sa porovnáva verzia atlasu,
+        // nie príznak `dirty` (ten by po nahraní v jednom rendereri druhý renderer nikdy nezbadal)
+        if self.tex_ver == text.version {
             return;
         }
         unsafe {
@@ -233,7 +235,7 @@ impl Renderer {
                 text.pixels.as_ptr() as *const _,
             );
         }
-        self.tex_gen = text.generation;
+        self.tex_ver = text.version;
         text.dirty = false;
     }
 

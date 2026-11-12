@@ -1723,7 +1723,13 @@ impl Ui {
         }
         // detached okno (--action / --clip): zatvorenie bez animácie; prepínanie panelov a ostrovček animujú ďalej
         if Self::is_big(p) {
-            self.cal_t.set(1.0);
+            if self.centered && !self.cfg.window_animation && self.cal_t.x < 0.05 {
+                // `window_animation = false`: okno v strede sa po otvorení objaví hneď; prepínanie panelov
+                // v už otvorenom okne a ostatné animácie ostávajú
+                self.cal_t.snap(1.0);
+            } else {
+                self.cal_t.set(1.0);
+            }
         } else if self.centered {
             // okamžité zatvorenie sa vykoní až v `update` – keď sa hneď otvára iný panel, prepínanie
             // nespôsobí prebliknutie (pružiny pokračujú z aktuálnej veľkosti, ako v ostrovčeku)
@@ -2153,6 +2159,20 @@ impl Ui {
     /// Okno panela (`--action`) je otvorené alebo sa ešte zatvára; po dobehnutí zatváracej animácie proces skončí.
     pub fn is_centered(&self) -> bool {
         self.centered
+    }
+
+    /// Okno v strede má vlastnú inštanciu `Ui` (lišta ju nezdieľa), no obe dostávajú tie isté správy z vlákien.
+    /// Výstupy `exec` položiek menu nesú číslo otvorenia menu – okno začína od iného čísla ako lišta, takže
+    /// výstup určený jednej inštancii druhá ignoruje.
+    pub fn set_menu_gen(&mut self, base: u64) {
+        self.menu_gen = base;
+    }
+
+    /// Zatvorí okno v strede hneď a bez animácie (kompozitor zrušil povrch, chyba pri otvorení). Po nasledujúcom
+    /// `update` je `is_centered()` false.
+    pub fn close_window(&mut self) {
+        self.set_panel(Panel::None);
+        self.collapse_at = None;
     }
 
     /// Povel `dynamic-island --drun` / `--action NAZOV` (príde cez súbor od druhého procesu): otvorí panel `name`

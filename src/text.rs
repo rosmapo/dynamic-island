@@ -59,6 +59,8 @@ pub struct Text {
     pub dirty: bool,
     /// zvýši sa pri každom vyčistení atlasu (renderer podľa toho vie, že musí nahrať celý)
     pub generation: u32,
+    /// zvýši sa pri každej zmene pixelov atlasu; každý renderer (lišta, okno v strede) si pamätá, ktorú verziu už nahral
+    pub version: u64,
     shelf_x: u32,
     shelf_y: u32,
     shelf_h: u32,
@@ -73,6 +75,7 @@ impl Text {
             pixels: vec![0; (ATLAS * ATLAS) as usize],
             dirty: true,
             generation: 0,
+            version: 0,
             shelf_x: 1,
             shelf_y: 1,
             shelf_h: 0,
@@ -92,6 +95,7 @@ impl Text {
         self.shelf_y = 1;
         self.shelf_h = 0;
         self.generation += 1;
+        self.version += 1;
         self.dirty = true;
     }
 
@@ -139,6 +143,7 @@ impl Text {
                         self.pixels[dst..dst + g.w as usize].copy_from_slice(&g.bitmap[srcrow..srcrow + g.w as usize]);
                     }
                     self.dirty = true;
+                    self.version += 1;
                     let a = ATLAS as f32;
                     Some(GlyphInfo {
                         u0: pos.0 as f32 / a,

@@ -226,6 +226,15 @@
  },
  {
   "section": "island",
+  "key": "window_animation",
+  "kind": "bool_or",
+  "default": true,
+  "min": null,
+  "max": null,
+  "comment": "animácia otvorenia okna v strede (drun, panely zvonka); ostatné animácie ostávajú"
+ },
+ {
+  "section": "island",
   "key": "surface_width",
   "kind": "f64_or",
   "default": 760.0,

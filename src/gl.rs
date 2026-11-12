@@ -35,6 +35,8 @@ fn_table!(EglFns {
     get_proc_address = "eglGetProcAddress": (*const c_char) -> *const c_void;
     get_error = "eglGetError": () -> i32;
     destroy_surface = "eglDestroySurface": (Ptr, Ptr) -> u32;
+    destroy_context = "eglDestroyContext": (Ptr, Ptr) -> u32;
+    terminate = "eglTerminate": (Ptr) -> u32;
 });
 
 const EGL_SURFACE_TYPE: i32 = 0x3033;
@@ -150,6 +152,11 @@ impl Egl {
         }
     }
 
+    /// Urobí kontext tohto okna aktuálnym vo vlákne (lišta a okno v strede majú každé vlastný kontext).
+    pub fn make_current(&self) -> bool {
+        unsafe { (self.fns.make_current)(self.dpy, self.surf, self.surf, self.ctx) != 0 }
+    }
+
     pub fn swap(&self) -> bool {
         unsafe { (self.fns.swap_buffers)(self.dpy, self.surf) != 0 }
     }
@@ -170,6 +177,21 @@ impl Egl {
     #[allow(dead_code)]
     pub fn config(&self) -> Ptr {
         self.cfg
+    }
+}
+
+/// Okno v strede vzniká a zaniká za behu, preto sa EGL povrch, kontext aj displej uvoľnia (inak by unikali
+/// a displej by ostal viazaný na už zatvorené Wayland spojenie).
+impl Drop for Egl {
+    fn drop(&mut self) {
+        unsafe {
+            (self.fns.make_current)(self.dpy, std::ptr::null_mut(), std::ptr::null_mut(), std::ptr::null_mut());
+            if !self.surf.is_null() {
+                (self.fns.destroy_surface)(self.dpy, self.surf);
+            }
+            (self.fns.destroy_context)(self.dpy, self.ctx);
+            (self.fns.terminate)(self.dpy);
+        }
     }
 }
 

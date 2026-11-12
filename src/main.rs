@@ -43,8 +43,8 @@ const HELP: &str = "dynamic-island [--config CESTA] [--check] [--snapshot ADRES�
 
   --config CESTA      konfigurácia (predvolene ~/.config/dynamic-island/config.toml)
   --check             skontroluje konfiguráciu a skončí
-  --drun              spúšťač aplikácií (ako rofi -show drun): bežiaci ostrovček sa premení na okno v strede obrazovky,
-                      po zatvorení sa lišta vráti hore; ak je nejaký panel otvorený, povel ho zatvorí
+  --drun              spúšťač aplikácií (ako rofi -show drun): bežiaci ostrovček otvorí samostatné okno v strede obrazovky,
+                      lišta hore ostáva viditeľná; ak je okno otvorené, povel ho zatvorí
   --action NAZOV      to isté pre iný panel alebo vlastné menu (sysmenu, trash, quickset, quickset:wifi, wallpaper, …)
   --clip              to isté pre históriu schránky (cliphist)
   --drun-list         vypíše všetky nájdené .desktop súbory a prečo sa niektoré nezobrazia

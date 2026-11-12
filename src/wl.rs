@@ -137,6 +137,9 @@ impl Wl {
             queue.blocking_dispatch(&mut st).map_err(|e| format!("dispatch: {e}"))?;
         }
         queue.roundtrip(&mut st).map_err(|e| format!("roundtrip: {e}"))?;
+        if st.closed {
+            return Err("kompozitor zatvoril povrch".to_string());
+        }
         // surface.enter príde až po prvom bufferi; dovtedy odhadni mierku podľa výstupov
         if let Some(m) = st.outputs.values().max() {
             st.scale = (*m).max(1);
@@ -161,11 +164,14 @@ impl Wl {
         self.st.scale_dirty = false;
     }
 
-    /// Za behu prepne povrch medzi lištou (kotva hore) a oknom v strede obrazovky (bez kotvy, exkluzívna zóna −1).
-    /// Zmena sa uplatní až pri ďalšom `commit` (nasledujúci `eglSwapBuffers`), takže sa spolu s ňou objaví aj nový obsah.
-    pub fn set_centered(&mut self, on: bool) {
-        self.st.layer.set_anchor(if on { Anchor::empty() } else { Anchor::Top });
-        self.st.layer.set_exclusive_zone(if on { -1 } else { 0 });
+    /// Odošle čakajúce požiadavky (okno v strede sa inak vyprázdni až pri ďalšom `wait_events`, ktorý by mohol prísť neskoro).
+    pub fn flush(&self) {
+        let _ = self.conn.flush();
+    }
+
+    /// Deskriptor Wayland spojenia (na `poll` v hlavnej slučke, keď má proces viac spojení).
+    pub fn fd(&self) -> RawFd {
+        self.conn.backend().poll_fd().as_raw_fd()
     }
 
     /// Výhradné zachytávanie klávesnice len počas písania (heslo); inak ostrovček klávesnicu nechá.
@@ -372,7 +378,10 @@ impl Dispatch<WlKeyboard, ()> for WlState {
 // zachovaj `layer` v štruktúre (zničí sa spolu s Wl)
 impl Drop for Wl {
     fn drop(&mut self) {
+        // najprv wl_egl_window, potom povrch a vrstva; požiadavky sa ešte vyprázdnia, aby okno hneď zmizlo
+        self.egl_win = None;
         self.st.layer.destroy();
         self.st.surface.destroy();
+        let _ = self.conn.flush();
     }
 }
