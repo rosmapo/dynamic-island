@@ -103,10 +103,11 @@ name_size = 18
 # cell_radius = 15        # zaoblenie zvýraznenej bunky
 hover = false            # zvýraznenie bunky pod ukazovateľom
 # search = false          # riadok hľadania vždy viditeľný (písaním sa filtruje aj bez neho)
+search = false
 # terminal = "foot"       # pre aplikácie s Terminal=true
 # icon_theme = ""         # prázdne = téma z nastavení GTK (gtk-icon-theme-name), inak hicolor; napr. "Papirus"
 # desktop = ""            # napr. "Wayfire" pre OnlyShowIn / NotShowIn; prázdne = nekontrolovať
-
+autoclose = true
 
 # ============================================================================
 # 4. MODULY LIŠTY

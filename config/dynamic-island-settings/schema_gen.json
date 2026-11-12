@@ -153,6 +153,15 @@
   "comment": "napr. \"Wayfire\" pre OnlyShowIn / NotShowIn; prázdne = nekontrolovať"
  },
  {
+  "section": "drun",
+  "key": "autoclose",
+  "kind": "bool_or",
+  "default": false,
+  "min": null,
+  "max": null,
+  "comment": "okno v strede (drun aj panely zvonka) sa zatvorí odchodom myši z panela; oneskorenie určuje [island] collapse_delay_ms"
+ },
+ {
   "section": "island",
   "key": "font_scale",
   "kind": "f64_or",

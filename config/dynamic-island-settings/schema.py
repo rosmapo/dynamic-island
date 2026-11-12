@@ -47,6 +47,7 @@ LABELS = {
     ('drun', 'radius'): 'Zaoblenie okna', ('drun', 'opacity'): 'Krytie okna (−1 = ako ostrovček)',
     ('drun', 'order'): 'Zoraďovanie', ('drun', 'terminal'): 'Terminál pre aplikácie s Terminal=true',
     ('drun', 'icon_theme'): 'Téma ikon (prázdne = podľa GTK)', ('drun', 'desktop'): 'Pracovné prostredie (OnlyShowIn)',
+    ('drun', 'autoclose'): 'Zatvoriť odchodom myši (aj panely v strede)',
     ('clock', 'format'): 'Formát času (strftime)', ('clock', 'locale'): 'Jazyk (locale)',
     ('network', 'interface'): 'Sieťové rozhranie', ('network', 'icons'): 'Ikony sily signálu (od najslabšej)',
     ('network', 'icon_ethernet'): 'Ikona ethernetu', ('network', 'icon_disconnected'): 'Ikona nepripojené',

@@ -152,6 +152,8 @@ pub struct DrunCfg {
     pub icon_theme: String,
     /// názov prostredia pre OnlyShowIn / NotShowIn (prázdne = nekontrolovať)
     pub desktop: String,
+    /// okno v strede (spúšťač aj panely zvonka) sa zatvorí odchodom myši z panela – rovnako ako panely v ostrovčeku
+    pub autoclose: bool,
 }
 
 impl DrunCfg {
@@ -178,6 +180,8 @@ impl DrunCfg {
             terminal: d.str_or("terminal", "foot"),
             icon_theme: d.str_or("icon_theme", ""),
             desktop: d.str_or("desktop", ""),
+            // `true` aj `"true"` (v úvodzovkách); všetko ostatné = vypnuté
+            autoclose: d.get("autoclose").map(|v| v.as_bool().unwrap_or_else(|| v.as_str().map(|s| s.trim().eq_ignore_ascii_case("true")).unwrap_or(false))).unwrap_or(false),
         }
     }
 }

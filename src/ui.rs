@@ -2821,8 +2821,9 @@ impl Ui {
         self.hover = None;
         self.tip_pending = None;
         // práve otvorený panel (kliknutím na modul / položku menu): nový panel býva menší ako ostrovček,
-        // takže myš po kliku zvyčajne skončí mimo neho – odchod sa ignoruje, kým do panela nevstúpi
-        if self.grace.is_some() || self.panel == Panel::Media || self.centered {
+        // takže myš po kliku zvyčajne skončí mimo neho – odchod sa ignoruje, kým do panela nevstúpi.
+        // Okno v strede (spúšťač, panely zvonka) sa odchodom myši zatvára len s `[drun] autoclose = true`
+        if self.grace.is_some() || self.panel == Panel::Media || (self.centered && !self.cfg.drun.autoclose) {
             return;
         }
         // počas písania hesla panel nezatvárame (zavrie ho Esc / odoslanie); rovnako pri rozpísanom filtri schránky
@@ -6174,6 +6175,68 @@ mod tests {
         // skutočné zatvorenie: okamžité (bez animácie) a proces skončí
         assert_eq!(ui.cal_t.x, 0.0);
         assert!(!ui.is_centered());
+    }
+
+    /// Ui ako `menu_ui`, ale s `[drun]` obsahujúcim `drun_cfg` (napr. `autoclose = true`).
+    fn menu_ui_drun(drun_cfg: &str) -> Ui {
+        let src = format!("[drun]\n{drun_cfg}\n[[menu]]\nname=\"sysmenu\"\n[[menu.item]]\nlabel=\"A\"\ncommand=\"module:trash\"\n");
+        let t = crate::toml::parse(&src).unwrap();
+        let cfg = Config::from_table(&t, std::path::PathBuf::new());
+        let theme = Theme::load(&cfg);
+        Ui::new(cfg, theme, 1.0)
+    }
+
+    #[test]
+    fn centered_window_ignores_pointer_leave_by_default() {
+        let mut ui = menu_ui();
+        ui.external_action("sysmenu");
+        assert!(ui.is_centered() && ui.panel != Panel::None);
+        let now = Instant::now();
+        ui.pointer_leave(now);
+        assert!(ui.collapse_at.is_none(), "bez autoclose odchod myši okno v strede nezatvára");
+        ui.tick(now + Duration::from_secs(10));
+        assert!(ui.panel != Panel::None);
+    }
+
+    #[test]
+    fn centered_window_closes_on_pointer_leave_with_autoclose() {
+        for val in ["autoclose = true", "autoclose = \"true\""] {
+            let mut ui = menu_ui_drun(val);
+            assert!(ui.cfg.drun.autoclose, "{val}");
+            ui.external_action("sysmenu");
+            assert!(ui.is_centered() && ui.panel != Panel::None);
+            let now = Instant::now();
+            ui.pointer_leave(now);
+            assert!(ui.collapse_at.is_some(), "odchod myši naplánuje zatvorenie");
+            ui.tick(now + Duration::from_millis(ui.cfg.collapse_ms + 10));
+            assert_eq!(ui.panel, Panel::None);
+            let mut text = text_dummy();
+            ui.update(1.0 / 60.0, now, &mut text);
+            assert!(!ui.is_centered());
+        }
+    }
+
+    #[test]
+    fn autoclose_is_cancelled_when_pointer_returns() {
+        let mut ui = menu_ui_drun("autoclose = true");
+        ui.external_action("sysmenu");
+        let mut text = text_dummy();
+        ui.update(1.0 / 60.0, Instant::now(), &mut text);
+        let now = Instant::now();
+        ui.pointer_leave(now);
+        assert!(ui.collapse_at.is_some());
+        // myš sa vráti na panel (stred povrchu): zatvorenie sa zruší
+        let (cx, cy) = (ui.pill.x + ui.pill.w * 0.5, ui.pill.y + ui.pill.h * 0.5);
+        ui.pointer_move(cx, cy, now);
+        assert!(ui.collapse_at.is_none());
+    }
+
+    #[test]
+    fn autoclose_off_by_default_in_config() {
+        let t = crate::toml::parse("[drun]\ncolumns = 3\n").unwrap();
+        assert!(!Config::from_table(&t, std::path::PathBuf::new()).drun.autoclose);
+        let t = crate::toml::parse("[drun]\nautoclose = \"nie\"\n").unwrap();
+        assert!(!Config::from_table(&t, std::path::PathBuf::new()).drun.autoclose);
     }
 
     #[test]
