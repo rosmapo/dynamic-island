@@ -2212,7 +2212,9 @@ impl Ui {
             }
             return;
         }
-        self.grace = None;
+        // myš môže byť pri otvorení kdekoľvek (spúšťač z .desktop súboru): s `[drun] autoclose` sa okno zatvára
+        // odchodom myši až po tom, čo do panela vstúpila (odklad `grace` zruší prvý pohyb nad panelom)
+        self.start_grace(Instant::now());
     }
 
     /// Klávesnicu sa nepodarilo použiť (chýba mapa kláves) – zadávanie hesla sa zruší
@@ -2309,7 +2311,11 @@ impl Ui {
         // prepnutie z mriežky na panel animujú pružiny
         if let Some(name) = panel_target(&cmd) {
             self.collapse_at = None;
-            return self.run_module(&name);
+            let a = self.run_module(&name);
+            // nový panel býva menší ako mriežka a myš ostane tam, kde sa kliklo: jej odchod okno nezatvorí,
+            // kým do nového panela nevstúpi (ako pri ostatných cestách otvorenia panela)
+            self.start_grace(Instant::now());
+            return a;
         }
         self.set_panel(Panel::None);
         self.collapse_at = None;
@@ -2654,6 +2660,11 @@ impl Ui {
         }
     }
 
+    /// Pružiny veľkosti panela dobehli (`pill` už nemení rozmer).
+    fn panel_settled(&self) -> bool {
+        self.cal_t.settled() && self.hw_w.settled() && self.hw_h.settled() && self.panel_w.settled() && self.panel_h.settled()
+    }
+
     /// Po otvorení veľkého panela dostane myš čas dôjsť k nemu (pozri `pointer_leave`).
     fn start_grace(&mut self, now: Instant) {
         self.grace = if self.big_open() { Some(now + Duration::from_millis(500)) } else { None };
@@ -2781,7 +2792,9 @@ impl Ui {
         let h = self.hit_at(x, y);
         // odklad zruší až vstup myši do panela, a to až po dobehnutí animácie jeho veľkosti
         // (počas nej ešte pohyb zasahuje starý rozmer ostrovčeka)
-        if h.is_some() && self.grace.map(|t| now >= t).unwrap_or(false) {
+        // V okne v strede navyše panel musí mať ustálenú veľkosť: pri prepnutí z väčšieho panela (drun → menu) sa
+        // `pill` ešte zmenšuje, takže myš „nad ním“ by o chvíľu ostala mimo a odchod by okno hneď zatvoril.
+        if h.is_some() && self.grace.map(|t| now >= t).unwrap_or(false) && (!self.centered || self.panel_settled()) {
             self.grace = None;
         }
         if h == self.hover {
@@ -6198,6 +6211,15 @@ mod tests {
         assert!(ui.panel != Panel::None);
     }
 
+    /// Pružiny dobehnú a `pill` sa nastaví na pevný obdĺžnik (v teste sa `build` nevolá).
+    fn open_settled(ui: &mut Ui, text: &mut crate::text::Text, now: Instant) -> (f32, f32) {
+        for _ in 0..300 {
+            ui.update(1.0 / 60.0, now, text);
+        }
+        ui.pill = Rect::new(100.0, 100.0, 400.0, 300.0);
+        (300.0, 250.0)
+    }
+
     #[test]
     fn centered_window_closes_on_pointer_leave_with_autoclose() {
         for val in ["autoclose = true", "autoclose = \"true\""] {
@@ -6205,14 +6227,18 @@ mod tests {
             assert!(ui.cfg.drun.autoclose, "{val}");
             ui.external_action("sysmenu");
             assert!(ui.is_centered() && ui.panel != Panel::None);
-            let now = Instant::now();
-            ui.pointer_leave(now);
-            assert!(ui.collapse_at.is_some(), "odchod myši naplánuje zatvorenie");
-            ui.tick(now + Duration::from_millis(ui.cfg.collapse_ms + 10));
-            assert_eq!(ui.panel, Panel::None);
             let mut text = text_dummy();
-            ui.update(1.0 / 60.0, now, &mut text);
-            assert!(!ui.is_centered());
+            let now = Instant::now();
+            let (cx, cy) = open_settled(&mut ui, &mut text, now);
+            // myš najprv vstúpi do (ustáleného) panela po odklade, až potom jej odchod zatvára okno
+            let t = now + Duration::from_millis(600);
+            ui.pointer_move(cx, cy, t);
+            ui.pointer_leave(t);
+            assert!(ui.collapse_at.is_some(), "odchod myši naplánuje zatvorenie");
+            ui.tick(t + Duration::from_millis(ui.cfg.collapse_ms + 10));
+            assert_eq!(ui.panel, Panel::None);
+            ui.update(1.0 / 60.0, t, &mut text);
+            assert!(!ui.is_centered() || ui.panel == Panel::None);
         }
     }
 
@@ -6221,14 +6247,95 @@ mod tests {
         let mut ui = menu_ui_drun("autoclose = true");
         ui.external_action("sysmenu");
         let mut text = text_dummy();
-        ui.update(1.0 / 60.0, Instant::now(), &mut text);
         let now = Instant::now();
-        ui.pointer_leave(now);
+        let (cx, cy) = open_settled(&mut ui, &mut text, now);
+        let t = now + Duration::from_millis(600);
+        ui.pointer_move(cx, cy, t);
+        ui.pointer_leave(t);
         assert!(ui.collapse_at.is_some());
-        // myš sa vráti na panel (stred povrchu): zatvorenie sa zruší
-        let (cx, cy) = (ui.pill.x + ui.pill.w * 0.5, ui.pill.y + ui.pill.h * 0.5);
-        ui.pointer_move(cx, cy, now);
+        // myš sa vráti na panel: zatvorenie sa zruší
+        ui.pointer_move(cx, cy, t);
         assert!(ui.collapse_at.is_none());
+    }
+
+    #[test]
+    fn autoclose_waits_until_pointer_entered_panel() {
+        // okno otvorené z .desktop súboru: myš je inde, panel ostane otvorený, kým do neho nevstúpi
+        let mut ui = menu_ui_drun("autoclose = true");
+        ui.external_action("sysmenu");
+        let mut text = text_dummy();
+        let now = Instant::now();
+        let (cx, cy) = open_settled(&mut ui, &mut text, now);
+        // odchod bez predošlého vstupu do panela (aj dlho po otvorení) okno nezatvára
+        ui.pointer_leave(now + Duration::from_millis(50));
+        assert!(ui.collapse_at.is_none());
+        ui.pointer_leave(now + Duration::from_secs(5));
+        assert!(ui.collapse_at.is_none());
+        // pohyb mimo panela (prechod cez priehľadný povrch) odklad nezruší
+        ui.pointer_move(10.0, 10.0, now + Duration::from_secs(6));
+        ui.pointer_leave(now + Duration::from_secs(6));
+        assert!(ui.collapse_at.is_none());
+        ui.tick(now + Duration::from_secs(60));
+        assert!(ui.panel != Panel::None);
+        // po vstupe do panela už odchod zatvára
+        ui.pointer_move(cx, cy, now + Duration::from_secs(7));
+        ui.pointer_leave(now + Duration::from_secs(8));
+        assert!(ui.collapse_at.is_some());
+    }
+
+    #[test]
+    fn drun_launch_of_own_panel_waits_for_pointer() {
+        // klik na položku drun s `Exec=dynamic-island --action sysmenu`: panel sa otvorí v tom istom okne,
+        // myš ostane na mieste kliku (mimo menšieho panela) a okno sa nesmie zatvoriť
+        let mut ui = menu_ui_drun("autoclose = true");
+        ui.external_action("drun");
+        assert_eq!(ui.panel, Panel::Drun);
+        let exe = std::env::current_exe().unwrap().file_name().unwrap().to_string_lossy().to_string();
+        ui.drun_apps = vec![crate::desktop::App {
+            name: "A".into(),
+            generic: String::new(),
+            keywords: String::new(),
+            exec: format!("{exe} --action sysmenu"),
+            icon: String::new(),
+            terminal: false,
+        }];
+        ui.drun_hits = vec![0];
+        let mut text = text_dummy();
+        let now = Instant::now();
+        let (cx, cy) = open_settled(&mut ui, &mut text, now);
+        ui.pointer_move(cx, cy, now + Duration::from_secs(1));
+        assert!(ui.grace.is_none(), "v drun myš je a panel je ustálený");
+        let _ = ui.drun_launch(0);
+        assert!(matches!(ui.panel, Panel::Menu(0)), "otvorilo sa menu v tom istom okne");
+        assert!(ui.grace.is_some(), "po otvorení z drun sa čaká na vstup myši do nového panela");
+        ui.pointer_leave(now + Duration::from_secs(2));
+        assert!(ui.collapse_at.is_none());
+        ui.tick(now + Duration::from_secs(30));
+        assert!(matches!(ui.panel, Panel::Menu(0)));
+    }
+
+    #[test]
+    fn autoclose_not_armed_while_panel_is_resizing() {
+        // drun → menu v jednom okne: panel sa ešte zmenšuje, myš nad ním (po 500 ms) odklad nezruší
+        let mut ui = menu_ui_drun("autoclose = true");
+        ui.external_action("sysmenu");
+        let mut text = text_dummy();
+        let now = Instant::now();
+        ui.update(1.0 / 60.0, now, &mut text);
+        ui.pill = Rect::new(100.0, 100.0, 400.0, 300.0);
+        assert!(!ui.panel_settled(), "pružiny po prvom kroku ešte nedobehli");
+        ui.pointer_move(300.0, 250.0, now + Duration::from_millis(700));
+        ui.pointer_leave(now + Duration::from_millis(800));
+        assert!(ui.collapse_at.is_none(), "kým sa panel mení, odchod myši okno nezatvára");
+        // po ustálení a ďalšom pohybe nad panelom je zatváranie odchodom myši zapnuté
+        for _ in 0..300 {
+            ui.update(1.0 / 60.0, now, &mut text);
+        }
+        ui.pill = Rect::new(100.0, 100.0, 400.0, 300.0);
+        assert!(ui.panel_settled());
+        ui.pointer_move(300.0, 250.0, now + Duration::from_secs(3));
+        ui.pointer_leave(now + Duration::from_secs(4));
+        assert!(ui.collapse_at.is_some());
     }
 
     #[test]
