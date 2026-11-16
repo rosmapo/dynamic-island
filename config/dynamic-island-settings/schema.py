@@ -76,7 +76,7 @@ LABELS = {
     ('monitor', 'night_switcher'): 'Skript nočného režimu', ('monitor', 'night_state'): 'Príkaz stavu nočného režimu', ('monitor', 'night_label'): 'Popis nočného režimu',
     ('night', 'enabled'): 'Zapnúť natívny nočný režim', ('night', 'temperature'): 'Teplota v nočnom režime (K)',
     ('night', 'fade_ms'): 'Trvanie plynulého prechodu (ms)', ('night', 'start_on'): 'Ručne zapnúť po štarte',
-    ('night', 'schedule'): 'Automatika (none / sun / fixed)', ('night', 'latitude'): 'Zemepisná šírka (pre sun)', ('night', 'longitude'): 'Zemepisná dĺžka (pre sun)',
+    ('night', 'schedule'): 'Automatika (none = len ručne, sun = podľa slnka, fixed = pevný čas)', ('night', 'latitude'): 'Zemepisná šírka (pre sun)', ('night', 'longitude'): 'Zemepisná dĺžka (pre sun)',
     ('night', 'start'): 'Začiatok noci (fixed, HH:MM)', ('night', 'end'): 'Koniec noci (fixed, HH:MM)',
     ('night', 'transition_minutes'): 'Plynulý prechod (minúty)', ('night', 'auto'): 'Automatika zapnutá po štarte',
     ('capture', 'mode'): 'Predvolená oblasť', ('capture', 'kind'): 'Predvolený typ', ('capture', 'format'): 'Formát obrázka', ('capture', 'video_ext'): 'Prípona videa',
@@ -104,7 +104,7 @@ CHOICES = {
     ('capture', 'mode'): ['screen', 'window', 'region'], ('capture', 'kind'): ['image', 'video'],
     ('capture', 'format'): ['png', 'jpeg'], ('capture', 'video_ext'): ['mp4', 'mkv', 'webm'],
     ('quickset', 'tabs_position'): ['left', 'right', 'top', 'bottom'], ('notifications', 'align'): ['center', 'left'],
-    ('system', 'decimal'): [',', '.'],
+    ('system', 'decimal'): [',', '.'], ('night', 'schedule'): ['none', 'sun', 'fixed'],
 }
 
 TYPE_OVERRIDE = {('island', 'colors_file'): 'path', ('wallpaper', 'directory'): 'path', ('wallpaper', 'cache_dir'): 'path',
@@ -114,7 +114,8 @@ TYPE_OVERRIDE = {('island', 'colors_file'): 'path', ('wallpaper', 'directory'): 
                  ('monitor', 'night_switcher'): 'command', ('monitor', 'night_state'): 'command',
                  ('brightness', 'get'): 'command', ('brightness', 'set'): 'command', ('drun', 'terminal'): 'command',
                  ('drun', 'opacity'): 'float', ('island', 'opacity'): 'float', ('audio', 'limit'): 'float',
-                 ('quickset', 'inversetab_gap'): 'int'}
+                 ('quickset', 'inversetab_gap'): 'int',
+                 ('night', 'latitude'): 'float', ('night', 'longitude'): 'float'}
 
 # kľúče, ktoré kód číta inak než cez `*_or` (v schema_gen.json nie sú)
 EXTRA = [

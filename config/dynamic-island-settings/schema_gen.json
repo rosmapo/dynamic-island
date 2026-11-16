@@ -1234,6 +1234,42 @@
  },
  {
   "section": "night",
+  "key": "enabled",
+  "kind": "bool_or",
+  "default": false,
+  "min": null,
+  "max": null,
+  "comment": "true = zapnúť natívny nočný režim (inak sa použije night_switcher z [monitor])"
+ },
+ {
+  "section": "night",
+  "key": "temperature",
+  "kind": "f64_or",
+  "default": 3500.0,
+  "min": 1000.0,
+  "max": 6500.0,
+  "comment": "teplota v nočnom režime, K (1000–6500)"
+ },
+ {
+  "section": "night",
+  "key": "fade_ms",
+  "kind": "f64_or",
+  "default": 1500.0,
+  "min": 0.0,
+  "max": 30000.0,
+  "comment": "rýchly prechod pri ručnom prepnutí, ms (0 = naraz)"
+ },
+ {
+  "section": "night",
+  "key": "start_on",
+  "kind": "bool_or",
+  "default": false,
+  "min": null,
+  "max": null,
+  "comment": "ručný stav po štarte (inak sa pamätá posledný do odhlásenia)"
+ },
+ {
+  "section": "night",
   "key": "schedule",
   "kind": "str_or",
   "default": "none",
@@ -1276,42 +1312,6 @@
   "min": null,
   "max": null,
   "comment": ""
- },
- {
-  "section": "night",
-  "key": "enabled",
-  "kind": "bool_or",
-  "default": false,
-  "min": null,
-  "max": null,
-  "comment": "true = zapnúť natívny nočný režim (inak sa použije night_switcher z [monitor])"
- },
- {
-  "section": "night",
-  "key": "temperature",
-  "kind": "f64_or",
-  "default": 3500.0,
-  "min": 1000.0,
-  "max": 6500.0,
-  "comment": "teplota v nočnom režime, K (1000–6500)"
- },
- {
-  "section": "night",
-  "key": "fade_ms",
-  "kind": "f64_or",
-  "default": 1500.0,
-  "min": 0.0,
-  "max": 30000.0,
-  "comment": "rýchly prechod pri ručnom prepnutí, ms (0 = naraz)"
- },
- {
-  "section": "night",
-  "key": "start_on",
-  "kind": "bool_or",
-  "default": false,
-  "min": null,
-  "max": null,
-  "comment": "ručný stav po štarte (inak sa pamätá posledný do odhlásenia)"
  },
  {
   "section": "night",

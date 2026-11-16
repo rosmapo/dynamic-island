@@ -36,7 +36,7 @@ TABS = [
       ('inhibitor', 'Zákaz uspania'), ('capslock', 'Caps Lock'), ('disks', 'Externé disky')]),
     ('panely', 'Panely', 'preferences-system-symbolic',
      [('clipboard', 'Schránka'), ('trash', 'Kôš'), ('wallpaper', 'Tapety'), ('wifi', 'Wi-Fi'),
-      ('bluetooth', 'Bluetooth'), ('monitor', 'Monitor'), ('capture', 'Snímanie'),
+      ('bluetooth', 'Bluetooth'), ('monitor', 'Monitor'), ('night', 'Nočný režim'), ('capture', 'Snímanie'),
       ('notifications', 'Notifikácie')]),
     ('vlastne', 'Vlastné', 'document-edit-symbolic',
      [('menu', 'Vlastné menu'), ('custom', 'Vlastné moduly')]),
@@ -138,6 +138,7 @@ class Window(Adw.ApplicationWindow):
         self.rows = []             # (binding, reset_btn)
         self.current_tab = TABS[0][0]
         self.current_sec = None
+        self.menu_sel_index = None  # vybrané menu (poradie) – prežije uloženie / načítanie znova
         self.icon_font = (model.value('island', 'icon_family') or ['Symbols Nerd Font Mono'])[0]
         self._sidebar_rows = {}    # sec -> ListBoxRow
         self._filling_sidebar = False
@@ -518,6 +519,7 @@ class Window(Adw.ApplicationWindow):
 
         def show_detail(rec):
             state['selected'] = rec
+            self.menu_sel_index = next((i for i, r in enumerate(recs) if r is rec), None)
             # clear detail_host
             while True:
                 c = detail_host.get_first_child()
@@ -649,9 +651,11 @@ class Window(Adw.ApplicationWindow):
             show_detail(new)
 
         add_menu_btn.connect('clicked', add_menu)
+        want = self.menu_sel_index  # po uložení zostane vybrané to isté menu, nie prvé v zozname
         rebuild_menu_list()
         if recs:
-            menu_lb.select_row(menu_lb.get_row_at_index(0))
+            idx = want if want is not None and 0 <= want < len(recs) else 0
+            menu_lb.select_row(menu_lb.get_row_at_index(idx))
         return outer
 
     # ============================================================ ostatné polia tabuliek (custom, rules)
