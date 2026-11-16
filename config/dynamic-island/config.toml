@@ -305,7 +305,7 @@ width = 350
 font_size = 17
 night_switcher = "~/.config/dynamic-island/scripts/bluelight.sh"
 night_state    = "pgrep -x wlsunset"     # voliteľné
-night_label    = "Filter modráho svetla"           # voliteľné
+night_label    = "Automatický nočný režim"           # voliteľné
 # voliteľné (predvolené sú pre tvoj Iiyama):
 # presets = [5, 6, 8]
 # preset_labels = ["6500 K", "7500 K", "9300 K"]
