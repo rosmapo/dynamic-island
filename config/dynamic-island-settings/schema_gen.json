@@ -1234,12 +1234,57 @@
  },
  {
   "section": "night",
+  "key": "schedule",
+  "kind": "str_or",
+  "default": "none",
+  "min": null,
+  "max": null,
+  "comment": "\"sun\" = noc od západu do východu slnka podľa polohy, \"fixed\" = od `start` do `end`"
+ },
+ {
+  "section": "night",
+  "key": "latitude",
+  "kind": "f64_or",
+  "default": 0.0,
+  "min": -90.0,
+  "max": 90.0,
+  "comment": "pre \"sun\""
+ },
+ {
+  "section": "night",
+  "key": "longitude",
+  "kind": "f64_or",
+  "default": 0.0,
+  "min": -180.0,
+  "max": 180.0,
+  "comment": ""
+ },
+ {
+  "section": "night",
+  "key": "start",
+  "kind": "str_or",
+  "default": "20:00",
+  "min": null,
+  "max": null,
+  "comment": "pre \"fixed\""
+ },
+ {
+  "section": "night",
+  "key": "end",
+  "kind": "str_or",
+  "default": "07:00",
+  "min": null,
+  "max": null,
+  "comment": ""
+ },
+ {
+  "section": "night",
   "key": "enabled",
   "kind": "bool_or",
   "default": false,
   "min": null,
   "max": null,
-  "comment": "true = zapnúť natívny nočný režim"
+  "comment": "true = zapnúť natívny nočný režim (inak sa použije night_switcher z [monitor])"
  },
  {
   "section": "night",
@@ -1257,7 +1302,7 @@
   "default": 1500.0,
   "min": 0.0,
   "max": 30000.0,
-  "comment": "trvanie plynulého prechodu, ms (0 = naraz)"
+  "comment": "rýchly prechod pri ručnom prepnutí, ms (0 = naraz)"
  },
  {
   "section": "night",
@@ -1266,7 +1311,25 @@
   "default": false,
   "min": null,
   "max": null,
-  "comment": "zapnúť po štarte (inak sa pamätá posledný stav do odhlásenia)"
+  "comment": "ručný stav po štarte (inak sa pamätá posledný do odhlásenia)"
+ },
+ {
+  "section": "night",
+  "key": "transition_minutes",
+  "kind": "f64_or",
+  "default": 30.0,
+  "min": 0.0,
+  "max": 240.0,
+  "comment": "plynulý prechod, ktorý začína o západe / východe (resp. start / end)"
+ },
+ {
+  "section": "night",
+  "key": "auto",
+  "kind": "bool_or",
+  "default": true,
+  "min": null,
+  "max": null,
+  "comment": "automatika je po štarte zapnutá (inak sa pamätá posledný stav)"
  },
  {
   "section": "quickset",

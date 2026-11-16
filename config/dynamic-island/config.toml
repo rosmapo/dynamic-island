@@ -9,7 +9,7 @@
 # ============================================================================
 
 # poradie modulov (ako group/island vo waybare)
-modules = ["network", "vpn", "clock", "keyboard", "audio", "radio", "media", "capslock", "inhibitor", "recorder", "disks"]
+modules = ["network", "vpn", "clock", "keyboard", "audio", "radio", "tv", "media", "capslock", "inhibitor", "recorder", "disks"]
 
 
 # ============================================================================
@@ -28,7 +28,7 @@ radius      = 17        # zbalený (kapsula)
 radius_expanded = 20    # s kalendárom / tooltipom
 opacity     = 0.7      # krytie pozadia (ako alpha(@surface, 0.75))
 shadow      = true
-surface_width  = 760    # priehľadný povrch; myš prijíma len samotný ostrovček
+surface_width  = 900    # priehľadný povrch; myš prijíma len samotný ostrovček
 surface_height = 580
 tooltip_delay_ms  = 450
 collapse_delay_ms = 200
@@ -177,6 +177,12 @@ icon = ""
 tooltip = "{name}"   # {name} = label položky
 on_click_right = "radio"
 
+[tv]                 # voliteľné
+icon = "󰟴"
+tooltip = ""   # {name} = label položky
+on_click_right = "tv"
+
+
 [recorder]
 on_click = "capture-stop"
 
@@ -258,13 +264,13 @@ show_date = true
 
 [wallpaper]
 directory = "~/.config/wayfire/media/wallpaper"
-columns = 4
+columns = 5
 rows = 4
 thumb_width = 160
 command = "~/.config/wayfire/scripts/wallpaper"
 cache_dir = "~/.cache/wallpaper-chooser"
 themes_directory = "~/.config/matugen/themes"
-theme_width = 190
+theme_width = 230
 hover_ring = false     # rámik okolo náhľadu pod kurzorom
 current_ring = false   # rámik okolo aktuálne nastavenej tapety
 # button_max_width = 120
@@ -295,7 +301,6 @@ scan_ms = 4000
 
 [monitor]
 bus = "10"
-# native = true          # priamy DDC/CI cez /dev/i2c-N (false = vždy ddcutil)
 width = 350
 font_size = 17
 night_switcher = "~/.config/dynamic-island/scripts/bluelight.sh"
@@ -306,16 +311,21 @@ night_label    = "Filter modráho svetla"           # voliteľné
 # preset_labels = ["6500 K", "7500 K", "9300 K"]
 # inputs = [15, 17]
 # input_labels = ["DisplayPort", "HDMI"]
-
 # Nočný režim obrazovky (teplejšie farby), prepína sa ručne – prepínačom v paneli monitor, tlačidlom
 # (`on_click = "night-toggle"`) alebo klávesovou skratkou `dynamic-island --night toggle` (aj on / off / get).
 # Beží priamo v ostrovčeku cez wlr-gamma-control; ak je zapnutý, `night_switcher` v [monitor] sa nepoužije.
 # Pozor: naraz môže gamma držať len jeden program – vypni wlsunset / gammastep.
 [night]
-enabled = false          # true = zapnúť natívny nočný režim
-# temperature = 3500     # teplota v nočnom režime, K (1000–6500)
-# fade_ms = 1500         # trvanie plynulého prechodu, ms (0 = naraz)
-# start_on = false       # zapnúť po štarte (inak sa pamätá posledný stav do odhlásenia)
+enabled = true
+schedule = "sun"          # "sun" alebo "fixed"
+latitude = 48.99			# pre "sun"
+longitude = 21.23
+start = "07:00"         # pre "fixed"
+end = "21:00"
+transition_minutes = 10   # plynulý prechod, začína o západe / východe
+temperature = 4500
+fade_ms = 1500            # rýchly prechod pri ručnom prepnutí
+# auto = true             # automatika po štarte
 
 # Snímka obrazovky / nahrávanie videa (grim, slurp, wf-recorder). Otvorí sa akciou "capture"
 # (položka menu `module:capture`, záložka kontajnera `tab9 = "capture"`, tlačidlo `inversetab`).
@@ -482,9 +492,11 @@ exec = "builtin:disk:/media/mm/backup"   # uprav na svoj pripojný bod
 separator = "center"
 
 # [[menu.item]]
-# label = "Teplota: {}"
+# line = "Teplota: {}"
 # exec = "builtin:temp"                     # builtin:temp:NÁZOV = konkrétny snímač (napr. coretemp, nvme)
 # interval = 5
+# [[menu.item]]
+# separator = "center"
 [[menu.item]]
 label = "Kôš {}"
 exec = "~/.config/dynamic-island/scripts/trash.sh"
@@ -524,35 +536,35 @@ gap = 5
 padding = 12
 [[menu.item]]
 label = "Rádio Slovensko"
-command = "mpv https://icecast.stv.livebox.sk/slovensko_128.mp3 --no-config"
+command = "rviewer --nogui https://icecast.stv.livebox.sk/slovensko_128.mp3"
 track = "radio"
 [[menu.item]]
 label = "Rádio Lumen"
-command = "mpv https://audio.lumen.sk/live128.mp3 --no-config"
+command = "rviewer --nogui https://audio.lumen.sk/live128.mp3"
 track = "radio"
 [[menu.item]]
 label = "Rádio Mária"
-command = 'mpv "https://dreamsiteradiocp5.com/proxy/radiomariaslomp3?mp=/stream.mp3" --no-config'
+command = "rviewer --nogui https://dreamsiteradiocp5.com/proxy/radiomariaslomp3?mp=/stream.mp3"
 track = "radio"
 [[menu.item]]
 label = "Rádio 7"
-command = "mpv https://play.radio7.sk/128 --no-config"
+command = "rviewer --nogui https://play.radio7.sk/128"
 track = "radio"
 [[menu.item]]
 separator = "center"
 [[menu.item]]
 label = "Fun 80.90.Roky"
-command = "mpv http://stream.funradio.sk:8000/80-90-128.mp3 --no-config"
+command = "rviewer --nogui http://stream.funradio.sk:8000/80-90-128.mp3"
 track = "radio"
 [[menu.item]]
 label = "Rádio Melody"
-command = "mpv https://stream.bauermedia.sk/melody-hi.mp3 --no-config"
+command = "rviewer --nogui https://stream.bauermedia.sk/melody-hi.mp3"
 track = "radio"
 [[menu.item]]
 separator = "center"
 [[menu.item]]
 label = "Slobodný vysielač"
-command = "mpv https://vysielanie.online/radio/8020/SV128.mp3 --no-config"
+command = "rviewer --nogui https://vysielanie.online/radio/8020/SV128.mp3"
 track = "radio"
 [[menu.item]]
 line = ""
@@ -604,3 +616,66 @@ separator = "top"
 [[menu.item]]
 icon = "themes.png"
 command = "module:wallpaper"
+
+### TV #####################################################################
+[[menu]]
+name = "tv"
+title = "TV"
+icon_columns = 4
+#rows = 5
+icon_size = 64
+text_size = 17
+cell_width = 130
+gap = 10
+padding = 10
+columns = 4
+type = "icons"
+text_columns = 1
+[[menu.item]]
+icon = "01-rtvs1.png"
+command = "rviewer http://88.212.15.50/live/test_jednotka_25p/playlist.m3u8"
+track = "tv"
+[[menu.item]]
+icon = "02-rtvs2.png"
+command = "rviewer http://88.212.15.50/live/test_dvojka_25p/playlist.m3u8"
+track = "tv"
+[[menu.item]]
+icon = "03-rtvs24.png"
+command = "rviewer http://88.212.15.27/live/test_trojka_25p/playlist.m3u8"
+track = "tv"
+[[menu.item]]
+icon = "04-markiza.png"
+command = "rviewer https://cdnsk003.panaccess.com/local/Markiza/index.m3u8"
+track = "tv"
+[[menu.item]]
+icon = "05-markiza-klasik.png"
+command = "rviewer https://cdnsk003.panaccess.com/local/Markiza_Klasik/index.m3u8"
+track = "tv"
+[[menu.item]]
+icon = "06-joj.png"
+command = "rviewer http://88.212.15.27/live/test_joj_25p/playlist.m3u8"
+track = "tv"
+[[menu.item]]
+icon = "07-ta3.png"
+command = "rviewer https://santovic-test.6f.sk/sktv-forwarders/get.php?x=TA3"
+track = "tv"
+[[menu.item]]
+icon = "08-tv-lux.png"
+command = "rviewer http://live.tvlux.sk:1935/lux/lux.stream/playlist.m3u8"
+track = "tv"
+[[menu.item]]
+icon = "09-duck-plus.png"
+command = "rviewer https://dash3.antik.sk/live/test_duck_plus/playlist.m3u8"
+track = "tv"
+[[menu.item]]
+icon = "10-prima-krimi.png"
+command = "rviewer http://88.212.15.50/live/prima_krimi_avc_25p/playlist.m3u8"
+track = "tv"
+[[menu.item]]
+icon = "11-prima.png"
+command = "rviewer http://88.212.15.50/live/test_prima_plus_25p/playlist.m3u8"
+track = "tv"
+[[menu.item]]
+icon = "12-barrandov-krimi.png"
+command = "rviewer https://dash3.antik.sk/live/test_barrandov_plus_atk_1200/playlist.m3u8"
+track = "tv"

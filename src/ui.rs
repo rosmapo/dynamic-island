@@ -3354,7 +3354,7 @@ impl Ui {
                     let enable = !self.monitor.night;
                     self.monitor.night = enable;
                     if self.cfg.night.enabled {
-                        out.push(Action::Night(crate::night::NightCmd::Set(enable)));
+                        out.push(Action::Night(crate::night::NightCmd::Panel(enable)));
                     } else {
                         out.push(Action::Monitor(crate::monitor::MonitorCmd::SetNight(enable)));
                     }

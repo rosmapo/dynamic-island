@@ -1,10 +1,16 @@
 //! Nočný režim: teplota farieb obrazovky cez `wlr-gamma-control-unstable-v1` (Wayfire, Sway, Hyprland…).
-//! Prepína sa ručne (panel monitor, `dynamic-island --night on|off|toggle`), bez plánu podľa času / polohy.
 //!
-//! Vlákno má vlastné Wayland spojenie, zviaže všetky `wl_output` (aj pripojené neskôr) a pri prepnutí plynulo
-//! prechádza medzi neutrálnou a nočnou teplotou. Pri vypnutí gamma ovládanie uvoľní, takže kompozitor vráti pôvodné
-//! krivky (a uvoľní ich pre iné programy). Naraz môže gamma držať len jeden klient – ak beží `wlsunset`/`gammastep`,
-//! nočný režim sa nezapne.
+//! * **ručne** – `dynamic-island --night on|off|toggle|get`, príkaz `night-toggle` v tlačidle / menu;
+//! * **automaticky** (voliteľne) – podľa pevného času alebo východu / západu slnka z polohy, s plynulým prechodom;
+//!   prepínač v paneli monitor potom zapína / vypína automatiku.
+//!
+//! Pri zapnutej automatike `toggle` (aj `on` / `off`) dočasne prebije jej hodnotu: `toggle` nastaví opak toho, čo
+//! práve vidíš, a druhý `toggle` ho vráti. Ručný zásah platí do najbližšej zmeny automatiky (začiatok / koniec
+//! noci), potom si automatika nastaví svoju hodnotu. Pri vypnutej automatike je `toggle` obyčajné ručné prepnutie.
+//!
+//! Vlákno má vlastné Wayland spojenie, zviaže všetky `wl_output` (aj pripojené neskôr) a mení gamma krivky.
+//! Pri neutrálnej teplote ovládanie uvoľní, takže kompozitor vráti pôvodné krivky. Naraz môže gamma držať len
+//! jeden klient – ak beží `wlsunset`/`gammastep`, nočný režim sa nezapne.
 use crate::config::hud_dir;
 use crate::data::Msg;
 use crate::sys::{self, PollFd, Tx, Waker, POLLIN};
@@ -13,7 +19,6 @@ use std::ffi::{c_char, c_int, c_uint};
 use std::fs::File;
 use std::io::{Seek, Write};
 use std::os::fd::{AsFd, AsRawFd, FromRawFd};
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{mpsc, Arc, OnceLock};
 use std::time::{Duration, Instant};
 use wayland_client::globals::{registry_queue_init, GlobalListContents};
@@ -25,10 +30,22 @@ use wayland_protocols_wlr::gamma_control::v1::client::{
 
 /// Neutrálna teplota (biela bez posunu), kelvin.
 const NEUTRAL_K: f64 = 6500.0;
-/// Interval snímok prechodu (farby netreba viac ako ~30 fps).
+/// Interval snímok rýchleho prechodu (farby netreba viac ako ~30 fps).
 const FRAME: Duration = Duration::from_millis(33);
+/// Ako často sa prepočíta plán, keď beží automatika (pomalý prechod okolo západu stačí po pár sekundách).
+const SCHED_TICK: Duration = Duration::from_secs(5);
 /// Horná medza veľkosti gamma tabuľky (ochrana pred nezmyselnou hodnotou; Intel hlási aj 262145).
 const MAX_RAMP: u32 = 1 << 20;
+const DAY_MIN: f64 = 1440.0;
+
+/// Plán automatiky.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum Schedule {
+    /// noc od západu do východu slnka (poloha z `latitude` / `longitude`)
+    Sun { lat: f64, lon: f64 },
+    /// noc od `start` do `end` (minúty od polnoci, môže prechádzať cez polnoc)
+    Fixed { start: f64, end: f64 },
+}
 
 /// Nastavenia `[night]`.
 #[derive(Clone, Debug, PartialEq)]
@@ -37,19 +54,53 @@ pub struct NightCfg {
     pub enabled: bool,
     /// teplota v nočnom režime, kelvin
     pub temperature: u32,
-    /// trvanie plynulého prechodu, ms (0 = naraz)
+    /// trvanie rýchleho prechodu pri ručnom prepnutí, ms (0 = naraz)
     pub fade_ms: u64,
-    /// po štarte ostrovčeka zapnúť nočný režim
+    /// po štarte (bez zapamätaného stavu) zapnúť ručne nočný režim
     pub start_on: bool,
+    /// plán automatiky (`None` = len ručné prepínanie)
+    pub schedule: Option<Schedule>,
+    /// trvanie plynulého prechodu pri západe / východe, minúty
+    pub transition_min: f64,
+    /// automatika je po štarte (bez zapamätaného stavu) zapnutá
+    pub auto: bool,
+}
+
+/// `HH:MM` → minúty od polnoci.
+pub fn parse_hm(s: &str) -> Option<f64> {
+    let (h, m) = s.trim().split_once(':')?;
+    let (h, m): (u32, u32) = (h.trim().parse().ok()?, m.trim().parse().ok()?);
+    (h < 24 && m < 60).then(|| (h * 60 + m) as f64)
 }
 
 impl NightCfg {
     pub fn from_table(t: &Table) -> NightCfg {
+        let schedule = match t.str_or("schedule", "none").trim() {
+            "sun" => {
+                let lat = t.f64_or("latitude", 0.0).clamp(-90.0, 90.0);
+                let lon = t.f64_or("longitude", 0.0).clamp(-180.0, 180.0);
+                if lat == 0.0 && lon == 0.0 {
+                    eprintln!("dynamic-island: [night] schedule = \"sun\" potrebuje latitude a longitude");
+                }
+                Some(Schedule::Sun { lat, lon })
+            }
+            "fixed" => match (parse_hm(&t.str_or("start", "20:00")), parse_hm(&t.str_or("end", "07:00"))) {
+                (Some(start), Some(end)) if start != end => Some(Schedule::Fixed { start, end }),
+                _ => {
+                    eprintln!("dynamic-island: [night] start / end musia byť rôzne časy HH:MM, automatika sa nepoužije");
+                    None
+                }
+            },
+            _ => None,
+        };
         NightCfg {
             enabled: t.bool_or("enabled", false),
             temperature: t.f64_or("temperature", 3500.0).clamp(1000.0, 6500.0) as u32,
             fade_ms: t.f64_or("fade_ms", 1500.0).clamp(0.0, 30000.0) as u64,
             start_on: t.bool_or("start_on", false),
+            schedule,
+            transition_min: t.f64_or("transition_minutes", 30.0).clamp(0.0, 240.0),
+            auto: t.bool_or("auto", true),
         }
     }
 }
@@ -57,8 +108,12 @@ impl NightCfg {
 /// Povel nočnému režimu.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum NightCmd {
+    /// `on` / `off`: pri zapnutej automatike dočasný zásah, inak ručný stav
     Set(bool),
+    /// opak toho, čo je práve vidieť
     Toggle,
+    /// prepínač v paneli monitor: zapne / vypne automatiku (bez plánu = ručný stav)
+    Panel(bool),
 }
 
 impl NightCmd {
@@ -105,12 +160,6 @@ pub fn lerp_kelvin(from: f64, to: f64, t: f64) -> f64 {
     1.0e6 / (a + (b - a) * t)
 }
 
-/// Plynulý náběh (smoothstep).
-pub fn ease(t: f64) -> f64 {
-    let t = t.clamp(0.0, 1.0);
-    t * t * (3.0 - 2.0 * t)
-}
-
 /// Gamma tabuľka v rozložení wlr-gamma-control: najprv všetky červené, potom zelené, potom modré (`u16`, natívne poradie).
 pub fn fill_ramp(size: usize, kelvin: f64, out: &mut Vec<u8>) {
     out.clear();
@@ -145,42 +194,227 @@ impl Fade {
     }
 }
 
-// ------------------------------------------------------------- ovládanie
-enum Cmd {
-    Set(bool),
+// ------------------------------------------------------------------ plán
+/// Východ a západ slnka (UTC minúty od polnoci) pre polohu a deň v roku (1–366), alebo polárny deň / noc.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum SunDay {
+    Normal { rise: f64, set: f64 },
+    PolarDay,
+    PolarNight,
 }
 
+/// NOAA zjednodušený výpočet (presnosť ~ minúty, stačí na nočný režim).
+pub fn sun_day(lat: f64, lon: f64, yday: f64) -> SunDay {
+    let g = 2.0 * std::f64::consts::PI / 365.0 * (yday - 1.0);
+    let eqtime = 229.18 * (0.000075 + 0.001868 * g.cos() - 0.032077 * g.sin() - 0.014615 * (2.0 * g).cos() - 0.040849 * (2.0 * g).sin());
+    let decl = 0.006918 - 0.399912 * g.cos() + 0.070257 * g.sin() - 0.006758 * (2.0 * g).cos() + 0.000907 * (2.0 * g).sin()
+        - 0.002697 * (3.0 * g).cos()
+        + 0.00148 * (3.0 * g).sin();
+    let la = lat.to_radians();
+    let arg = 90.833_f64.to_radians().cos() / (la.cos() * decl.cos()) - la.tan() * decl.tan();
+    if arg > 1.0 {
+        return SunDay::PolarNight;
+    }
+    if arg < -1.0 {
+        return SunDay::PolarDay;
+    }
+    let ha = arg.acos().to_degrees();
+    SunDay::Normal { rise: 720.0 - 4.0 * (lon + ha) - eqtime, set: 720.0 - 4.0 * (lon - ha) - eqtime }
+}
+
+fn ease(t: f64) -> f64 {
+    let t = t.clamp(0.0, 1.0);
+    t * t * (3.0 - 2.0 * t)
+}
+
+/// Miera noci (0 = deň, 1 = noc) pre noc od `start` do `end` (minúty od polnoci, cez polnoc) s prechodom
+/// `fade` minút, ktorý začína o `start` a o `end`.
+pub fn night_factor(now: f64, start: f64, end: f64, fade: f64) -> f64 {
+    let wrap = |m: f64| m.rem_euclid(DAY_MIN);
+    let night_len = wrap(end - start);
+    if night_len <= 0.0 {
+        return 0.0;
+    }
+    let fade = fade.max(0.0).min(night_len).min(DAY_MIN - night_len);
+    let since_start = wrap(now - start);
+    if since_start < night_len {
+        return if fade > 0.0 { ease(since_start / fade) } else { 1.0 };
+    }
+    let since_end = wrap(now - end);
+    if fade > 0.0 && since_end < fade {
+        1.0 - ease(since_end / fade)
+    } else {
+        0.0
+    }
+}
+
+/// Fáza plánu: ručný zásah platí do jej zmeny.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum Phase {
+    Day,
+    Night,
+    Fade,
+}
+
+/// Čas na výpočet plánu: miestne minúty od polnoci, deň v roku, posun od UTC v minútach.
+#[derive(Clone, Copy, Debug)]
+pub struct Clock {
+    pub minutes: f64,
+    pub yday: f64,
+    pub utc_offset_min: f64,
+}
+
+impl Clock {
+    pub fn now() -> Clock {
+        let tm = sys::local_tm(sys::now_unix());
+        Clock {
+            minutes: tm.tm_hour as f64 * 60.0 + tm.tm_min as f64 + tm.tm_sec as f64 / 60.0,
+            yday: tm.tm_yday as f64 + 1.0,
+            utc_offset_min: tm.tm_gmtoff as f64 / 60.0,
+        }
+    }
+}
+
+/// Miera noci podľa plánu a jej fáza.
+pub fn schedule_factor(s: &Schedule, fade_min: f64, c: Clock) -> (f64, Phase) {
+    let f = match *s {
+        Schedule::Fixed { start, end } => night_factor(c.minutes, start, end, fade_min),
+        Schedule::Sun { lat, lon } => match sun_day(lat, lon, c.yday) {
+            SunDay::PolarDay => 0.0,
+            SunDay::PolarNight => 1.0,
+            SunDay::Normal { rise, set } => {
+                let local = |utc: f64| (utc + c.utc_offset_min).rem_euclid(DAY_MIN);
+                night_factor(c.minutes, local(set), local(rise), fade_min)
+            }
+        },
+    };
+    let phase = if f <= 0.0 {
+        Phase::Day
+    } else if f >= 1.0 {
+        Phase::Night
+    } else {
+        Phase::Fade
+    };
+    (f, phase)
+}
+
+// ------------------------------------------------------------------ stav
+/// Čo sa má zobraziť: ručný stav, automatika a dočasný zásah. Čistá logika (bez Waylandu), aby sa dala testovať.
+#[derive(Clone, Copy, Debug, PartialEq, Default)]
+pub struct Ctl {
+    pub auto: bool,
+    pub manual: bool,
+    /// dočasný zásah pri automatike: (chcená noc, fáza plánu, v ktorej vznikol)
+    pub over: Option<(bool, Phase)>,
+}
+
+impl Ctl {
+    /// Miera noci, ktorá sa má zobraziť pri miere noci `f` podľa plánu.
+    pub fn factor(&self, f: f64) -> f64 {
+        if self.auto {
+            match self.over {
+                Some((night, _)) => night as u8 as f64,
+                None => f,
+            }
+        } else {
+            self.manual as u8 as f64
+        }
+    }
+
+    /// Zásah končí, keď sa fáza plánu zmení (začiatok / koniec noci). Vráti `true`, ak ho zrušil.
+    pub fn expire(&mut self, phase: Phase) -> bool {
+        match self.over {
+            Some((_, p)) if p != phase => {
+                self.over = None;
+                true
+            }
+            _ => false,
+        }
+    }
+
+    /// Vykoná povel; `has_schedule` = je nastavený plán, `f` / `phase` = stav plánu teraz.
+    pub fn apply(&mut self, cmd: NightCmd, has_schedule: bool, f: f64, phase: Phase) {
+        match cmd {
+            NightCmd::Toggle => {
+                if self.auto {
+                    let visible_night = self.factor(f) >= 0.5;
+                    self.over = Some((!visible_night, phase));
+                } else {
+                    self.manual = !self.manual;
+                }
+            }
+            NightCmd::Set(b) => {
+                if self.auto {
+                    self.over = Some((b, phase));
+                } else {
+                    self.manual = b;
+                }
+            }
+            NightCmd::Panel(b) => {
+                if has_schedule {
+                    self.auto = b;
+                    self.over = None;
+                } else {
+                    self.manual = b;
+                }
+            }
+        }
+    }
+
+    /// Stav, ktorý ukazuje prepínač v paneli.
+    pub fn switch(&self, has_schedule: bool) -> bool {
+        if has_schedule {
+            self.auto
+        } else {
+            self.manual
+        }
+    }
+}
+
+// ------------------------------------------------------------- ovládanie
 struct Handle {
-    tx: mpsc::Sender<Cmd>,
+    tx: mpsc::Sender<NightCmd>,
     waker: Arc<Waker>,
     msgs: Tx<Msg>,
 }
 
 static HANDLE: OnceLock<Handle> = OnceLock::new();
-/// Požadovaný stav (nie nutne dokončený prechod).
-static ON: AtomicBool = AtomicBool::new(false);
 
 fn state_file() -> std::path::PathBuf {
     hud_dir().join("night")
 }
 
-fn write_state(on: bool) {
+/// Zapíše stav: 1. riadok = čo je práve vidieť (`on`/`off`, pre `--night get`), potom `auto=` a `manual=`.
+fn write_state(visible_night: bool, ctl: &Ctl) {
     let dir = hud_dir();
     let _ = std::fs::create_dir_all(&dir);
-    let _ = std::fs::write(state_file(), if on { "on\n" } else { "off\n" });
+    let onoff = |b: bool| if b { "on" } else { "off" };
+    let _ = std::fs::write(state_file(), format!("{}\nauto={}\nmanual={}\n", onoff(visible_night), onoff(ctl.auto), onoff(ctl.manual)));
 }
 
-/// Stav zapamätaný bežiacim ostrovčekom (`on`/`off`), pre `--night get`.
+/// Čo je práve vidieť (`on` = nočná teplota), podľa súboru bežiaceho ostrovčeka; pre `--night get`.
 pub fn saved_state() -> Option<bool> {
-    match std::fs::read_to_string(state_file()).ok()?.trim() {
+    match std::fs::read_to_string(state_file()).ok()?.lines().next()?.trim() {
         "on" => Some(true),
         "off" => Some(false),
         _ => None,
     }
 }
 
-/// Spustí vlákno nočného režimu (len ak je `[night] enabled`). Stav sa pamätá do odhlásenia, takže prežije aj
-/// reštart ostrovčeka po zmene konfigurácie.
+/// Zapamätaný stav automatiky a ručného prepnutia (prežije reštart ostrovčeka po zmene konfigurácie).
+fn saved_ctl() -> (Option<bool>, Option<bool>) {
+    let s = std::fs::read_to_string(state_file()).unwrap_or_default();
+    let get = |key: &str| {
+        s.lines().find_map(|l| l.strip_prefix(key)).and_then(|v| match v.trim() {
+            "on" => Some(true),
+            "off" => Some(false),
+            _ => None,
+        })
+    };
+    (get("auto="), get("manual="))
+}
+
+/// Spustí vlákno nočného režimu (len ak je `[night] enabled`).
 pub fn start(cfg: &NightCfg, msgs: &Tx<Msg>) {
     if !cfg.enabled || HANDLE.get().is_some() {
         return;
@@ -188,43 +422,31 @@ pub fn start(cfg: &NightCfg, msgs: &Tx<Msg>) {
     let (tx, rx) = mpsc::channel();
     let waker = Waker::new();
     let _ = HANDLE.set(Handle { tx, waker: waker.clone(), msgs: msgs.clone() });
+    let (saved_auto, saved_manual) = saved_ctl();
+    let ctl = Ctl {
+        auto: cfg.schedule.is_some() && saved_auto.unwrap_or(cfg.auto),
+        manual: saved_manual.unwrap_or(cfg.start_on),
+        over: None,
+    };
     let (c, m) = (cfg.clone(), msgs.clone());
-    let spawned = std::thread::Builder::new().name("night".into()).spawn(move || {
-        if let Err(e) = run(rx, waker, c, m.clone()) {
+    let _ = std::thread::Builder::new().name("night".into()).spawn(move || {
+        if let Err(e) = run(rx, waker, c, ctl, m.clone()) {
             eprintln!("dynamic-island: nočný režim: {e}");
-            ON.store(false, Ordering::SeqCst);
-            write_state(false);
+            write_state(false, &Ctl::default());
             m.send(Msg::Night(false));
         }
     });
-    if spawned.is_err() {
-        return;
-    }
-    if cfg.start_on || saved_state() == Some(true) {
-        command(NightCmd::Set(true));
-    } else {
-        write_state(false);
-    }
 }
 
-/// Zapne / vypne / prepne nočný režim. Bez `[night] enabled` nerobí nič.
+/// Pošle povel nočnému režimu. Bez `[night] enabled` nerobí nič.
 pub fn command(cmd: NightCmd) {
     let Some(h) = HANDLE.get() else { return };
-    let on = match cmd {
-        NightCmd::Set(b) => b,
-        NightCmd::Toggle => !ON.load(Ordering::SeqCst),
-    };
-    ON.store(on, Ordering::SeqCst);
-    write_state(on);
-    if h.tx.send(Cmd::Set(on)).is_err() {
-        // vlákno skončilo (kompozitor nepodporuje gamma, spojenie padlo) – stav sa vráti
-        ON.store(false, Ordering::SeqCst);
-        write_state(false);
+    if h.tx.send(cmd).is_err() {
+        // vlákno skončilo (kompozitor nepodporuje gamma, spojenie padlo) – prepínač sa vráti
         h.msgs.send(Msg::Night(false));
         return;
     }
     h.waker.wake();
-    h.msgs.send(Msg::Night(on));
 }
 
 // --------------------------------------------------------------- wayland
@@ -355,7 +577,7 @@ fn apply(st: &mut State, kelvin: f64, neutral: bool, qh: &QueueHandle<State>, sc
     }
 }
 
-fn run(rx: mpsc::Receiver<Cmd>, waker: Arc<Waker>, cfg: NightCfg, msgs: Tx<Msg>) -> Result<(), String> {
+fn run(rx: mpsc::Receiver<NightCmd>, waker: Arc<Waker>, cfg: NightCfg, mut ctl: Ctl, msgs: Tx<Msg>) -> Result<(), String> {
     let conn = Connection::connect_to_env().map_err(|e| format!("Wayland: {e}"))?;
     let (globals, mut queue) = registry_queue_init::<State>(&conn).map_err(|e| format!("Wayland: {e}"))?;
     let qh = queue.handle();
@@ -371,18 +593,41 @@ fn run(rx: mpsc::Receiver<Cmd>, waker: Arc<Waker>, cfg: NightCfg, msgs: Tx<Msg>)
     }
     queue.roundtrip(&mut st).map_err(|e| format!("Wayland: {e}"))?;
 
+    let has_schedule = cfg.schedule.is_some();
+    let night_k = cfg.temperature as f64;
+    let dur = Duration::from_millis(cfg.fade_ms);
+    let sched = |c: Clock| match &cfg.schedule {
+        Some(s) => schedule_factor(s, cfg.transition_min, c),
+        None => (0.0, Phase::Day),
+    };
+
     let mut cur = NEUTRAL_K;
     let mut fade: Option<Fade> = None;
     let mut scratch: Vec<u8> = Vec::new();
-    let night = cfg.temperature as f64;
-    let dur = Duration::from_millis(cfg.fade_ms);
+    let mut jump = true; // prvý priebeh: prejsť na zapamätaný stav
+    let mut published: Option<(bool, Ctl)> = None;
     loop {
-        while let Ok(Cmd::Set(on)) = rx.try_recv() {
-            let to = if on { night } else { NEUTRAL_K };
-            fade = Some(Fade { from: cur, to, start: Instant::now(), dur });
+        let (f, phase) = sched(Clock::now());
+        let mut changed = false;
+        while let Ok(cmd) = rx.try_recv() {
+            ctl.apply(cmd, has_schedule, f, phase);
+            changed = true;
         }
-        if let Some(f) = &fade {
-            let (v, done) = f.value(Instant::now());
+        if ctl.expire(phase) {
+            changed = true;
+        }
+        let want_f = ctl.factor(f);
+        let want_k = lerp_kelvin(NEUTRAL_K, night_k, want_f);
+        if changed || jump {
+            jump = false;
+            fade = Some(Fade { from: cur, to: want_k, start: Instant::now(), dur });
+        } else if fade.is_none() && (want_k - cur).abs() > 0.5 {
+            // pomalý prechod plánu: teplota sa len posunie
+            cur = want_k;
+            st.dirty = true;
+        }
+        if let Some(fd) = &fade {
+            let (v, done) = fd.value(Instant::now());
             if (v - cur).abs() > 0.01 {
                 cur = v;
                 st.dirty = true;
@@ -392,23 +637,34 @@ fn run(rx: mpsc::Receiver<Cmd>, waker: Arc<Waker>, cfg: NightCfg, msgs: Tx<Msg>)
                 st.dirty = true;
             }
         }
+        // stav pre `--night get` a prepínač v paneli
+        let visible = want_f >= 0.5;
+        if published != Some((visible, ctl)) {
+            published = Some((visible, ctl));
+            write_state(visible, &ctl);
+            msgs.send(Msg::Night(ctl.switch(has_schedule)));
+        }
         if st.dirty {
             st.dirty = false;
             let neutral = fade.is_none() && (cur - NEUTRAL_K).abs() < 0.5;
             apply(&mut st, cur, neutral, &qh, &mut scratch);
-            // žiadny výstup nedostal ovládanie (všetky obsadené) – stav sa vráti, nech prepínač neklame
+            // všetky výstupy má obsadené iný program – nočný režim sa vráti, nech prepínač neklame
             if !neutral && fade.is_none() && !st.outs.is_empty() && st.outs.iter().all(|o| o.busy) {
-                ON.store(false, Ordering::SeqCst);
-                write_state(false);
-                msgs.send(Msg::Night(false));
-                fade = Some(Fade { from: cur, to: NEUTRAL_K, start: Instant::now(), dur: Duration::ZERO });
+                ctl = Ctl::default();
+                jump = true;
                 continue;
             }
         }
         conn.flush().map_err(|e| format!("Wayland: {e}"))?;
         queue.dispatch_pending(&mut st).map_err(|e| format!("Wayland: {e}"))?;
         let Some(guard) = queue.prepare_read() else { continue };
-        let timeout = if fade.is_some() { FRAME.as_millis() as i32 } else { -1 };
+        let timeout = if fade.is_some() {
+            FRAME.as_millis() as i32
+        } else if ctl.auto {
+            SCHED_TICK.as_millis() as i32
+        } else {
+            -1
+        };
         let mut fds = [
             PollFd { fd: guard.connection_fd().as_raw_fd(), events: POLLIN, revents: 0 },
             PollFd { fd: waker.fd(), events: POLLIN, revents: 0 },
@@ -491,5 +747,125 @@ mod tests {
         assert_eq!(NightCmd::parse("nieco"), None);
         let c = NightCfg::from_table(&Table::new());
         assert_eq!((c.enabled, c.temperature, c.fade_ms, c.start_on), (false, 3500, 1500, false));
+        assert_eq!((c.schedule, c.transition_min, c.auto), (None, 30.0, true));
+        assert_eq!(parse_hm("07:30"), Some(450.0));
+        assert_eq!(parse_hm("24:00"), None);
+        assert_eq!(parse_hm("7pm"), None);
+    }
+
+    #[test]
+    fn config_reads_schedules() {
+        let mut t = Table::new();
+        t.insert("schedule".into(), crate::toml::Value::Str("fixed".into()));
+        t.insert("start".into(), crate::toml::Value::Str("21:00".into()));
+        t.insert("end".into(), crate::toml::Value::Str("06:30".into()));
+        let c = NightCfg::from_table(&t);
+        assert_eq!(c.schedule, Some(Schedule::Fixed { start: 1260.0, end: 390.0 }));
+        let mut t = Table::new();
+        t.insert("schedule".into(), crate::toml::Value::Str("sun".into()));
+        t.insert("latitude".into(), crate::toml::Value::Num(48.15));
+        t.insert("longitude".into(), crate::toml::Value::Num(17.11));
+        assert_eq!(NightCfg::from_table(&t).schedule, Some(Schedule::Sun { lat: 48.15, lon: 17.11 }));
+    }
+
+    #[test]
+    fn sun_times_are_plausible() {
+        // Bratislava, 16. novembra (yday 320): východ ≈ 06:00 UTC, západ ≈ 15:10 UTC
+        match sun_day(48.15, 17.11, 320.0) {
+            SunDay::Normal { rise, set } => {
+                assert!((330.0..390.0).contains(&rise), "východ {rise}");
+                assert!((890.0..950.0).contains(&set), "západ {set}");
+            }
+            other => panic!("{other:?}"),
+        }
+        // leto je dlhší deň než zima
+        let len = |y| match sun_day(48.15, 17.11, y) {
+            SunDay::Normal { rise, set } => set - rise,
+            _ => 0.0,
+        };
+        assert!(len(172.0) > len(355.0) + 300.0);
+        // Svalbard: v decembri polárna noc, v júli polárny deň
+        assert_eq!(sun_day(78.2, 15.6, 355.0), SunDay::PolarNight);
+        assert_eq!(sun_day(78.2, 15.6, 182.0), SunDay::PolarDay);
+    }
+
+    #[test]
+    fn night_factor_wraps_midnight_and_fades() {
+        let (start, end, fade) = (20.0 * 60.0, 7.0 * 60.0, 30.0);
+        assert_eq!(night_factor(12.0 * 60.0, start, end, fade), 0.0);
+        assert_eq!(night_factor(23.0 * 60.0, start, end, fade), 1.0);
+        assert_eq!(night_factor(3.0 * 60.0, start, end, fade), 1.0);
+        let dusk = night_factor(20.0 * 60.0 + 15.0, start, end, fade);
+        assert!((dusk - 0.5).abs() < 1e-3, "{dusk}");
+        let dawn = night_factor(7.0 * 60.0 + 15.0, start, end, fade);
+        assert!((dawn - 0.5).abs() < 1e-3, "{dawn}");
+        assert_eq!(night_factor(7.0 * 60.0 + 31.0, start, end, fade), 0.0);
+        assert_eq!(night_factor(20.0 * 60.0, start, end, 0.0), 1.0, "bez prechodu sa prepne naraz");
+        assert_eq!(night_factor(13.0 * 60.0, 12.0 * 60.0, 14.0 * 60.0, 0.0), 1.0);
+        assert_eq!(night_factor(15.0 * 60.0, 12.0 * 60.0, 14.0 * 60.0, 0.0), 0.0);
+    }
+
+    #[test]
+    fn schedule_phases() {
+        let s = Schedule::Fixed { start: 1200.0, end: 420.0 };
+        let at = |m: f64| schedule_factor(&s, 30.0, Clock { minutes: m, yday: 1.0, utc_offset_min: 0.0 });
+        assert_eq!(at(720.0), (0.0, Phase::Day));
+        assert_eq!(at(1380.0), (1.0, Phase::Night));
+        assert_eq!(at(1215.0).1, Phase::Fade);
+    }
+
+    #[test]
+    fn toggle_without_auto_is_a_plain_manual_switch() {
+        let mut c = Ctl::default();
+        c.apply(NightCmd::Toggle, false, 0.0, Phase::Day);
+        assert_eq!(c.factor(0.0), 1.0);
+        c.apply(NightCmd::Toggle, false, 0.0, Phase::Day);
+        assert_eq!(c.factor(0.0), 0.0);
+        c.apply(NightCmd::Set(true), false, 0.0, Phase::Day);
+        assert!(c.manual && c.over.is_none());
+        assert!(c.switch(false) && !c.switch(true));
+    }
+
+    #[test]
+    fn toggle_with_auto_flips_what_you_see_and_back() {
+        // v noci: automatika 3500 K → prvý toggle 6500 K, druhý späť
+        let mut c = Ctl { auto: true, ..Default::default() };
+        c.apply(NightCmd::Toggle, true, 1.0, Phase::Night);
+        assert_eq!(c.factor(1.0), 0.0);
+        c.apply(NightCmd::Toggle, true, 1.0, Phase::Night);
+        assert_eq!(c.factor(1.0), 1.0);
+        // cez deň: automatika 6500 K → prvý toggle 3500 K, druhý späť
+        let mut c = Ctl { auto: true, ..Default::default() };
+        c.apply(NightCmd::Toggle, true, 0.0, Phase::Day);
+        assert_eq!(c.factor(0.0), 1.0);
+        c.apply(NightCmd::Toggle, true, 0.0, Phase::Day);
+        assert_eq!(c.factor(0.0), 0.0);
+        // automatika zostáva zapnutá
+        assert!(c.auto);
+    }
+
+    #[test]
+    fn override_ends_when_the_schedule_changes_phase() {
+        let mut c = Ctl { auto: true, ..Default::default() };
+        c.apply(NightCmd::Toggle, true, 0.0, Phase::Day); // cez deň zapnutý ručne
+        assert!(!c.expire(Phase::Day), "pokým je deň, zásah platí");
+        assert_eq!(c.factor(0.0), 1.0);
+        assert!(c.expire(Phase::Fade), "so začiatkom západu ho automatika prevezme");
+        assert_eq!(c.factor(0.5), 0.5);
+        assert!(!c.expire(Phase::Night));
+    }
+
+    #[test]
+    fn panel_switch_controls_auto_when_a_schedule_exists() {
+        let mut c = Ctl { auto: true, over: Some((true, Phase::Day)), ..Default::default() };
+        c.apply(NightCmd::Panel(false), true, 0.0, Phase::Day);
+        assert!(!c.auto && c.over.is_none());
+        assert_eq!(c.factor(1.0), 0.0, "bez automatiky platí ručný stav");
+        c.apply(NightCmd::Panel(true), true, 1.0, Phase::Night);
+        assert_eq!(c.factor(1.0), 1.0);
+        // bez plánu prepínač nastavuje ručný stav
+        let mut c = Ctl::default();
+        c.apply(NightCmd::Panel(true), false, 0.0, Phase::Day);
+        assert!(c.manual && !c.auto);
     }
 }

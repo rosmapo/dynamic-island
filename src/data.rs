@@ -169,7 +169,7 @@ pub enum Msg {
     AudioDev(crate::audio::AudioState),
     /// stav monitora (jas, kontrast, preset, vstup, nočný režim)
     Monitor(crate::monitor::MonitorState),
-    /// nočný režim sa zapol / vypol (`night.rs`, aj klávesovou skratkou)
+    /// stav prepínača nočného režimu v paneli monitor (zapnutá automatika, alebo ručný stav bez plánu) – `night.rs`
     Night(bool),
     /// priebeh snímania obrazovky / nahrávania (modul capture)
     Capture(crate::capture::CaptureEvent),

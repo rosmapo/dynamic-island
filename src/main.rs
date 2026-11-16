@@ -50,8 +50,10 @@ const HELP: &str = "dynamic-island [--config CESTA] [--check] [--snapshot ADRES�
   --action NAZOV      to isté pre iný panel alebo vlastné menu (sysmenu, trash, quickset, quickset:wifi, wallpaper, …)
   --clip              to isté pre históriu schránky (cliphist)
   --night on|off|toggle|get
-                      nočný režim obrazovky (vyžaduje `[night] enabled = true`): zapne / vypne / prepne ho, `get` vypíše stav;
-                      vhodné na klávesovú skratku
+                      nočný režim obrazovky (vyžaduje `[night] enabled = true`): zapne / vypne / prepne ho, `get` vypíše,
+                      čo je práve vidieť (on = nočná teplota); vhodné na klávesovú skratku. Pri zapnutej automatike
+                      (`[night] schedule`) je to dočasný zásah: `toggle` nastaví opak toho, čo vidíš, a platí do najbližšej
+                      zmeny automatiky
   --drun-list         vypíše všetky nájdené .desktop súbory a prečo sa niektoré nezobrazia
   (--drun / --action / --clip vyžadujú bežiaci dynamic-island)
   --history [N]       vypíše posledných N (predvolene 20) notifikácií z histórie

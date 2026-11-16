@@ -734,23 +734,37 @@ neúspechu sa zmaže. Po úspešnom pripojení zostane uložený a pripája sa s
 
 Predvolené `presets`/`inputs` sú pre monitor **Iiyama PL2493H**; iný monitor môže mať iné kódy.
 
-### 6.14a `[night]` – natívny nočný režim
+### 6.14a `[night]` – nočný režim
 
-Ručne prepínaný nočný režim (teplejšie farby) bez externého programu: ostrovček si cez `wlr-gamma-control` sám nastaví
-gamma krivky všetkých výstupov a prechod robí plynule (interpolácia v miredoch so zjemnením). Žiadny plán podľa času ani polohy.
+Nočný režim (teplejšie farby) bez externého programu: ostrovček si cez `wlr-gamma-control` sám nastaví gamma krivky
+všetkých výstupov a prechod robí plynule (interpolácia v miredoch so zjemnením). Prepína sa ručne, voliteľne aj automaticky.
 
 | Kľúč | Predvolené | Popis |
 |---|---|---|
 | `enabled` | `false` | zapne natívny nočný režim; prepínač v paneli monitor sa zobrazí aj bez `night_switcher` (ten sa potom nepoužije) |
 | `temperature` | `3500` (1000–6500) | teplota farieb v nočnom režime, K |
-| `fade_ms` | `1500` (0–30000) | trvanie prechodu, ms (0 = naraz) |
-| `start_on` | `false` | zapnúť po štarte; inak sa pamätá posledný stav (do odhlásenia / vypnutia, súbor `night` v `$XDG_RUNTIME_DIR/dynamic-island`), takže prežije aj reštart po zmene konfigurácie |
+| `fade_ms` | `1500` (0–30000) | trvanie rýchleho prechodu pri ručnom prepnutí, ms (0 = naraz) |
+| `start_on` | `false` | ručný stav po štarte (inak sa pamätá posledný do odhlásenia / vypnutia, súbor `night` v `$XDG_RUNTIME_DIR/dynamic-island`) |
+| `schedule` | `"none"` | automatika: `"sun"` = noc od západu do východu slnka podľa `latitude` / `longitude`, `"fixed"` = od `start` do `end`, `"none"` = len ručne |
+| `latitude`, `longitude` | `0` | poloha pre `schedule = "sun"` (stupne, východ a sever kladné) |
+| `start`, `end` | `"20:00"`, `"07:00"` | čas noci pre `schedule = "fixed"` (`HH:MM`, môže prechádzať cez polnoc) |
+| `transition_minutes` | `30` (0–240) | trvanie plynulého prechodu; začína o západe / východe (resp. `start` / `end`) |
+| `auto` | `true` | automatika je po štarte zapnutá (inak sa pamätá posledný stav) |
 
-Ovládanie: prepínač v paneli monitor, tlačidlo / položka menu s príkazom `night-toggle` (`night-on`, `night-off`) alebo
-príkaz `dynamic-island --night on|off|toggle|get` (na klávesovú skratku, napr. vo Wayfire:
-`binding_night = <super> KEY_N` + `command_night = dynamic-island --night toggle`). Vyžaduje kompozitor s protokolom
-`zwlr_gamma_control_manager_v1` (Wayfire, Sway, Hyprland…; overíš `wayland-info | grep gamma`). Gamma môže naraz držať
-len jeden program, takže `wlsunset` / `gammastep` / `hyprsunset` musia byť vypnuté.
+**Ovládanie.** Bez `schedule` prepína ručný stav prepínač v paneli monitor, príkaz `dynamic-island --night on|off|toggle|get`
+(klávesová skratka) aj príkazy `night-toggle` / `night-on` / `night-off` v tlačidle alebo menu. S `schedule` platí:
+
+- prepínač v paneli monitor **zapína / vypína automatiku**;
+- pri vypnutej automatike je `toggle` obyčajné ručné prepnutie;
+- pri zapnutej automatike `toggle` nastaví **opak toho, čo práve vidíš** (v noci 6500 K, cez deň nočnú teplotu) a ďalší
+  `toggle` to vráti; automatika zostáva zapnutá. Zásah platí do najbližšej zmeny automatiky (začiatok alebo koniec noci),
+  potom si automatika nastaví svoju hodnotu; `on` / `off` fungujú rovnako ako dočasný zásah;
+- `--night get` vypíše `on` (nočná teplota) alebo `off` podľa toho, čo je práve vidieť.
+
+Vo Wayfire (sekcia `[command]`): `binding_night = <super> KEY_N` a `command_night = dynamic-island --night toggle`.
+Vyžaduje kompozitor s protokolom `zwlr_gamma_control_manager_v1` (Wayfire, Sway, Hyprland…; overíš `wayland-info | grep gamma`).
+Gamma môže naraz držať len jeden program, takže `wlsunset` / `gammastep` / `hyprsunset` musia byť vypnuté.
+Poloha sa zadáva ručne v konfigurácii (žiadna sieťová lokalizácia).
 
 ### 6.14b `[capture]` — snímka obrazovky a nahrávanie
 
