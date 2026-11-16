@@ -7,6 +7,7 @@ mod bluetooth;
 mod capture;
 mod config;
 mod data;
+mod ddc;
 mod dbus;
 mod desktop;
 mod disks;
@@ -22,6 +23,7 @@ mod monitor;
 mod mpris;
 mod notify;
 mod nicons;
+mod night;
 mod providers;
 mod render;
 mod snapshot;
@@ -39,7 +41,7 @@ mod xkb;
 
 use std::path::PathBuf;
 
-const HELP: &str = "dynamic-island [--config CESTA] [--check] [--snapshot ADRESÁR] [--volume up|down|mute|get|N] [--brightness up|down|get|N] [--hud brightness %] [--action NAZOV] [--history [N]] [--drun] [--drun-list] [--clip]
+const HELP: &str = "dynamic-island [--config CESTA] [--check] [--snapshot ADRESÁR] [--volume up|down|mute|get|N] [--brightness up|down|get|N] [--hud brightness %] [--action NAZOV] [--night on|off|toggle|get] [--history [N]] [--drun] [--drun-list] [--clip]
 
   --config CESTA      konfigurácia (predvolene ~/.config/dynamic-island/config.toml)
   --check             skontroluje konfiguráciu a skončí
@@ -47,6 +49,9 @@ const HELP: &str = "dynamic-island [--config CESTA] [--check] [--snapshot ADRES�
                       lišta hore ostáva viditeľná; ak je okno otvorené, povel ho zatvorí
   --action NAZOV      to isté pre iný panel alebo vlastné menu (sysmenu, trash, quickset, quickset:wifi, wallpaper, …)
   --clip              to isté pre históriu schránky (cliphist)
+  --night on|off|toggle|get
+                      nočný režim obrazovky (vyžaduje `[night] enabled = true`): zapne / vypne / prepne ho, `get` vypíše stav;
+                      vhodné na klávesovú skratku
   --drun-list         vypíše všetky nájdené .desktop súbory a prečo sa niektoré nezobrazia
   (--drun / --action / --clip vyžadujú bežiaci dynamic-island)
   --history [N]       vypíše posledných N (predvolene 20) notifikácií z histórie
@@ -64,6 +69,7 @@ fn main() {
     let mut history: Option<usize> = None;
     let mut drun_list = false;
     let mut action: Option<String> = None;
+    let mut night: Option<String> = None;
     let mut i = 0;
     while i < args.len() {
         match args[i].as_str() {
@@ -79,6 +85,14 @@ fn main() {
             "--drun" => action = Some("drun".into()),
             "--drun-list" => drun_list = true,
             "--clip" => action = Some("clipboard".into()),
+            "--night" => {
+                i += 1;
+                night = args.get(i).cloned();
+                if night.is_none() {
+                    eprintln!("použitie: dynamic-island --night on|off|toggle|get");
+                    std::process::exit(2);
+                }
+            }
             "--history" => {
                 let n = args.get(i + 1).and_then(|s| s.parse::<usize>().ok());
                 if n.is_some() {
@@ -161,6 +175,9 @@ fn main() {
     if let Some(arg) = bright {
         std::process::exit(brightness(&cfg, &arg));
     }
+    if let Some(arg) = night {
+        std::process::exit(night_cmd(&cfg, &arg));
+    }
     if let Some(name) = action {
         // povel bežiacemu ostrovčeku: otvorí panel v strede obrazovky (alebo ho zatvorí)
         if let Err(e) = config::send_action(&name) {
@@ -181,6 +198,37 @@ fn main() {
     if let Err(e) = res {
         eprintln!("dynamic-island: {e}");
         std::process::exit(1);
+    }
+}
+
+/// `--night on|off|toggle|get`: povel bežiacemu ostrovčeku (rovnaký kanál ako `--action`).
+fn night_cmd(cfg: &config::Config, arg: &str) -> i32 {
+    if arg == "get" {
+        return match night::saved_state() {
+            Some(on) => {
+                println!("{}", if on { "on" } else { "off" });
+                0
+            }
+            None => {
+                eprintln!("stav nočného režimu nie je známy (beží dynamic-island s `[night] enabled = true`?)");
+                1
+            }
+        };
+    }
+    if night::NightCmd::parse(arg).is_none() {
+        eprintln!("neznámy argument '{arg}' (on|off|toggle|get)");
+        return 2;
+    }
+    if !cfg.night.enabled {
+        eprintln!("nočný režim je vypnutý: pridaj do konfigurácie [night] enabled = true");
+        return 1;
+    }
+    match config::send_action(&format!("night:{}", arg.trim())) {
+        Ok(()) => 0,
+        Err(e) => {
+            eprintln!("dynamic-island: {e}");
+            1
+        }
     }
 }
 

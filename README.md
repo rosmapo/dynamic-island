@@ -105,7 +105,7 @@ Voliteľné programy podľa používaných modulov (podrobnosti v [5.3](#53-exte
 | `network-manager` | (D-Bus), `nmcli`, `nm-connection-editor` | panel Wi-Fi, záložný zisťovač SSID |
 | `bluez`, `bluez-tools` | (D-Bus), `bt-agent`, `bluetoothctl` | panel Bluetooth (párovanie) |
 | `udisks2` | (D-Bus) | modul `disks` |
-| `ddcutil` | `ddcutil` | panel monitor (jas, kontrast, vstup); nočný režim rieši tvoj skript (`night_switcher`) |
+| `ddcutil` | `ddcutil` | záloha pre panel monitor, ak nejde priamy DDC/CI cez `/dev/i2c-N` (`[monitor] native`); nočný režim: `[night]` alebo skript `night_switcher` |
 | `grim`, `slurp`, `wf-recorder` | `grim`, `slurp`, `wf-recorder` | panel `capture` (snímka / oblasť / nahrávanie videa); `notify-send` (`libnotify-bin`) pre notifikáciu po uložení |
 | `librsvg2-bin` | `rsvg-convert` | `--drun`: SVG ikony aplikácií (voliteľné; záloha je ImageMagick) |
 | `imagemagick` | `magick` / `convert` | náhľady tapiet, obaly v module `media` |
@@ -722,7 +722,8 @@ neúspechu sa zmaže. Po úspešnom pripojení zostane uložený a pripája sa s
 |---|---|---|
 | `font_size` | `15` (8–64) | písmo |
 | `width` | `380` (240–800) | šírka panela |
-| `bus` | `"10"` | I²C bus pre `ddcutil --bus` (`ddcutil detect`) |
+| `bus` | `"10"` | číslo I²C busu (`/dev/i2c-N`; zistíš `ddcutil detect`) |
+| `native` | `true` | jas, kontrast, preset a vstup sa nastavujú priamo cez `/dev/i2c-N` (DDC/CI v Ruste, rýchlejšie, bez podprocesu). Potrebuje modul `i2c-dev` a skupinu `i2c`; ak to nejde (alebo `bus` nie je číslo), použije sa `ddcutil`. `false` = vždy `ddcutil` |
 | `presets` | `[5, 6, 8]` | VCP hodnoty teplotného presetu (VCP 0x14) |
 | `preset_labels` | `["6500 K","7500 K","9300 K"]` | popisy (rovnaký počet ako `presets`, inak `0xNN`) |
 | `inputs` | `[15, 17]` | VCP hodnoty vstupu (VCP 0x60; 0x0F = DisplayPort, 0x11 = HDMI) |
@@ -732,6 +733,24 @@ neúspechu sa zmaže. Po úspešnom pripojení zostane uložený a pripája sa s
 | `night_label` | `"Nočný režim"` | popis prepínača |
 
 Predvolené `presets`/`inputs` sú pre monitor **Iiyama PL2493H**; iný monitor môže mať iné kódy.
+
+### 6.14a `[night]` – natívny nočný režim
+
+Ručne prepínaný nočný režim (teplejšie farby) bez externého programu: ostrovček si cez `wlr-gamma-control` sám nastaví
+gamma krivky všetkých výstupov a prechod robí plynule (interpolácia v miredoch so zjemnením). Žiadny plán podľa času ani polohy.
+
+| Kľúč | Predvolené | Popis |
+|---|---|---|
+| `enabled` | `false` | zapne natívny nočný režim; prepínač v paneli monitor sa zobrazí aj bez `night_switcher` (ten sa potom nepoužije) |
+| `temperature` | `3500` (1000–6500) | teplota farieb v nočnom režime, K |
+| `fade_ms` | `1500` (0–30000) | trvanie prechodu, ms (0 = naraz) |
+| `start_on` | `false` | zapnúť po štarte; inak sa pamätá posledný stav (do odhlásenia / vypnutia, súbor `night` v `$XDG_RUNTIME_DIR/dynamic-island`), takže prežije aj reštart po zmene konfigurácie |
+
+Ovládanie: prepínač v paneli monitor, tlačidlo / položka menu s príkazom `night-toggle` (`night-on`, `night-off`) alebo
+príkaz `dynamic-island --night on|off|toggle|get` (na klávesovú skratku, napr. vo Wayfire:
+`binding_night = <super> KEY_N` + `command_night = dynamic-island --night toggle`). Vyžaduje kompozitor s protokolom
+`zwlr_gamma_control_manager_v1` (Wayfire, Sway, Hyprland…; overíš `wayland-info | grep gamma`). Gamma môže naraz držať
+len jeden program, takže `wlsunset` / `gammastep` / `hyprsunset` musia byť vypnuté.
 
 ### 6.14b `[capture]` — snímka obrazovky a nahrávanie
 

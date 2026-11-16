@@ -280,6 +280,7 @@ fn run_action(a: Action, cfg: &Config, disk_tx: &Option<Tx<DiskCmd>>, tx: &Tx<Ms
         Action::Audio(cmd) => crate::audio::run(cmd, cfg.vol_limit, tx.clone()),
         Action::Wifi(cmd) => crate::wifi::run(cmd, tx.clone()),
         Action::Monitor(cmd) => crate::monitor::run(cmd, cfg.monitor.clone(), tx.clone()),
+        Action::Night(cmd) => crate::night::command(cmd),
         Action::Capture(cmd) => crate::capture::run(cmd, cfg.capture.clone(), tx.clone()),
         Action::DrunLoad(px) => {
             // zoznam aplikácií a ikony (vrátane prvej rasterizácie SVG) sa pripravia na pozadí
@@ -415,6 +416,7 @@ pub fn run(cfg: Config) -> Result<(), String> {
     }
 
     providers::spawn_all(&cfg, &tx);
+    crate::night::start(&cfg.night, &tx);
     let notif_tx = if cfg.notif_enabled {
         let nw = Waker::new();
         let (ntx, nrx) = sys::channel::<NotifCmd>(nw.clone());
@@ -564,6 +566,14 @@ pub fn run(cfg: Config) -> Result<(), String> {
                     if let Ok(s) = std::fs::read_to_string(&p) {
                         // povel patrí oknu v strede; lišta sa ho netýka (ostáva hore)
                         let name = s.trim();
+                        // `night:on|off|toggle` – nočný režim (klávesová skratka), nie panel
+                        if let Some(arg) = name.strip_prefix("night:") {
+                            if let Some(c) = crate::night::NightCmd::parse(arg) {
+                                crate::night::command(c);
+                            }
+                            let _ = std::fs::remove_file(&p);
+                            continue;
+                        }
                         if win.is_none() {
                             win_ui.set_scale(scale as f32);
                         }

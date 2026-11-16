@@ -68,16 +68,101 @@ pub fn parse_devices(out: &str, source: bool) -> Vec<AudioDev> {
         if source && (name.ends_with(".monitor") || class == "monitor") {
             continue;
         }
-        // `pactl -f json` občas vráti v `description` doslovné "(null)"; vtedy skúsime properties a nakoniec názov
-        let good = |s: &&str| !s.trim().is_empty() && *s != "(null)";
-        let desc = d
+        // `pactl -f json` občas vráti v `description` doslovné "(null)" alebo technický názov;
+        // vtedy skúsime properties a nakoniec názov
+        let good = |s: &&str| {
+            let t = s.trim();
+            !t.is_empty() && t != "(null)"
+        };
+        let is_technical = |s: &str| {
+            s.starts_with("alsa_")
+                || s.starts_with("bluez_")
+                || s.starts_with("hdmi_")
+                || s.contains(".pci-")
+                || s.contains(".usb-")
+                || s == name
+        };
+        // krátke nick-y typu "ALC3246 Analog", "HDA Intel PCH" atď. – radšej berieme dlhší popis
+        let looks_like_codec_nick = |s: &str| {
+            let s = s.trim();
+            (s.starts_with("ALC") && s.chars().any(|c| c.is_ascii_digit()))
+                || s.starts_with("HDA ")
+                || s.starts_with("USB Audio")
+                || (s.len() < 24 && s.contains(" Analog") && !s.contains("Built-in") && !s.contains("Vstavan"))
+        };
+
+        let mut desc = d
             .get("description")
             .and_then(|x| x.as_str())
             .filter(good)
-            .or_else(|| d.path(&["properties", "node.description"]).and_then(|x| x.as_str()).filter(good))
-            .or_else(|| d.path(&["properties", "device.description"]).and_then(|x| x.as_str()).filter(good))
-            .unwrap_or(&name)
-            .to_string();
+            .map(str::to_string);
+
+        // ak je description technický názov alebo krátky codec nick, ignorujeme ho
+        if desc.as_ref().is_some_and(|s| is_technical(s) || looks_like_codec_nick(s)) {
+            desc = None;
+        }
+
+        let desc = desc
+            .or_else(|| {
+                d.path(&["properties", "node.description"])
+                    .and_then(|x| x.as_str())
+                    .filter(|s| good(s) && !is_technical(s) && !looks_like_codec_nick(s))
+                    .map(str::to_string)
+            })
+            .or_else(|| {
+                // najčastejší pekný názov = device.description + " " + device.profile.description
+                // (to, čo ukazujú pavucontrol, mandara, GNOME Settings atď.)
+                let base = d
+                    .path(&["properties", "device.description"])
+                    .and_then(|x| x.as_str())
+                    .filter(good);
+                let profile = d
+                    .path(&["properties", "device.profile.description"])
+                    .and_then(|x| x.as_str())
+                    .filter(good);
+                match (base, profile) {
+                    (Some(b), Some(p)) if !b.contains(p) => Some(format!("{b} {p}")),
+                    (Some(b), _) => Some(b.to_string()),
+                    _ => None,
+                }
+            })
+            .or_else(|| {
+                d.path(&["properties", "device.description"])
+                    .and_then(|x| x.as_str())
+                    .filter(good)
+                    .map(str::to_string)
+            })
+            .or_else(|| {
+                // keď device.description chýba (časté pri niektorých PipeWire/WirePlumber),
+                // zložíme názov z alsa.card_name + profil → "HDA Intel PCH Analog Stereo"
+                let card = d
+                    .path(&["properties", "alsa.card_name"])
+                    .and_then(|x| x.as_str())
+                    .filter(good);
+                let profile = d
+                    .path(&["properties", "device.profile.description"])
+                    .and_then(|x| x.as_str())
+                    .filter(good);
+                match (card, profile) {
+                    (Some(c), Some(p)) if !c.contains(p) => Some(format!("{c} {p}")),
+                    (Some(c), _) => Some(c.to_string()),
+                    _ => None,
+                }
+            })
+            .or_else(|| {
+                d.path(&["properties", "node.nick"])
+                    .and_then(|x| x.as_str())
+                    .filter(good)
+                    .map(str::to_string)
+            })
+            .or_else(|| {
+                d.path(&["properties", "media.name"])
+                    .and_then(|x| x.as_str())
+                    .filter(good)
+                    .map(str::to_string)
+            })
+            .unwrap_or_else(|| name.clone());
+
         let mute = d.get("mute").and_then(|x| x.as_bool()).unwrap_or(false);
         let volume = match d.get("volume") {
             Some(json::Json::Obj(ch)) => ch
@@ -246,5 +331,30 @@ mod tests {
         let v = parse_devices(j, false);
         assert_eq!(v[0].desc, "Vstavaný zvuk Analog Stereo");
         assert_eq!(v[1].desc, "x.y");
+    }
+
+    #[test]
+    fn technical_description_falls_back() {
+        // description je technický názov → má sa vziať zariadenie + profil
+        let j = r#"[{"name":"alsa_output.pci-0000_00_1f.3.analog-stereo","description":"alsa_output.pci-0000_00_1f.3.analog-stereo","mute":false,"volume":{"front-left":{"value":65536,"value_percent":"100%"}},"properties":{"device.description":"Vstavaný zvuk","device.profile.description":"Analog Stereo","node.nick":"ALC3246 Analog"}}]"#;
+        let v = parse_devices(j, false);
+        assert_eq!(v[0].desc, "Vstavaný zvuk Analog Stereo");
+    }
+
+    #[test]
+    fn codec_nick_falls_back_to_full_description() {
+        // top-level description aj node.nick sú krátke „ALC… Analog“ → berieme device.description + profil
+        let j = r#"[{"name":"alsa_output.pci-0000_00_1f.3.analog-stereo","description":"ALC3246 Analog","mute":false,"volume":{"front-left":{"value":65536,"value_percent":"100%"}},"properties":{"device.description":"Built-in Audio","device.profile.description":"Analog Stereo","node.nick":"ALC3246 Analog","node.description":"ALC3246 Analog"}}]"#;
+        let v = parse_devices(j, false);
+        assert_eq!(v[0].desc, "Built-in Audio Analog Stereo");
+    }
+
+    #[test]
+    fn null_device_description_uses_alsa_card_name() {
+        // reálny prípad z PipeWire: description aj device.description sú (null),
+        // ostáva alsa.card_name + profil → "HDA Intel PCH Analog Stereo"
+        let j = r#"[{"name":"alsa_output.pci-0000_00_1f.3.analog-stereo","description":"(null)","mute":false,"volume":{"front-left":{"value":65536,"value_percent":"100%"}},"properties":{"device.description":"(null)","device.profile.description":"Analog Stereo","node.nick":"ALC3246 Analog","alsa.card_name":"HDA Intel PCH","alsa.name":"ALC3246 Analog"}}]"#;
+        let v = parse_devices(j, false);
+        assert_eq!(v[0].desc, "HDA Intel PCH Analog Stereo");
     }
 }

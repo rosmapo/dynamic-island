@@ -295,6 +295,7 @@ scan_ms = 4000
 
 [monitor]
 bus = "10"
+# native = true          # priamy DDC/CI cez /dev/i2c-N (false = vždy ddcutil)
 width = 350
 font_size = 17
 night_switcher = "~/.config/dynamic-island/scripts/bluelight.sh"
@@ -305,6 +306,16 @@ night_label    = "Filter modráho svetla"           # voliteľné
 # preset_labels = ["6500 K", "7500 K", "9300 K"]
 # inputs = [15, 17]
 # input_labels = ["DisplayPort", "HDMI"]
+
+# Nočný režim obrazovky (teplejšie farby), prepína sa ručne – prepínačom v paneli monitor, tlačidlom
+# (`on_click = "night-toggle"`) alebo klávesovou skratkou `dynamic-island --night toggle` (aj on / off / get).
+# Beží priamo v ostrovčeku cez wlr-gamma-control; ak je zapnutý, `night_switcher` v [monitor] sa nepoužije.
+# Pozor: naraz môže gamma držať len jeden program – vypni wlsunset / gammastep.
+[night]
+enabled = false          # true = zapnúť natívny nočný režim
+# temperature = 3500     # teplota v nočnom režime, K (1000–6500)
+# fade_ms = 1500         # trvanie plynulého prechodu, ms (0 = naraz)
+# start_on = false       # zapnúť po štarte (inak sa pamätá posledný stav do odhlásenia)
 
 # Snímka obrazovky / nahrávanie videa (grim, slurp, wf-recorder). Otvorí sa akciou "capture"
 # (položka menu `module:capture`, záložka kontajnera `tab9 = "capture"`, tlačidlo `inversetab`).

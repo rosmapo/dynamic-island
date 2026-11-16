@@ -286,6 +286,8 @@ pub struct Config {
     pub audio_panel: crate::audio::AudioCfg,
     /// panel monitor – `[monitor]`
     pub monitor: crate::monitor::MonitorCfg,
+    /// ručný nočný režim obrazovky (gamma) – `[night]`
+    pub night: crate::night::NightCfg,
     /// panel capture (snímka / nahrávanie obrazovky) – `[capture]`
     pub capture: crate::capture::CaptureCfg,
     /// panel bluetooth – `[bluetooth]`
@@ -758,6 +760,7 @@ BUILTIN_MODULES.map(String::from).to_vec()
             wifi: crate::wifi::WifiCfg::from_table(&t.sub("wifi")),
             audio_panel: crate::audio::AudioCfg::from_table(&audio),
             monitor: crate::monitor::MonitorCfg::from_table(&t.sub("monitor")),
+            night: crate::night::NightCfg::from_table(&t.sub("night")),
             capture: crate::capture::CaptureCfg::from_table(&t.sub("capture"), &crate::capture::rec_path()),
             bluetooth: crate::bluetooth::BtCfg::from_table(&t.sub("bluetooth")),
             hw: crate::quickset::HwCfg::from_table(&{

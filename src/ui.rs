@@ -65,6 +65,8 @@ pub enum Action {
     Audio(crate::audio::AudioCmd),
     Wifi(crate::wifi::WifiCmd),
     Monitor(crate::monitor::MonitorCmd),
+    /// natívny nočný režim (`[night] enabled`)
+    Night(crate::night::NightCmd),
     /// snímka obrazovky / nahrávanie
     Capture(crate::capture::CaptureCmd),
     /// načítať aplikácie a ikony pre panel `drun` (veľkosť ikony v px; výsledok príde ako `Msg::Drun`)
@@ -928,9 +930,12 @@ impl Ui {
                     }
                 }
             }
+            Msg::Night(on) => {
+                self.monitor.night = on;
+            }
             Msg::Monitor(st) => {
                 let mut st = st;
-                if self.cfg.monitor.night_state.is_empty() {
+                if self.cfg.night.enabled || self.cfg.monitor.night_state.is_empty() {
                     // bez `night_state` stav nevieme zistiť – pamätáme si ho
                     st.night = self.monitor.night;
                 }
@@ -938,7 +943,7 @@ impl Ui {
                     self.monitor = st;
                 } else {
                     // počas ťahania aktualizuj len to, čo nie je ťahané
-                    let night = st.night;
+                    let night = if self.cfg.night.enabled || self.cfg.monitor.night_state.is_empty() { self.monitor.night } else { st.night };
                     let preset = st.preset;
                     let input = st.input;
                     let error = st.error;
@@ -1505,7 +1510,7 @@ impl Ui {
                     + gap + label + row    // kontrast
                     + gap + label + row    // teplota
                     + gap + label + row;   // vstup
-                let h = if c.night_switcher.is_empty() { h } else { h + gap + row }; // nočný režim
+                let h = if self.night_available() { h + gap + row } else { h }; // nočný režim
                 (c.width * self.scale, h * self.scale)
             }
             Panel::Bluetooth => {
@@ -2661,6 +2666,11 @@ impl Ui {
     }
 
     /// Pružiny veľkosti panela dobehli (`pill` už nemení rozmer).
+    /// Zobrazí sa prepínač nočného režimu v paneli monitor (natívny `[night]`, alebo skript `night_switcher`).
+    fn night_available(&self) -> bool {
+        self.cfg.night.enabled || !self.cfg.monitor.night_switcher.is_empty()
+    }
+
     fn panel_settled(&self) -> bool {
         self.cal_t.settled() && self.hw_w.settled() && self.hw_h.settled() && self.panel_w.settled() && self.panel_h.settled()
     }
@@ -2866,6 +2876,9 @@ impl Ui {
             "" | "calendar" | "menu" | "clipboard" | "notifications" | "media" | "trash" | "wallpaper" | "wifi" | "audio" | "monitor" | "bluetooth" | "capture" | "drun" => None,
             c if Self::quickset_cmd(c).is_some() => None,
             "capture-stop" => Some(Action::Capture(crate::capture::CaptureCmd::Stop)),
+            "night-toggle" => Some(Action::Night(crate::night::NightCmd::Toggle)),
+            "night-on" => Some(Action::Night(crate::night::NightCmd::Set(true))),
+            "night-off" => Some(Action::Night(crate::night::NightCmd::Set(false))),
             "eject-all" => Some(Action::DiskEjectAll),
             "inhibit-toggle" => Some(Action::InhibitToggle),
             "layout-toggle" => Some(Action::LayoutToggle),
@@ -3340,7 +3353,11 @@ impl Ui {
                 if button == BTN_LEFT {
                     let enable = !self.monitor.night;
                     self.monitor.night = enable;
-                    out.push(Action::Monitor(crate::monitor::MonitorCmd::SetNight(enable)));
+                    if self.cfg.night.enabled {
+                        out.push(Action::Night(crate::night::NightCmd::Set(enable)));
+                    } else {
+                        out.push(Action::Monitor(crate::monitor::MonitorCmd::SetNight(enable)));
+                    }
                 }
             }
             Hit::BtToggle => {
@@ -5739,8 +5756,8 @@ impl Ui {
 
         y += gap;
 
-        // --- nočný režim (len ak je nastavený `night_switcher`)
-        if !self.cfg.monitor.night_switcher.is_empty() {
+        // --- nočný režim (natívny `[night] enabled`, alebo nastavený `night_switcher`)
+        if self.night_available() {
             let cy = y + row_h * 0.5;
             let label = self.cfg.monitor.night_label.clone();
             let label = label.as_str();

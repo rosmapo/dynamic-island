@@ -10,7 +10,7 @@ import json, os, re, sys, collections
 REPO = sys.argv[1] if len(sys.argv) > 1 else os.path.join(os.path.dirname(__file__), '..', '..', 'dynamic-island')
 SRC = os.path.join(REPO, 'src') + os.sep
 
-FILE_SECTION = {'wifi.rs': 'wifi', 'bluetooth.rs': 'bluetooth', 'monitor.rs': 'monitor', 'capture.rs': 'capture',
+FILE_SECTION = {'wifi.rs': 'wifi', 'bluetooth.rs': 'bluetooth', 'monitor.rs': 'monitor', 'night.rs': 'night', 'capture.rs': 'capture',
                 'trash.rs': 'trash', 'wallpaper.rs': 'wallpaper', 'quickset.rs': 'quickset', 'audio.rs': 'audio'}
 # moduly s tlačidlami `btn(...)`: sekcia -> (on_click, on_click_right, tooltip) predvolené
 BTN = {'clock': ('calendar', '', ''), 'network': ('', '', ''), 'vpn': ('', '', '{ifname}: {ip}'),

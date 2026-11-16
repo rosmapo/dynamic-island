@@ -1,4 +1,4 @@
-//! Modul monitor: jas, kontrast, teplota farieb a vstup cez ddcutil; nočný režim cez skript z configu.
+//! Modul monitor: jas, kontrast, teplota farieb a vstup cez DDC/CI (priamo cez i2c-dev, záloha `ddcutil`); nočný režim cez skript z configu.
 //! Bus a mapovania sú konfigurovateľné v sekcii `[monitor]`.
 use crate::data::Msg;
 use crate::sys::Tx;
@@ -14,8 +14,10 @@ use std::time::Duration;
 pub struct MonitorCfg {
     pub font_size: f32,
     pub width: f32,
-    /// I2C bus pre ddcutil (napr. "10")
+    /// I2C bus (napr. "10"; číslo z `/dev/i2c-N`, rovnaké ako pre `ddcutil --bus`)
     pub bus: String,
+    /// komunikovať s monitorom priamo cez `/dev/i2c-N` (rýchlejšie); pri chybe prístupu sa použije `ddcutil`
+    pub native: bool,
     /// VCP kódy pre temperature presets (poradie = poradie v `preset_labels`)
     pub presets: Vec<u8>,
     pub preset_labels: Vec<String>,
@@ -68,6 +70,7 @@ impl MonitorCfg {
             font_size: t.f64_or("font_size", 15.0).clamp(8.0, 64.0) as f32,
             width: t.f64_or("width", 380.0).clamp(240.0, 800.0) as f32,
             bus: t.str_or("bus", "10"),
+            native: t.bool_or("native", true),
             presets,
             preset_labels,
             inputs,
@@ -127,8 +130,48 @@ fn run_quiet(cmd: &str, args: &[&str]) {
         .status();
 }
 
+/// `true`, keď sa priamy prístup na i2c ukázal nedostupný (chýba modul / práva) – ďalej sa používa `ddcutil`.
+static NATIVE_DISABLED: AtomicBool = AtomicBool::new(false);
+
+fn native_bus(bus: &str, native: bool) -> Option<u32> {
+    if native && !NATIVE_DISABLED.load(Ordering::SeqCst) {
+        bus.trim().parse().ok()
+    } else {
+        None
+    }
+}
+
+fn disable_native(why: &str) {
+    if !NATIVE_DISABLED.swap(true, Ordering::SeqCst) {
+        eprintln!("dynamic-island: monitor: priamy DDC/CI nie je dostupný ({why}), používam ddcutil (modul i2c-dev, skupina i2c)");
+    }
+}
+
+/// Aktuálna hodnota VCP funkcie. Jas a kontrast sú spojité (0–max), ostatné (preset, vstup) výberové – tam platí dolný bajt.
+fn get_vcp(bus: &str, feature: u8, native: bool) -> Option<u32> {
+    if let Some(n) = native_bus(bus, native) {
+        match crate::ddc::get_vcp(n, feature) {
+            Ok((cur, _)) => return Some(if matches!(feature, 0x10 | 0x12) { cur as u32 } else { (cur & 0xFF) as u32 }),
+            Err(crate::ddc::Error::Unavailable(e)) => disable_native(&e),
+            Err(crate::ddc::Error::Failed(_)) => {}
+        }
+    }
+    ddcutil_get(bus, feature)
+}
+
+fn set_vcp(bus: &str, feature: u8, value: u32, native: bool) {
+    if let Some(n) = native_bus(bus, native) {
+        match crate::ddc::set_vcp(n, feature, value.min(u16::MAX as u32) as u16) {
+            Ok(()) => return,
+            Err(crate::ddc::Error::Unavailable(e)) => disable_native(&e),
+            Err(crate::ddc::Error::Failed(_)) => {}
+        }
+    }
+    ddcutil_set(bus, feature, value);
+}
+
 /// Podporuje continuous (C) aj simple non-continuous (SNC) z `ddcutil --terse`.
-fn get_vcp(bus: &str, feature: u8) -> Option<u32> {
+fn ddcutil_get(bus: &str, feature: u8) -> Option<u32> {
     let code = format!("{feature:02x}");
     let stdout = out("ddcutil", &["getvcp", &code, "--bus", bus, "--terse"])?;
     let parts: Vec<&str> = stdout.split_whitespace().collect();
@@ -142,7 +185,7 @@ fn get_vcp(bus: &str, feature: u8) -> Option<u32> {
     None
 }
 
-fn set_vcp(bus: &str, feature: u8, value: u32) {
+fn ddcutil_set(bus: &str, feature: u8, value: u32) {
     let code = format!("{feature:02x}");
     run_quiet(
         "ddcutil",
@@ -169,16 +212,16 @@ fn night_running(cfg: &MonitorCfg) -> Option<bool> {
 
 fn load_state(cfg: &MonitorCfg) -> MonitorState {
     // jas je zároveň test, či ddcutil existuje a monitor odpovedá (`ddcutil detect` by trvalo aj sekundy navyše)
-    let Some(brightness) = get_vcp(&cfg.bus, 0x10) else {
+    let Some(brightness) = get_vcp(&cfg.bus, 0x10, cfg.native) else {
         return MonitorState {
-            error: "ddcutil nie je dostupný alebo monitor neodpovedá".into(),
+            error: "monitor neodpovedá cez DDC/CI (skontroluj bus, modul i2c-dev a skupinu i2c)".into(),
             loaded: true,
             ..Default::default()
         };
     };
-    let contrast = get_vcp(&cfg.bus, 0x12).unwrap_or(0);
-    let raw_preset = get_vcp(&cfg.bus, 0x14);
-    let raw_input = get_vcp(&cfg.bus, 0x60);
+    let contrast = get_vcp(&cfg.bus, 0x12, cfg.native).unwrap_or(0);
+    let raw_preset = get_vcp(&cfg.bus, 0x14, cfg.native);
+    let raw_input = get_vcp(&cfg.bus, 0x60, cfg.native);
 
     let preset = raw_preset.and_then(|v| {
         cfg.presets
@@ -202,7 +245,7 @@ fn load_state(cfg: &MonitorCfg) -> MonitorState {
     }
 }
 
-fn continuous_worker(bus: String) {
+fn continuous_worker(bus: String, native: bool) {
     loop {
         let job = {
             let mut br = PENDING_BR.lock().unwrap_or_else(|e| e.into_inner());
@@ -216,7 +259,7 @@ fn continuous_worker(bus: String) {
             }
         };
         match job {
-            Some((feat, val)) => set_vcp(&bus, feat, val),
+            Some((feat, val)) => set_vcp(&bus, feat, val, native),
             None => {
                 RUNNING.store(false, Ordering::SeqCst);
                 let more = PENDING_BR.lock().unwrap_or_else(|e| e.into_inner()).is_some()
@@ -239,21 +282,21 @@ pub fn run(cmd: MonitorCmd, cfg: MonitorCfg, tx: Tx<Msg>) {
         MonitorCmd::Brightness(pct) => {
             *PENDING_BR.lock().unwrap_or_else(|e| e.into_inner()) = Some(pct.min(100));
             if !RUNNING.swap(true, Ordering::SeqCst) {
-                let bus = cfg.bus.clone();
-                thread::spawn(move || continuous_worker(bus));
+                let (bus, native) = (cfg.bus.clone(), cfg.native);
+                thread::spawn(move || continuous_worker(bus, native));
             }
         }
         MonitorCmd::Contrast(pct) => {
             *PENDING_CT.lock().unwrap_or_else(|e| e.into_inner()) = Some(pct.min(100));
             if !RUNNING.swap(true, Ordering::SeqCst) {
-                let bus = cfg.bus.clone();
-                thread::spawn(move || continuous_worker(bus));
+                let (bus, native) = (cfg.bus.clone(), cfg.native);
+                thread::spawn(move || continuous_worker(bus, native));
             }
         }
         MonitorCmd::Preset(idx) => {
             if let Some(&code) = cfg.presets.get(idx) {
                 thread::spawn(move || {
-                    set_vcp(&cfg.bus, 0x14, code as u32);
+                    set_vcp(&cfg.bus, 0x14, code as u32, cfg.native);
                     // krátke oneskorenie, monitor niekedy potrebuje čas
                     thread::sleep(Duration::from_millis(120));
                     tx.send(Msg::Monitor(load_state(&cfg)));
@@ -263,7 +306,7 @@ pub fn run(cmd: MonitorCmd, cfg: MonitorCfg, tx: Tx<Msg>) {
         MonitorCmd::Input(idx) => {
             if let Some(&code) = cfg.inputs.get(idx) {
                 thread::spawn(move || {
-                    set_vcp(&cfg.bus, 0x60, code as u32);
+                    set_vcp(&cfg.bus, 0x60, code as u32, cfg.native);
                     thread::sleep(Duration::from_millis(200));
                     tx.send(Msg::Monitor(load_state(&cfg)));
                 });
@@ -293,6 +336,10 @@ mod tests {
     fn default_config() {
         let c = MonitorCfg::from_table(&Table::new());
         assert_eq!(c.bus, "10");
+        assert!(c.native, "priamy DDC/CI je predvolený");
+        assert_eq!(native_bus("10", true), Some(10));
+        assert_eq!(native_bus("10", false), None);
+        assert_eq!(native_bus("abc", true), None, "neplatné číslo busu = ddcutil");
         assert_eq!(c.presets, vec![0x05, 0x06, 0x08]);
         assert_eq!(c.preset_labels.len(), 3);
         assert_eq!(c.inputs, vec![0x0F, 0x11]);
