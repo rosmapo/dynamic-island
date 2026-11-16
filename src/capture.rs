@@ -1,4 +1,5 @@
-//! Modul capture: snímka obrazovky / okna / oblasti (`grim`, `slurp`) a nahrávanie videa (`wf-recorder`).
+//! Modul capture: snímka obrazovky / okna / oblasti (`grim`, `slurp`), nahrávanie videa (`wf-recorder`)
+//! a OCR (`tesseract` + `wl-copy`).
 //!
 //! Aktívne okno a výstup sa zisťujú cez Wayfire IPC. Odznak REC (modul `recorder`) sa riadi interným súborom
 //! (`rec_path()`, v konfigu sa nenastavuje): počas odpočtu v ňom je odpočet, počas nahrávania `REC m:ss`; po
@@ -37,19 +38,29 @@ impl Mode {
     }
 }
 
-/// Obrázok alebo video.
+/// Obrázok, video alebo OCR.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Kind {
     Image,
     Video,
+    Ocr,
 }
 
 impl Kind {
-    pub const ALL: [Kind; 2] = [Kind::Image, Kind::Video];
+    pub const ALL: [Kind; 3] = [Kind::Image, Kind::Video, Kind::Ocr];
     pub fn label(self) -> &'static str {
         match self {
             Kind::Image => "Obrázok",
             Kind::Video => "Video",
+            Kind::Ocr => "OCR",
+        }
+    }
+    /// Text hlavného tlačidla podľa druhu.
+    pub fn action_label(self) -> &'static str {
+        match self {
+            Kind::Image => "Odfotiť",
+            Kind::Video => "Nahrávať",
+            Kind::Ocr => "Skopírovať text",
         }
     }
 }
@@ -117,7 +128,11 @@ impl CaptureCfg {
         }
         delays.truncate(6);
         let mode = Mode::parse(&t.str_or("mode", "region")).unwrap_or(Mode::Region);
-        let kind = if t.str_or("kind", "image").trim().eq_ignore_ascii_case("video") { Kind::Video } else { Kind::Image };
+        let kind = match t.str_or("kind", "image").trim().to_lowercase().as_str() {
+            "video" => Kind::Video,
+            "ocr" => Kind::Ocr,
+            _ => Kind::Image,
+        };
         let format = match t.str_or("format", "png").trim().to_lowercase().as_str() {
             "jpg" | "jpeg" => "jpeg",
             _ => "png",
@@ -183,7 +198,7 @@ pub enum CaptureEvent {
     Recording(u32),
     /// skryť / zobraziť ostrovček (kvôli snímke)
     Hide(bool),
-    /// hotovo: cesta a či ide o video
+    /// hotovo: cesta a či ide o video (pri OCR je path prázdna)
     Done { path: String, video: bool },
     /// zrušené používateľom
     Cancelled,
@@ -234,7 +249,9 @@ pub fn target_path(cfg: &CaptureCfg, kind: Kind, tm: &sys::Tm) -> String {
     let stem = sys::strftime_str(&cfg.name, tm);
     let stem = if stem.trim().is_empty() { "capture".to_string() } else { stem.replace('/', "-") };
     match kind {
-        Kind::Image => format!("{}/{}.{}", cfg.dir.trim_end_matches('/'), stem, if cfg.format == "jpeg" { "jpg" } else { "png" }),
+        Kind::Image | Kind::Ocr => {
+            format!("{}/{}.{}", cfg.dir.trim_end_matches('/'), stem, if cfg.format == "jpeg" { "jpg" } else { "png" })
+        }
         Kind::Video => format!("{}/{}.{}", cfg.video_dir.trim_end_matches('/'), stem, cfg.video_ext),
     }
 }
@@ -314,7 +331,18 @@ fn resolve_window(cfg: &CaptureCfg) -> Result<Target, String> {
     }
 }
 
-fn notify(cfg: &CaptureCfg, title: &str, path: &str) {
+fn notify(cfg: &CaptureCfg, title: &str, body: &str) {
+    if cfg.notify {
+        let _ = Command::new("notify-send")
+            .args(["-a", "dynamic-island", title, body])
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status();
+    }
+}
+
+fn notify_icon(cfg: &CaptureCfg, title: &str, path: &str) {
     if cfg.notify {
         let _ = Command::new("notify-send")
             .args(["-a", "dynamic-island", "-i", path, title, base_name(path)])
@@ -352,6 +380,75 @@ fn shoot_image(cfg: &CaptureCfg, req: &Request, target: &Target, path: &str) -> 
             // wl-copy sa po načítaní sám odpojí do pozadia
             let _ = Command::new("wl-copy").args(["-t", mime]).stdin(f).stdout(Stdio::null()).stderr(Stdio::null()).status();
         }
+    }
+    Ok(())
+}
+
+/// Snímka → tesseract → text do schránky (`wl-copy`). Dočasný súbor sa zmaže.
+fn do_ocr(cfg: &CaptureCfg, req: &Request, target: &Target) -> Result<(), String> {
+    let tmp = format!(
+        "/tmp/dynamic-island-ocr-{}.png",
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_nanos())
+            .unwrap_or(0)
+    );
+    // grim → PNG
+    let mut c = Command::new("grim");
+    if req.cursor {
+        c.arg("-c");
+    }
+    c.args(["-t", "png"]);
+    match target {
+        Target::Geometry(g) => {
+            c.args(["-g", g]);
+        }
+        Target::Output(Some(o)) => {
+            c.args(["-o", o]);
+        }
+        Target::Output(None) => {}
+    }
+    c.arg(&tmp).stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::piped());
+    let out = c.output().map_err(|_| "grim nie je nainštalovaný".to_string())?;
+    if !out.status.success() {
+        let _ = std::fs::remove_file(&tmp);
+        let e = String::from_utf8_lossy(&out.stderr);
+        return Err(e.lines().last().unwrap_or("grim zlyhal").trim().to_string());
+    }
+
+    // tesseract -l slk+eng  (stdout = text)
+    let tess = Command::new("tesseract")
+        .args([&tmp, "-", "-l", "slk+eng"])
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .output()
+        .map_err(|_| "tesseract nie je nainštalovaný".to_string())?;
+    let _ = std::fs::remove_file(&tmp);
+
+    if !tess.status.success() {
+        return Err("tesseract zlyhal".into());
+    }
+    let text = String::from_utf8_lossy(&tess.stdout);
+    // prázdny výstup považujeme za neúspech (nič na rozpoznanie)
+    if text.trim().is_empty() {
+        return Err("žiadny text".into());
+    }
+
+    // wl-copy text
+    let mut copy = Command::new("wl-copy")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .map_err(|_| "wl-copy nie je nainštalovaný".to_string())?;
+    if let Some(mut si) = copy.stdin.take() {
+        use std::io::Write;
+        let _ = si.write_all(text.as_bytes());
+    }
+    let status = copy.wait().map_err(|e| e.to_string())?;
+    if !status.success() {
+        return Err("wl-copy zlyhal".into());
     }
     Ok(())
 }
@@ -417,6 +514,7 @@ fn record_video(cfg: &CaptureCfg, req: &Request, target: &Target, path: &str, tx
 fn job(cfg: CaptureCfg, req: Request, tx: Tx<Msg>) {
     let send = |e: CaptureEvent| tx.send(Msg::Capture(e));
     let video = req.kind == Kind::Video;
+    let ocr = req.kind == Kind::Ocr;
     let result = (|| -> Result<Option<String>, String> {
         // panel sa zatvára – počkať na dokončenie animácie
         if !wait_ms(cfg.settle_ms) {
@@ -457,14 +555,31 @@ fn job(cfg: CaptureCfg, req: Request, tx: Tx<Msg>) {
             });
         }
         let target = target.unwrap_or(Target::Output(None));
-        // 4) snímanie
-        let path = target_path(&cfg, req.kind, &sys::local_tm(sys::now_unix()));
-        if let Some(dir) = std::path::Path::new(&path).parent() {
-            std::fs::create_dir_all(dir).map_err(|e| format!("adresár {}: {e}", dir.display()))?;
-        }
+        // 4) snímanie / OCR / nahrávanie
         if video {
+            let path = target_path(&cfg, req.kind, &sys::local_tm(sys::now_unix()));
+            if let Some(dir) = std::path::Path::new(&path).parent() {
+                std::fs::create_dir_all(dir).map_err(|e| format!("adresár {}: {e}", dir.display()))?;
+            }
             record_video(&cfg, &req, &target, &path, &tx)?;
+            Ok(Some(path))
+        } else if ocr {
+            let hide = cfg.hide_bar;
+            if hide {
+                send(CaptureEvent::Hide(true));
+                wait_ms(cfg.settle_ms);
+            }
+            let r = do_ocr(&cfg, &req, &target);
+            if hide {
+                send(CaptureEvent::Hide(false));
+            }
+            r?;
+            Ok(Some(String::new())) // OCR: žiadny trvalý súbor
         } else {
+            let path = target_path(&cfg, req.kind, &sys::local_tm(sys::now_unix()));
+            if let Some(dir) = std::path::Path::new(&path).parent() {
+                std::fs::create_dir_all(dir).map_err(|e| format!("adresár {}: {e}", dir.display()))?;
+            }
             let hide = cfg.hide_bar;
             if hide {
                 send(CaptureEvent::Hide(true));
@@ -475,20 +590,31 @@ fn job(cfg: CaptureCfg, req: Request, tx: Tx<Msg>) {
                 send(CaptureEvent::Hide(false));
             }
             r?;
+            Ok(Some(path))
         }
-        Ok(Some(path))
     })();
     clear_rec_if_video(&cfg, video);
     match result {
         Ok(Some(path)) => {
-            notify(&cfg, if video { "Nahrávka uložená" } else { "Snímka uložená" }, &path);
+            if ocr {
+                notify(&cfg, "OCR", "Text bol skopírovaný do schránky.");
+            } else if video {
+                notify_icon(&cfg, "Nahrávka uložená", &path);
+            } else {
+                notify_icon(&cfg, "Snímka uložená", &path);
+            }
             send(CaptureEvent::Done { path, video });
         }
         Ok(None) => send(CaptureEvent::Cancelled),
         Err(e) => {
             if cfg.notify && !e.is_empty() {
+                let (title, body) = if ocr {
+                    ("OCR", "Rozpoznávanie textu zlyhalo.")
+                } else {
+                    ("Snímanie zlyhalo", e.as_str())
+                };
                 let _ = Command::new("notify-send")
-                    .args(["-a", "dynamic-island", "-u", "critical", "Snímanie zlyhalo", &e])
+                    .args(["-a", "dynamic-island", "-u", "critical", title, body])
                     .stdin(Stdio::null())
                     .stdout(Stdio::null())
                     .stderr(Stdio::null())
@@ -549,6 +675,17 @@ mod tests {
         assert!(c.copy && c.notify && c.hide_bar);
         assert_eq!(c.slurp_args, vec!["-b", "#ffffff30", "-w", "0"]);
         assert!(c.dir.ends_with("Pictures/Screenshots"));
+    }
+
+    #[test]
+    fn kind_labels() {
+        assert_eq!(Kind::Image.label(), "Obrázok");
+        assert_eq!(Kind::Video.label(), "Video");
+        assert_eq!(Kind::Ocr.label(), "OCR");
+        assert_eq!(Kind::Image.action_label(), "Odfotiť");
+        assert_eq!(Kind::Video.action_label(), "Nahrávať");
+        assert_eq!(Kind::Ocr.action_label(), "Skopírovať text");
+        assert_eq!(Kind::ALL.len(), 3);
     }
 
     #[test]

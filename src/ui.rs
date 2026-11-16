@@ -913,8 +913,13 @@ impl Ui {
                         self.cap_phase = CapPhase::Idle;
                         self.cap_hidden = false;
                         self.cap_err = false;
-                        let name = path.rsplit('/').next().unwrap_or(&path);
-                        self.cap_note = format!("{}: {name}", if video { "Nahrávka uložená" } else { "Snímka uložená" });
+                        if path.is_empty() {
+                            // OCR: text skopírovaný do schránky
+                            self.cap_note = "Text bol skopírovaný do schránky.".to_string();
+                        } else {
+                            let name = path.rsplit('/').next().unwrap_or(&path);
+                            self.cap_note = format!("{}: {name}", if video { "Nahrávka uložená" } else { "Snímka uložená" });
+                        }
                     }
                     E::Cancelled => {
                         self.cap_phase = CapPhase::Idle;
@@ -3321,10 +3326,10 @@ impl Ui {
             }
             Hit::CapToggle => {
                 if button == BTN_LEFT && self.cap_phase == CapPhase::Idle {
-                    if self.cap_kind == crate::capture::Kind::Image {
-                        self.cap_cursor = !self.cap_cursor;
-                    } else {
-                        self.cap_audio = !self.cap_audio;
+                    use crate::capture::Kind;
+                    match self.cap_kind {
+                        Kind::Image | Kind::Ocr => self.cap_cursor = !self.cap_cursor,
+                        Kind::Video => self.cap_audio = !self.cap_audio,
                     }
                 }
             }
@@ -5439,10 +5444,13 @@ impl Ui {
         }
         y += row_h + gap;
 
-        // --- prepínač: kurzor myši (obrázok) / zvuk (video)
+        // --- prepínač: kurzor myši (obrázok / OCR) / zvuk (video)
         {
             let cy = y + row_h * 0.5;
-            let (label, on) = if self.cap_kind == Kind::Image { ("Zobraziť kurzor myši", self.cap_cursor) } else { ("Nahrávať zvuk", self.cap_audio) };
+            let (label, on) = match self.cap_kind {
+                Kind::Image | Kind::Ocr => ("Zobraziť kurzor myši", self.cap_cursor),
+                Kind::Video => ("Nahrávať zvuk", self.cap_audio),
+            };
             let dim = if idle { 1.0 } else { 0.45 };
             text.layout_to(&mut frame.content, label, px, x0 + inset, base(cy), fade(t.fg, dim * pa));
             let tw = 44.0 * s;
@@ -5467,7 +5475,7 @@ impl Ui {
             self.hits.push((r, Hit::CapGo));
             let hov = self.hover == Some(Hit::CapGo);
             let (label, bg, fg, dot) = match self.cap_phase {
-                CapPhase::Idle => (if video { "Nahrávať".to_string() } else { "Odfotiť".to_string() }, t.accent, t.on_accent, video),
+                CapPhase::Idle => (self.cap_kind.action_label().to_string(), t.accent, t.on_accent, video),
                 CapPhase::Busy => ("Zrušiť".to_string(), t.fg, t.bg, false),
                 CapPhase::Selecting => ("Zrušiť výber".to_string(), t.fg, t.bg, false),
                 CapPhase::Countdown(n) => (format!("Zrušiť  ({n})"), t.fg, t.bg, false),
