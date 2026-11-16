@@ -353,12 +353,17 @@ fn notify_icon(cfg: &CaptureCfg, title: &str, path: &str) {
     }
 }
 
-fn shoot_image(cfg: &CaptureCfg, req: &Request, target: &Target, path: &str) -> Result<(), String> {
+/// Spustí `grim` s daným typom a cieľom; vráti stderr pri chybe.
+fn run_grim(req: &Request, target: &Target, filetype: &str, path: &str) -> Result<(), String> {
     let mut c = Command::new("grim");
     if req.cursor {
         c.arg("-c");
     }
-    c.args(["-t", &cfg.format]);
+    c.args(["-t", filetype]);
+    // JPEG: rozumná kvalita (grim default je 80)
+    if filetype == "jpeg" {
+        c.args(["-q", "90"]);
+    }
     match target {
         Target::Geometry(g) => {
             c.args(["-g", g]);
@@ -374,9 +379,88 @@ fn shoot_image(cfg: &CaptureCfg, req: &Request, target: &Target, path: &str) -> 
         let e = String::from_utf8_lossy(&out.stderr);
         return Err(e.lines().last().unwrap_or("grim zlyhal").trim().to_string());
     }
+    Ok(())
+}
+
+/// PNG → JPEG cez prvý dostupný nástroj (ImageMagick / ffmpeg).
+fn png_to_jpeg(png: &str, jpg: &str) -> Result<(), String> {
+    // ImageMagick 7
+    if Command::new("magick")
+        .args([png, "-quality", "90", jpg])
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()
+        .map(|s| s.success())
+        .unwrap_or(false)
+    {
+        return Ok(());
+    }
+    // ImageMagick 6
+    if Command::new("convert")
+        .args([png, "-quality", "90", jpg])
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()
+        .map(|s| s.success())
+        .unwrap_or(false)
+    {
+        return Ok(());
+    }
+    // ffmpeg
+    if Command::new("ffmpeg")
+        .args(["-y", "-i", png, "-q:v", "2", jpg])
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()
+        .map(|s| s.success())
+        .unwrap_or(false)
+    {
+        return Ok(());
+    }
+    Err("grim nemá podporu JPEG a chýba konvertor (nainštaluj ImageMagick alebo ffmpeg)".into())
+}
+
+fn shoot_image(cfg: &CaptureCfg, req: &Request, target: &Target, path: &str) -> Result<(), String> {
+    let jpeg = cfg.format == "jpeg";
+    if jpeg {
+        // 1) skús priamy JPEG (ak má grim libjpeg)
+        match run_grim(req, target, "jpeg", path) {
+            Ok(()) => {}
+            Err(e) => {
+                // 2) fallback: PNG dočasne + konverzia
+                let tmp = format!(
+                    "/tmp/dynamic-island-cap-{}.png",
+                    std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .map(|d| d.as_nanos())
+                        .unwrap_or(0)
+                );
+                if let Err(e2) = run_grim(req, target, "png", &tmp) {
+                    return Err(e2);
+                }
+                let conv = png_to_jpeg(&tmp, path);
+                let _ = std::fs::remove_file(&tmp);
+                if let Err(ce) = conv {
+                    // ak konverzia zlyhala, pôvodnú chybu z grim-u (väčšinou „jpeg support disabled“)
+                    // doplníme o nápovedu
+                    return Err(if e.to_lowercase().contains("jpeg") {
+                        format!("{e}; {ce}")
+                    } else {
+                        ce
+                    });
+                }
+            }
+        }
+    } else {
+        run_grim(req, target, "png", path)?;
+    }
+
     if cfg.copy {
         if let Ok(f) = std::fs::File::open(path) {
-            let mime = if cfg.format == "jpeg" { "image/jpeg" } else { "image/png" };
+            let mime = if jpeg { "image/jpeg" } else { "image/png" };
             // wl-copy sa po načítaní sám odpojí do pozadia
             let _ = Command::new("wl-copy").args(["-t", mime]).stdin(f).stdout(Stdio::null()).stderr(Stdio::null()).status();
         }
