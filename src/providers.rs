@@ -13,6 +13,9 @@ pub fn spawn_all(cfg: &Config, tx: &Tx<Msg>) {
     spawn_net(cfg.clone(), tx.clone());
     spawn_audio(tx.clone());
     spawn_fast(cfg.clone(), tx.clone());
+    if std::env::var_os("WAYFIRE_SOCKET").is_some() {
+        wayfire::spawn_keyboard(cfg.kb_names.clone(), tx.clone());
+    }
     for (i, c) in cfg.custom.iter().enumerate() {
         if c.exec.is_empty() {
             continue; // statické tlačidlo (`text`), netreba proces
@@ -302,7 +305,7 @@ fn spawn_audio(tx: Tx<Msg>) {
 
 // ------------------------------------------------- caps / inhibitor / rec / layout
 
-fn caps_led() -> Option<bool> {
+pub(crate) fn caps_led() -> Option<bool> {
     let rd = std::fs::read_dir("/sys/class/leds").ok()?;
     let mut found = false;
     for e in rd.flatten() {
@@ -324,17 +327,17 @@ fn spawn_fast(cfg: Config, tx: Tx<Msg>) {
         let mut caps: Option<bool> = None;
         let mut inh: Option<bool> = None;
         let mut rec: Option<String> = None;
-        let mut layout: Option<String> = None;
         // `[[custom]]` moduly s `track_file`: (index modulu, súbor, posledný stav)
         let mut tracked: Vec<(usize, String, Option<bool>)> =
             cfg.custom.iter().enumerate().filter(|(_, c)| !c.track_file.is_empty()).map(|(i, c)| (i, c.track_file.clone(), None)).collect();
-        let mut ipc: Option<wayfire::Ipc> = None;
-        let mut ipc_retry = 0u32;
         loop {
-            if let Some(c) = caps_led() {
-                if caps != Some(c) {
-                    caps = Some(c);
-                    tx.send(Msg::Caps(c));
+            // Caps Lock: pri Wayfire ho hlási udalosť (wayfire::spawn_keyboard); pollujeme len ako náhradu.
+            if !wayfire::KB_EVENTS.load(std::sync::atomic::Ordering::Relaxed) {
+                if let Some(c) = caps_led() {
+                    if caps != Some(c) {
+                        caps = Some(c);
+                        tx.send(Msg::Caps(c));
+                    }
                 }
             }
             let i = std::path::Path::new(&cfg.inh_file).exists();
@@ -352,24 +355,6 @@ fn spawn_fast(cfg: Config, tx: Tx<Msg>) {
                 if *last != Some(on) {
                     *last = Some(on);
                     tx.send(Msg::CustomFile(*idx, on));
-                }
-            }
-            if ipc.is_none() {
-                if ipc_retry == 0 {
-                    ipc = wayfire::Ipc::connect();
-                }
-                ipc_retry = (ipc_retry + 1) % 20;
-            }
-            if let Some(conn) = ipc.as_mut() {
-                match wayfire::keyboard_state(conn) {
-                    Some((name, _, _)) => {
-                        let s = wayfire::short_layout(&name, &cfg.kb_names);
-                        if layout.as_ref() != Some(&s) {
-                            layout = Some(s.clone());
-                            tx.send(Msg::Layout(s));
-                        }
-                    }
-                    None => ipc = None, // spojenie padlo alebo IPC pravidlá chýbajú
                 }
             }
             std::thread::sleep(Duration::from_millis(cfg.poll_ms));

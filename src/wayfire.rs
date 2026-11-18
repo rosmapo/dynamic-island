@@ -3,10 +3,15 @@ use crate::config::AutoCfg;
 use crate::data::Msg;
 use crate::json::{self, Json};
 use crate::sys::{self, PollFd, Tx, POLLIN};
+use std::collections::HashMap;
 use std::io::{Read, Write};
 use std::os::fd::AsRawFd;
 use std::os::unix::net::UnixStream;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
+
+/// true, kým beží odber `keyboard-modifier-state-changed` (rozloženie a Caps Lock idú cez udalosti, netreba ich pollovať).
+pub static KB_EVENTS: AtomicBool = AtomicBool::new(false);
 
 pub struct Ipc {
     sock: UnixStream,
@@ -79,13 +84,96 @@ pub fn short_layout(name: &str, map: &std::collections::HashMap<String, String>)
     }
 }
 
+// ---------------------------------------------------------------- odber udalostí
+
+/// Prihlási spojenie na vybrané udalosti. Wayfire odmietne celý odber, ak niektorý názov nepozná
+/// (`Event not found: "x"`), preto sa taký názov vyhodí a odber sa zopakuje (kompatibilita s inou verziou).
+fn watch_events(ipc: &mut Ipc, events: &[&str]) -> Result<(), String> {
+    let mut list: Vec<&str> = events.to_vec();
+    for _ in 0..8 {
+        let arr = list.iter().map(|e| json::quote(e)).collect::<Vec<_>>().join(",");
+        let r = ipc.call("window-rules/events/watch", &format!("{{\"events\":[{arr}]}}")).map_err(|e| e.to_string())?;
+        let Some(err) = r.get("error").and_then(|e| e.as_str()) else { return Ok(()) };
+        // „Event not found: "názov"" -> odstráň názov a skús znova
+        let bad = err.split('"').nth(1).map(str::to_string);
+        match bad {
+            Some(b) if err.starts_with("Event not found") && list.iter().any(|e| *e == b) => list.retain(|e| *e != b),
+            _ => return Err(err.to_string()),
+        }
+    }
+    Err("odber udalostí sa nepodarilo nastaviť".into())
+}
+
+// ---------------------------------------------------------------- rozloženie klávesnice a Caps Lock
+
+/// Vlákno: rozloženie a Caps Lock podľa udalosti `keyboard-modifier-state-changed` (bez pollovania).
+pub fn spawn_keyboard(names: HashMap<String, String>, tx: Tx<Msg>) {
+    std::thread::spawn(move || loop {
+        let r = keyboard_session(&names, &tx);
+        KB_EVENTS.store(false, Ordering::Relaxed);
+        if let Err(e) = r {
+            if std::env::var_os("DI_DEBUG").is_some() {
+                eprintln!("wayfire keyboard: {e}");
+            }
+        }
+        std::thread::sleep(Duration::from_secs(3)); // Wayfire reštart / IPC nie je pripravené
+    });
+}
+
+fn keyboard_session(names: &HashMap<String, String>, tx: &Tx<Msg>) -> Result<(), String> {
+    let mut req = Ipc::connect().ok_or("WAYFIRE_SOCKET nie je dostupný")?;
+    let mut watch = Ipc::connect().ok_or("druhé IPC spojenie zlyhalo")?;
+    let _ = watch.sock.set_read_timeout(None); // čaká sa, kým príde udalosť
+    watch_events(&mut watch, &["keyboard-modifier-state-changed"])?;
+
+    let mut layout: Option<String> = None;
+    let mut caps: Option<bool> = None;
+    // Počiatočný stav.
+    if let Some((name, _, _)) = keyboard_state(&mut req) {
+        let s = short_layout(&name, names);
+        layout = Some(s.clone());
+        tx.send(Msg::Layout(s));
+    }
+    if let Some(c) = crate::providers::caps_led() {
+        caps = Some(c);
+        tx.send(Msg::Caps(c));
+    }
+    KB_EVENTS.store(true, Ordering::Relaxed);
+
+    loop {
+        let ev = watch.recv().map_err(|e| e.to_string())?;
+        if ev.get("event").and_then(|e| e.as_str()) != Some("keyboard-modifier-state-changed") {
+            continue;
+        }
+        if let Some(name) = ev.path(&["state", "layout"]).and_then(|l| l.as_str()) {
+            let s = short_layout(name, names);
+            if layout.as_ref() != Some(&s) {
+                layout = Some(s.clone());
+                tx.send(Msg::Layout(s));
+            }
+        }
+        // LED sa po zmene modifikátora aktualizuje o chvíľu neskôr.
+        std::thread::sleep(Duration::from_millis(30));
+        if let Some(c) = crate::providers::caps_led() {
+            if caps != Some(c) {
+                caps = Some(c);
+                tx.send(Msg::Caps(c));
+            }
+        }
+    }
+}
+
 // ---------------------------------------------------------------- autohide
 
+/// Udalosti, na ktoré sa autohide prihlási (Wayfire 0.11). Ostatné (napr. stlačenia kláves) vôbec nedostaneme.
 const RELEVANT: &[&str] = &[
     "view-mapped",
     "view-unmapped",
     "view-tiled",
-    "view-fullscreened",
+    "view-fullscreen",
+    "output-added",
+    "output-removed",
+    "output-layout-changed",
     "view-minimized",
     "view-focused",
     "view-set-output",
@@ -240,8 +328,7 @@ fn autohide_session(cfg: &AutoCfg, tx: &Tx<Msg>) -> Result<(), String> {
     }
     let mut watch = Ipc::connect().ok_or("druhé IPC spojenie zlyhalo")?;
     let _ = watch.sock.set_read_timeout(Some(Duration::from_secs(5)));
-    watch.send("window-rules/events/watch", "").map_err(|e| e.to_string())?;
-    watch.recv().map_err(|e| e.to_string())?;
+    watch_events(&mut watch, RELEVANT)?;
 
     let mut obstructed_now = false;
     let mut out_geo = Geo { x: 0.0, y: 0.0, w: 0.0, h: 0.0 };
