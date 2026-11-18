@@ -94,6 +94,7 @@ const IN_NONBLOCK: c_int = 0o4000;
 const IN_CLOEXEC: c_int = 0o2000000;
 pub const IN_MODIFY: u32 = 0x2;
 pub const IN_CLOSE_WRITE: u32 = 0x8;
+pub const IN_MOVED_FROM: u32 = 0x40;
 pub const IN_MOVED_TO: u32 = 0x80;
 pub const IN_CREATE: u32 = 0x100;
 pub const IN_DELETE: u32 = 0x200;

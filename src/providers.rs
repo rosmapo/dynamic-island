@@ -330,6 +330,28 @@ fn spawn_fast(cfg: Config, tx: Tx<Msg>) {
         // `[[custom]]` moduly s `track_file`: (index modulu, súbor, posledný stav)
         let mut tracked: Vec<(usize, String, Option<bool>)> =
             cfg.custom.iter().enumerate().filter(|(_, c)| !c.track_file.is_empty()).map(|(i, c)| (i, c.track_file.clone(), None)).collect();
+
+        // Sledované súbory (inh, rec, track_file) strážime cez inotify nad ich adresármi; vlákno spí, kým sa niečo nezmení.
+        // Ak inotify alebo niektorý adresár nie je dostupný, ostáva pollovanie po `poll_ms`.
+        let inotify = sys::Inotify::new();
+        let mut need_poll = inotify.is_none();
+        if let Some(i) = &inotify {
+            let mask = sys::IN_CREATE | sys::IN_DELETE | sys::IN_MODIFY | sys::IN_CLOSE_WRITE | sys::IN_MOVED_TO | sys::IN_MOVED_FROM;
+            let mut dirs: Vec<String> = Vec::new();
+            let paths = [cfg.inh_file.as_str(), cfg.rec_file.as_str()].into_iter().chain(tracked.iter().map(|t| t.1.as_str()));
+            for p in paths {
+                let d = std::path::Path::new(p).parent().map(|d| d.to_string_lossy().into_owned()).unwrap_or_default();
+                let d = if d.is_empty() { ".".to_string() } else { d };
+                if !dirs.contains(&d) {
+                    dirs.push(d);
+                }
+            }
+            for d in &dirs {
+                if !i.watch(d, mask) {
+                    need_poll = true;
+                }
+            }
+        }
         loop {
             // Caps Lock: pri Wayfire ho hlási udalosť (wayfire::spawn_keyboard); pollujeme len ako náhradu.
             if !wayfire::KB_EVENTS.load(std::sync::atomic::Ordering::Relaxed) {
@@ -357,7 +379,21 @@ fn spawn_fast(cfg: Config, tx: Tx<Msg>) {
                     tx.send(Msg::CustomFile(*idx, on));
                 }
             }
-            std::thread::sleep(Duration::from_millis(cfg.poll_ms));
+            match &inotify {
+                Some(i) => {
+                    // Caps Lock bez Wayfire udalostí a nedostupný inotify vyžadujú pravidelnú kontrolu;
+                    // inak sa čaká na zmenu súboru (dlhý timeout je len poistka, napr. pre neskoro zapnuté KB_EVENTS).
+                    let kb_poll = !wayfire::KB_EVENTS.load(Ordering::Relaxed);
+                    let timeout = if need_poll || kb_poll { cfg.poll_ms as i32 } else { 60_000 };
+                    let mut fds = [sys::PollFd { fd: i.fd(), events: sys::POLLIN, revents: 0 }];
+                    if sys::poll_in(&mut fds, timeout) > 0 {
+                        i.read_names(); // vyprázdni frontu
+                        std::thread::sleep(Duration::from_millis(20)); // zlúči dávku zápisov (vytvor + zapíš + premenuj)
+                        i.read_names();
+                    }
+                }
+                None => std::thread::sleep(Duration::from_millis(cfg.poll_ms)),
+            }
         }
     });
 }
