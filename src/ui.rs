@@ -318,6 +318,12 @@ pub struct Ui {
     hide: Spring,
     manual_hidden: bool,
     auto_hidden: bool,
+    /// Okno zasahuje do pásma ostrovčeka (hlási Wayfire); skrytie závisí od kurzora: `pointer_in` / `peek_until`.
+    obstructed: bool,
+    /// Kurzor je nad povrchom ostrovčeka (aj nad pruhom pri hornom okraji, keď je skrytý).
+    pointer_in: bool,
+    /// Po odchode kurzora ostane ostrovček ešte viditeľný do tohto času.
+    peek_until: Option<Instant>,
 
     cal_year: i32,
     cal_month: i32, // 0..11
@@ -664,6 +670,9 @@ impl Ui {
             hide: Spring::with(0.0, 200.0, 24.0),
             manual_hidden: false,
             auto_hidden: false,
+            obstructed: false,
+            pointer_in: false,
+            peek_until: None,
             cal_year: tm.tm_year + 1900,
             cal_month: tm.tm_mon,
             cal_cells: Vec::new(),
@@ -1020,11 +1029,11 @@ impl Ui {
                     self.data.custom[i] = o;
                 }
             }
-            Msg::AutoHide(h) => self.auto_hidden = h,
+            Msg::Obstructed(o) => self.obstructed = o,
             Msg::Hide => self.manual_hidden = true,
             Msg::Show => {
                 self.manual_hidden = false;
-                self.auto_hidden = false;
+                self.peek_until = Some(Instant::now() + Duration::from_secs(3));
             }
         }
     }
@@ -1201,6 +1210,8 @@ impl Ui {
 
         // notifikácia / otvorený veľký panel (menu, kalendár, disky) ostrovček vždy vysunie
         // inak by autohide pri pohybe kurzorom k dolným položkám menu skryl celý ostrovček
+        // autohide: ostrovček sa skryje, kým okno zasahuje do pásma a kurzor nie je nad ním (ani krátko po odchode)
+        self.auto_hidden = self.obstructed && !self.pointer_in && self.peek_until.is_none();
         let hidden = (self.manual_hidden || self.auto_hidden || self.cap_hidden)
             && self.notifs.is_empty()
             && !self.big_open();
@@ -2718,6 +2729,12 @@ impl Ui {
                 changed = true;
             }
         }
+        if let Some(t) = self.peek_until {
+            if now >= t {
+                self.peek_until = None;
+                changed = true;
+            }
+        }
         if let Some(t) = self.wifi_pw_until {
             if now >= t {
                 self.wifi_pw_until = None;
@@ -2767,6 +2784,7 @@ impl Ui {
         let menu_due = if self.panel == Panel::Menu(self.menu_mi) { self.menu_due.iter().flatten().min().copied() } else { None };
         [
             self.hud_until,
+            self.peek_until,
             self.collapse_at,
             self.wifi_pw.as_ref().and(self.wifi_pw_until),
             self.tip_pending.map(|t| t.1),
@@ -2795,6 +2813,8 @@ impl Ui {
 
     pub fn pointer_move(&mut self, lx: f32, ly: f32, now: Instant) {
         let (x, y) = (lx * self.scale, ly * self.scale);
+        self.pointer_in = true;
+        self.peek_until = None;
         self.ptr = Some((x, y));
         if let Some(src) = self.audio_drag {
             self.audio_drag_to(src, x, false);
@@ -2845,6 +2865,10 @@ impl Ui {
     }
 
     pub fn pointer_leave(&mut self, now: Instant) {
+        self.pointer_in = false;
+        if self.obstructed {
+            self.peek_until = Some(now + Duration::from_millis(self.cfg.collapse_ms));
+        }
         self.ptr = None;
         self.hover = None;
         self.tip_pending = None;
@@ -3612,13 +3636,24 @@ impl Ui {
 
     /// Oblasť, ktorá prijíma vstup (logické px) – zvyšok povrchu je priehľadný pre myš.
     pub fn input_rect(&self) -> Option<(i32, i32, i32, i32)> {
-        if (self.hide.x > 0.92 && !self.centered) || self.pill.w < 1.0 {
+        if self.pill.w < 1.0 {
             return None;
         }
         let k = 1.0 / self.scale;
         let x0 = ((self.pill.x - 2.0) * k).floor().max(0.0) as i32;
-        let y0 = ((self.pill.y - 2.0) * k).floor().max(0.0) as i32;
         let x1 = ((self.pill.x + self.pill.w + 2.0) * k).ceil() as i32;
+        // Autohide: pri zasahujúcom okne má povrch pruh pri hornom okraji, šírky ostrovčeka. Kým je ostrovček skrytý,
+        // je to jediná vstupná oblasť (vstup kurzora ho ukáže); keď je viditeľný, pruh je spojitou súčasťou oblasti, takže
+        // kurzor na okraji ostane nad povrchom a ostrovček sa neskryje.
+        let edge = if self.obstructed && !self.centered && !self.manual_hidden && !self.cap_hidden {
+            self.cfg.auto.edge.max(1.0).ceil() as i32
+        } else {
+            0
+        };
+        if self.hide.x > 0.92 && !self.centered {
+            return (edge > 0).then_some((x0, 0, x1 - x0, edge));
+        }
+        let y0 = if edge > 0 { 0 } else { ((self.pill.y - 2.0) * k).floor().max(0.0) as i32 };
         let y1 = ((self.pill.y + self.pill.h + 2.0) * k).ceil() as i32;
         Some((x0, y0, x1 - x0, y1 - y0))
     }

@@ -357,7 +357,7 @@ fn open_win(cfg: &Config) -> Result<Win, String> {
 /// Správy, ktoré patria len lište (notifikácie, HUD jasu, skrývanie); okno v strede ich nedostane.
 /// Všetky ostatné (stav modulov, výsledky načítania panelov) dostávajú obe inštancie `Ui`.
 fn bar_only(m: &Msg) -> bool {
-    matches!(m, Msg::Notif(_) | Msg::NotifClose(_) | Msg::Hide | Msg::Show | Msg::AutoHide(_) | Msg::Brightness(_))
+    matches!(m, Msg::Notif(_) | Msg::NotifClose(_) | Msg::Hide | Msg::Show | Msg::Obstructed(_) | Msg::Brightness(_))
 }
 
 /// Číslo otvorenia menu, od ktorého počíta okno (lišta počíta od 0) – pozri `Ui::set_menu_gen`.

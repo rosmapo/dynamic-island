@@ -303,16 +303,8 @@ fn obstructed(req: &mut Ipc, out: Geo, cfg: &AutoCfg) -> bool {
     false
 }
 
-fn cursor_zones(out: Geo, pos: (f64, f64), cfg: &AutoCfg) -> (bool, bool) {
-    let (cx, cy) = (pos.0 - out.x, pos.1 - out.y);
-    let inside_x = cx >= 0.0 && cx < out.w;
-    let mx = out.w * (1.0 - cfg.edge_width / 100.0) / 2.0;
-    let inside_edge_x = cx >= mx && cx < out.w - mx;
-    let in_zone = |n: f64| cy >= 0.0 && cy < n;
-    (inside_x && in_zone(cfg.bar_height), inside_edge_x && in_zone(cfg.edge))
-}
-
-/// Vlákno autohide: port waybar_autohide.py (skrytie = animácia ostrovčeka, nie signál procesu).
+/// Vlákno autohide: sleduje, či nejaké okno zasahuje do pásma ostrovčeka (`Msg::Obstructed`). Kurzor sa nesleduje:
+/// skrytie a zobrazenie riadi samotný ostrovček podľa vstupu a odchodu kurzora na jeho povrchu (pruh pri hornom okraji).
 pub fn spawn_autohide(cfg: AutoCfg, tx: Tx<Msg>) {
     std::thread::spawn(move || loop {
         let _ = autohide_session(&cfg, &tx);
@@ -320,71 +312,37 @@ pub fn spawn_autohide(cfg: AutoCfg, tx: Tx<Msg>) {
     });
 }
 
+fn is_relevant(ev: &Json) -> bool {
+    ev.get("event").and_then(|e| e.as_str()).is_some_and(|name| RELEVANT.contains(&name))
+}
+
 fn autohide_session(cfg: &AutoCfg, tx: &Tx<Msg>) -> Result<(), String> {
     let mut req = Ipc::connect().ok_or("WAYFIRE_SOCKET nie je dostupný")?;
-    let probe = req.call("window-rules/get_cursor_position", "").map_err(|e| e.to_string())?;
-    if probe.get("pos").is_none() {
-        return Err("ipc-rules nepodporuje get_cursor_position".into());
-    }
     let mut watch = Ipc::connect().ok_or("druhé IPC spojenie zlyhalo")?;
-    let _ = watch.sock.set_read_timeout(Some(Duration::from_secs(5)));
+    let _ = watch.sock.set_read_timeout(None); // čaká sa, kým príde udalosť
     watch_events(&mut watch, RELEVANT)?;
 
     let mut obstructed_now = false;
-    let mut out_geo = Geo { x: 0.0, y: 0.0, w: 0.0, h: 0.0 };
-    let mut hidden: Option<bool> = None;
-
-    let recompute = |req: &mut Ipc, og: &mut Geo, obs: &mut bool| {
+    let mut sent: Option<bool> = None;
+    loop {
         if let Ok(j) = req.call("window-rules/get-focused-output", "") {
             if let Some(g) = j.path(&["info", "geometry"]).and_then(geo) {
-                *og = g;
-                *obs = obstructed(req, g, cfg);
-                return;
+                obstructed_now = obstructed(&mut req, g, cfg);
             }
         }
-        *obs = false;
-    };
-    recompute(&mut req, &mut out_geo, &mut obstructed_now);
-
-    loop {
-        // want_hidden
-        let want = if !obstructed_now {
-            false
-        } else {
-            match req.call("window-rules/get_cursor_position", "").ok().and_then(|j| {
-                let p = j.get("pos")?;
-                Some((p.get("x")?.as_f64()?, p.get("y")?.as_f64()?))
-            }) {
-                None => hidden.unwrap_or(false),
-                Some(pos) => {
-                    let (in_area, in_edge) = cursor_zones(out_geo, pos, cfg);
-                    let keep_visible = if hidden == Some(true) { in_edge } else { in_area };
-                    !keep_visible
-                }
-            }
-        };
-        if hidden != Some(want) {
-            hidden = Some(want);
-            tx.send(Msg::AutoHide(want));
+        if sent != Some(obstructed_now) {
+            sent = Some(obstructed_now);
+            tx.send(Msg::Obstructed(obstructed_now));
         }
-
-        // čakaj na udalosti; kým okno zasahuje, čítaj kurzor často
-        let timeout = if obstructed_now { cfg.poll_ms as i32 } else { 5000 };
+        // čakaj na udalosť a zlúč dávku (ťahanie okna posiela veľa udalostí)
         let mut dirty = false;
-        let mut budget = 50;
-        let mut wait = timeout;
-        while budget > 0 && watch.readable(wait) {
-            budget -= 1;
-            let ev = watch.recv().map_err(|e| e.to_string())?;
-            if let Some(name) = ev.get("event").and_then(|e| e.as_str()) {
-                if RELEVANT.contains(&name) {
-                    dirty = true;
-                }
-            }
-            wait = if dirty { 30 } else { 0 };
+        while !dirty {
+            dirty = is_relevant(&watch.recv().map_err(|e| e.to_string())?);
         }
-        if dirty {
-            recompute(&mut req, &mut out_geo, &mut obstructed_now);
+        let mut budget = 200;
+        while budget > 0 && watch.readable(30) {
+            budget -= 1;
+            watch.recv().map_err(|e| e.to_string())?;
         }
     }
 }
