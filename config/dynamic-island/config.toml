@@ -11,7 +11,6 @@
 # poradie modulov (ako group/island vo waybare)
 modules = ["network", "vpn", "clock", "keyboard", "audio", "radio", "tv", "media", "capslock", "inhibitor", "recorder", "disks"]
 
-
 # ============================================================================
 # 2. VZHĽAD OSTROVČEKA
 # ============================================================================
@@ -41,7 +40,6 @@ window_animation = false   # predvolene true
 # alert      = "#dc2f2f"
 menu_selected      = "@secondary"   # pozadie vybranej položky
 menu_selected_text = "@surface"   # text vybranej položky
-
 
 # ============================================================================
 # 3. KONTAJNER A SPÚŠŤAČ
@@ -182,7 +180,6 @@ icon = "󰟴"
 tooltip = ""   # {name} = label položky
 on_click_right = "tv"
 
-
 [recorder]
 on_click = "capture-stop"
 
@@ -237,7 +234,6 @@ json = false
 # text = ""		# 
 # on_click = "settings"
 # on_click_right = "backup"
-
 
 # ============================================================================
 # 5. PANELY A NÁSTROJE
@@ -342,12 +338,13 @@ slurp_args = "-b #00000030 -w 0"   # vzhľad výberu slurp (nahrádza nepodporov
 # cursor = false             # kurzor myši na snímke
 # audio = false              # zvuk pri nahrávaní
 # format = "png"             # png | jpeg
+format = "png"
 # video_ext = "mp4"          # mp4 | mkv | webm
 # recorder_args = ""         # ďalšie argumenty pre wf-recorder, napr. "-c h264_vaapi -d /dev/dri/renderD128"
 copy = false                # snímku skopírovať do schránky (wl-copy)
 # notify = true              # po uložení poslať notifikáciu (notify-send)
 # hide_bar = true            # pri snímke dočasne skryť ostrovček
-
+hide_bar = true
 
 # ============================================================================
 # 6. HUD A SYSTÉM
@@ -375,12 +372,12 @@ ignore = []
 # --- Aktívne oblasti (hot areas) --- po vstupe kurzora na okraj alebo do rohu sa spustí príkaz (Wayfire 0.11+)
 # edge: top | bottom | left | right | top-left | top-right | bottom-left | bottom-right
 # size = hrúbka zóny v px, length = vycentrovaná časť okraja v % (100 = celý), delay_ms = zotrvanie, cooldown_ms = odstup
-# [[hot_area]]
-# edge = "bottom"
-# length = 40
-# command = "wofi --show drun"
-# enabled = true         # false = oblasť sa nepoužije
-
+[[hot_area]]
+edge = "bottom"
+size = 1
+length = 10
+command = "wfctl wm-actions/set-minimized id=$(wfctl window-rules/get-focused-view | jq '.info.id') state=true"
+enabled = true         # false = oblasť sa nepoužije
 
 # ============================================================================
 # 7. NOTIFIKÁCIE
@@ -417,7 +414,6 @@ border_size = 2
 summary = "Debian Aktualizácie"
 on_click = "foot bash -c 'sudo apt update && sudo apt -u -V upgrade; exec bash'"
 # timeout_ms = 0
-
 
 # ============================================================================
 # 8. VLASTNÉ MENU
@@ -580,7 +576,6 @@ line = ""
 label = "  Vypnúť rádio"
 command = "module:track-stop:radio"
 
-
 #### Settings #################################################################
 [[menu]]
 name = "settings"
@@ -631,7 +626,7 @@ name = "tv"
 title = "TV"
 icon_columns = 4
 #rows = 5
-icon_size = 64
+icon_size = 72
 text_size = 17
 cell_width = 130
 gap = 10
@@ -639,6 +634,7 @@ padding = 10
 columns = 4
 type = "icons"
 text_columns = 1
+wait_exec = false
 [[menu.item]]
 icon = "01-rtvs1.png"
 command = "rviewer http://88.212.15.50/live/test_jednotka_25p/playlist.m3u8"
