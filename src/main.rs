@@ -35,6 +35,7 @@ mod toml;
 mod ui;
 mod wallpaper;
 mod wayfire;
+mod wfshell;
 mod wifi;
 mod wl;
 mod xkb;

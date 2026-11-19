@@ -1,6 +1,11 @@
 //! Wayland vrstva: wlr-layer-shell povrch, ukazovateľ, frame callbacky, EGL okno.
 use crate::gl::Egl;
 use crate::sys::{self, PollFd, POLLIN};
+use crate::wfshell::proto::{
+    zwf_hotspot_v2::{self, ZwfHotspotV2},
+    zwf_output_v2::{self, ZwfOutputV2},
+    zwf_shell_manager_v2::{self, ZwfShellManagerV2},
+};
 use crate::xkb::Xkb;
 use std::collections::HashMap;
 use std::ffi::c_void;
@@ -19,6 +24,10 @@ use wayland_client::protocol::{
     wl_surface::{self, WlSurface},
 };
 use wayland_client::{Connection, Dispatch, EventQueue, Proxy, QueueHandle, WEnum};
+use wayland_protocols::xdg::xdg_output::zv1::client::{
+    zxdg_output_manager_v1::{self, ZxdgOutputManagerV1},
+    zxdg_output_v1::{self, ZxdgOutputV1},
+};
 use wayland_protocols_wlr::layer_shell::v1::client::{
     zwlr_layer_shell_v1::{self, ZwlrLayerShellV1},
     zwlr_layer_surface_v1::{self, Anchor, KeyboardInteractivity, ZwlrLayerSurfaceV1},
@@ -57,6 +66,11 @@ pub struct WlState {
     pub scale: i32,
     pub scale_dirty: bool,
     pub ptr_events: Vec<PtrEvent>,
+    /// logická veľkosť výstupov (xdg-output)
+    logical: HashMap<ObjectId, (i32, i32)>,
+    /// vstup (`true`) a odchod (`false`) kurzora z hotspotu na hornom okraji
+    pub hot_events: Vec<bool>,
+    hot_gen: u32,
 }
 
 impl WlState {
@@ -69,6 +83,13 @@ impl WlState {
     }
 }
 
+/// Hotspot na hornom okraji výstupu. Protokol nemá žiadosť na zrušenie, preto sa nový vytvára len pri zmene geometrie.
+struct Hot {
+    key: (ObjectId, i32, i32, i32),
+    _out: ZwfOutputV2,
+    _hs: ZwfHotspotV2,
+}
+
 pub struct Wl {
     conn: Connection,
     queue: EventQueue<WlState>,
@@ -78,6 +99,9 @@ pub struct Wl {
     _outputs: Vec<WlOutput>,
     _seat: Option<WlSeat>,
     _shell: ZwlrLayerShellV1,
+    wf_mgr: Option<ZwfShellManagerV2>,
+    _xdg_outs: Vec<ZxdgOutputV1>,
+    hot: Option<Hot>,
 }
 
 impl Wl {
@@ -107,6 +131,15 @@ impl Wl {
         let outputs: Vec<WlOutput> =
             want.into_iter().map(|(name, ver)| globals.registry().bind::<WlOutput, _, _>(name, ver.min(3), &qh, ())).collect();
 
+        // hotspot (Wayfire 0.11+): len pre lištu; bez protokolu autohide ostáva na pruhu pri hornom okraji
+        let wf_mgr: Option<ZwfShellManagerV2> = if centered { None } else { globals.bind(&qh, 3..=3, ()).ok() };
+        let xdg_mgr: Option<ZxdgOutputManagerV1> = if wf_mgr.is_some() { globals.bind(&qh, 1..=3, ()).ok() } else { None };
+        let xdg_outs: Vec<ZxdgOutputV1> = match &xdg_mgr {
+            Some(m) => outputs.iter().map(|o| m.get_xdg_output(o, &qh, o.id())).collect(),
+            None => Vec::new(),
+        };
+        let wf_mgr = if xdg_mgr.is_some() { wf_mgr } else { None };
+
         let surface = compositor.create_surface(&qh, ());
         let layer = shell.get_layer_surface(&surface, None, zwlr_layer_shell_v1::Layer::Overlay, namespace.to_string(), &qh, ());
         layer.set_size(width, height);
@@ -131,6 +164,9 @@ impl Wl {
             scale: 1,
             scale_dirty: false,
             ptr_events: Vec::new(),
+            logical: HashMap::new(),
+            hot_events: Vec::new(),
+            hot_gen: 0,
         };
         queue.roundtrip(&mut st).map_err(|e| format!("roundtrip: {e}"))?;
         while !st.configured && !st.closed {
@@ -144,7 +180,7 @@ impl Wl {
         if let Some(m) = st.outputs.values().max() {
             st.scale = (*m).max(1);
         }
-        Ok(Wl { conn, queue, qh, st, egl_win: None, _outputs: outputs, _seat: seat, _shell: shell })
+        Ok(Wl { conn, queue, qh, st, egl_win: None, _outputs: outputs, _seat: seat, _shell: shell, wf_mgr, _xdg_outs: xdg_outs, hot: None })
     }
 
     pub fn create_egl(&mut self, pw: i32, ph: i32) -> Result<Egl, String> {
@@ -188,6 +224,34 @@ impl Wl {
     pub fn request_frame(&mut self) {
         self.st.surface.frame(&self.qh, ());
         self.st.frame_pending = true;
+    }
+
+    /// Je aktívny hotspot na hornom okraji (kompozitor ho podporuje a je vytvorený)?
+    pub fn has_hotspot(&self) -> bool {
+        self.hot.is_some()
+    }
+
+    /// Vytvorí (alebo pri zmene geometrie obnoví) hotspot: obdĺžnik pri hornom okraji výstupu, vodorovne stredných
+    /// `width_pct` % šírky, hrubý `edge_px`. Volá sa opakovane; bez zmeny nerobí nič.
+    pub fn update_hotspot(&mut self, width_pct: f64, edge_px: f64) {
+        let Some(mgr) = &self.wf_mgr else { return };
+        let Some(oid) = self.st.entered.first().cloned() else { return };
+        let Some(&(w, _)) = self.st.logical.get(&oid) else { return };
+        let Some(out) = self._outputs.iter().find(|o| o.id() == oid) else { return };
+        let hw = (((w as f64) * width_pct.clamp(0.0, 100.0) / 100.0).round() as i32).max(1);
+        let x = ((w - hw) / 2).max(0);
+        let thr = edge_px.max(1.0).ceil() as i32;
+        let key = (oid, x, hw, thr);
+        if self.hot.as_ref().is_some_and(|h| h.key == key) {
+            return;
+        }
+        if self.hot.is_some() {
+            self.st.hot_events.push(false); // starý hotspot sa už nesleduje
+        }
+        self.st.hot_gen += 1;
+        let wo = mgr.get_wf_output(out, &self.qh, ());
+        let hs = wo.create_custom_hotspot(x as u32, 0, hw as u32, 1, thr as u32, 0, &self.qh, self.st.hot_gen);
+        self.hot = Some(Hot { key, _out: wo, _hs: hs });
     }
 
     /// Vstupná oblasť (logické súradnice); `None` = povrch je pre myš priehľadný.
@@ -239,6 +303,34 @@ impl Wl {
 
 impl Dispatch<WlRegistry, GlobalListContents> for WlState {
     fn event(_: &mut Self, _: &WlRegistry, _: wl_registry::Event, _: &GlobalListContents, _: &Connection, _: &QueueHandle<Self>) {}
+}
+impl Dispatch<ZwfShellManagerV2, ()> for WlState {
+    fn event(_: &mut Self, _: &ZwfShellManagerV2, _: zwf_shell_manager_v2::Event, _: &(), _: &Connection, _: &QueueHandle<Self>) {}
+}
+impl Dispatch<ZwfOutputV2, ()> for WlState {
+    fn event(_: &mut Self, _: &ZwfOutputV2, _: zwf_output_v2::Event, _: &(), _: &Connection, _: &QueueHandle<Self>) {}
+}
+impl Dispatch<ZwfHotspotV2, u32> for WlState {
+    fn event(st: &mut Self, _: &ZwfHotspotV2, ev: zwf_hotspot_v2::Event, generation: &u32, _: &Connection, _: &QueueHandle<Self>) {
+        if *generation != st.hot_gen {
+            return; // udalosť zo zastaraného hotspotu
+        }
+        match ev {
+            zwf_hotspot_v2::Event::Enter => st.hot_events.push(true),
+            zwf_hotspot_v2::Event::Leave => st.hot_events.push(false),
+            _ => {}
+        }
+    }
+}
+impl Dispatch<ZxdgOutputManagerV1, ()> for WlState {
+    fn event(_: &mut Self, _: &ZxdgOutputManagerV1, _: zxdg_output_manager_v1::Event, _: &(), _: &Connection, _: &QueueHandle<Self>) {}
+}
+impl Dispatch<ZxdgOutputV1, ObjectId> for WlState {
+    fn event(st: &mut Self, _: &ZxdgOutputV1, ev: zxdg_output_v1::Event, id: &ObjectId, _: &Connection, _: &QueueHandle<Self>) {
+        if let zxdg_output_v1::Event::LogicalSize { width, height } = ev {
+            st.logical.insert(id.clone(), (width, height));
+        }
+    }
 }
 impl Dispatch<WlCompositor, ()> for WlState {
     fn event(_: &mut Self, _: &WlCompositor, _: wl_compositor::Event, _: &(), _: &Connection, _: &QueueHandle<Self>) {}

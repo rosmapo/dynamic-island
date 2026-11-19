@@ -721,6 +721,16 @@ pub fn run(cfg: Config) -> Result<(), String> {
             }
         }
 
+        // hotspot pri hornom okraji (Wayfire 0.11+): vytvorenie po zistení výstupu a udalosti vstup/odchod kurzora
+        if cfg.auto.enabled {
+            wl.update_hotspot(cfg.auto.edge_width, cfg.auto.edge);
+            ui.set_hotspot_mode(wl.has_hotspot());
+            for inside in std::mem::take(&mut wl.st.hot_events) {
+                ui.hotspot_event(inside, Instant::now());
+                dirty = true;
+            }
+        }
+
         // zmena mierky
         if wl.st.scale_dirty {
             scale = wl.st.scale.max(1);

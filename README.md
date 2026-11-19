@@ -5,7 +5,7 @@ potreby rozbalí na kalendár, tooltip, notifikáciu alebo panel (zvuk, Wi-Fi, B
 tapety, vlastné menu). Napísané v Rust, kreslí sa cez EGL/OpenGL ES 2.0 do `wlr-layer-shell` povrchu; bez UI frameworku.
 
 Tento dokument je **technická dokumentácia pre budúceho správcu** (autora): ako sa aplikácia zostavuje a spúšťa, na čom
-je závislá, **čo je pevne zadrôtované na aktuálne prostredie** (Debian 13, Wayfire 0.9.0 + vlastný backport `ipc-rules`,
+je závislá, **čo je pevne zadrôtované na aktuálne prostredie** (Debian 13, Wayfire 0.11,
 PipeWire, NetworkManager) a **čo upraviť pri zmene distribúcie alebo kompozitora**, a kompletná referencia konfigurácie.
 
 Obsah:
@@ -267,9 +267,11 @@ Poznámky k návrhu:
   animácia vnútri povrchu, povrch sa nemení — preto nevznikajú posuny okien.
 - Klávesnicu si ostrovček vyžiada (`exclusive`) **iba počas zadávania hesla Wi-Fi a hľadania v schránke**.
 - Mierka: celočíselná `wl_surface.set_buffer_scale`.
-- Stav sa **sleduje vlastnými vláknami**: `spawn_fast` kontroluje každých `poll_ms` (predvolene 300 ms) caps LED,
-  existenciu súboru inhibítora, súbor recordera a rozloženie klávesnice; sieť/VPN sa obnovuje každé 2 s; zvuk je
-  riadený udalosťami `pactl subscribe`; disky, Bluetooth, Wi-Fi a notifikácie cez D-Bus signály.
+- Stav sa **sleduje vlastnými vláknami**, pokiaľ možno udalosťami: rozloženie klávesnice a Caps Lock hlási Wayfire
+  (`keyboard-modifier-state-changed`), súbory inhibítora, recordera a `track_file` sleduje `spawn_fast` cez inotify
+  (pollovanie po `poll_ms` je len záloha, keď inotify alebo udalosti klávesnice nie sú k dispozícii); autohide
+  reaguje na udalosti okien z IPC a na hotspot kompozitora; sieť/VPN sa obnovuje každé 2 s; zvuk je riadený
+  udalosťami `pactl subscribe`; disky, Bluetooth, Wi-Fi a notifikácie cez D-Bus signály.
 - Každý potomok spustený z ostrovčeka beží v **novej session** (`setsid`), takže prežije ostrovček aj reštart.
   Výnimky: `pactl subscribe` a `[[custom]]` procesy majú `PR_SET_PDEATHSIG` (zaniknú s rodičom).
 - Jednoduché príkazy bez shell syntaxe (`mpv URL`) sa spúšťajú **priamo** (bez `sh -c`); ostatné cez `sh -c`.
@@ -279,7 +281,7 @@ Poznámky k návrhu:
 ## 5. Väzby na prostredie a migrácia
 
 Táto kapitola je jadrom dokumentu: **čo je v kóde pevne zadané** a čo upraviť pri zmene prostredia.
-Stav v čase písania: Debian 13 (trixie), Wayfire 0.9.0 s vlastným backportom pluginu `ipc-rules`, PipeWire/WirePlumber,
+Stav v čase písania: Debian 13 (trixie), Wayfire 0.11, PipeWire/WirePlumber,
 NetworkManager, BlueZ, UDisks2, systemd, jedna obrazovka.
 
 ### 5.1 Kompozitor: Wayfire IPC (`src/wayfire.rs`) — najväčšia väzba
@@ -287,53 +289,54 @@ NetworkManager, BlueZ, UDisks2, systemd, jedna obrazovka.
 Pripája sa na UNIX socket z premennej prostredia **`WAYFIRE_SOCKET`**; protokol je JSON s dĺžkovým prefixom
 (`{"method": "...", "data": {...}}`). Využívajú ho **dva moduly**:
 
-**a) Rozloženie klávesnice (modul `keyboard`)** — `providers.rs` (`spawn_fast`) a akcia `layout-toggle`:
+**a) Rozloženie klávesnice a Caps Lock (modul `keyboard`, odznak CAPS)** — `wayfire.rs` (`spawn_keyboard`), akcia `layout-toggle`:
 
-| Metóda IPC | Použitie |
+| Metóda / udalosť IPC | Použitie |
 |---|---|
-| `wayfire/get-keyboard-state` | odpoveď `{layout, layout-index, possible-layouts[]}`; názov rozloženia sa mapuje cez `[keyboard.names]` na skratku |
-| `wayfire/set-keyboard-state` | `{"layout-index": N}` — prepnutie na ďalšie rozloženie |
-
-Tieto metódy **nie sú v Wayfire 0.9.0 z Debianu**; zabezpečuje ich vlastný backport pluginu `ipc-rules`.
+| `window-rules/events/watch` s `keyboard-modifier-state-changed` | zmena rozloženia (`state.layout`) a modifikátorov; po každej udalosti sa prečíta LED Caps Lock |
+| `wayfire/get-keyboard-state` | počiatočný stav `{layout, layout-index, possible-layouts[]}`; názov rozloženia sa mapuje cez `[keyboard.names]` na skratku |
+| `wayfire/set-keyboard-state` | `{"layout-index": N}` — prepnutie na ďalšie rozloženie (`layout-toggle`) |
 
 **b) Autohide** — `autohide_session` (iba ak `[autohide] enabled = true`):
 
 | Metóda / udalosť | Použitie |
 |---|---|
-| `window-rules/get_cursor_position` | poloha kurzora (`{pos:{x,y}}`); **opäť len v backporte**; bez nej autohide skončí s chybou a skúša znova každé 3 s |
 | `window-rules/get-focused-output` | geometria aktívneho výstupu (`info.geometry`) |
 | `window-rules/list-views` | zoznam okien (`type`, `mapped`, `minimized`, `app-id`, `geometry`, `sticky`) |
-| `window-rules/events/watch` | odber udalostí; prepočet pri: `view-mapped`, `view-unmapped`, `view-tiled`, `view-fullscreened`, `view-minimized`, `view-focused`, `view-set-output`, `view-geometry-changed`, `view-wset-changed`, `view-workspace-changed`, `wset-workspace-changed`, `output-gain-focus`, `output-wset-changed`, `view-sticky` |
+| `window-rules/events/watch` | odber udalostí; prepočet pri: `view-mapped`, `view-unmapped`, `view-tiled`, `view-fullscreen`, `view-minimized`, `view-focused`, `view-set-output`, `view-geometry-changed`, `view-wset-changed`, `view-workspace-changed`, `view-sticky`, `wset-workspace-changed`, `output-added`, `output-removed`, `output-layout-changed`, `output-gain-focus`, `output-wset-changed` |
 
-Algoritmus autohide: kapsula sa skryje, keď nejaké (nie ignorované) okno aktívneho workspace zasahuje do pásma
-`bar_height + margin` od hornej hrany **a** kurzor nie je v oblasti lišty; zobrazí sa, keď kurzor vstúpi do tenkého
-pásu `edge` px pri hornej hrane (vodorovne stredných `edge_width` % šírky výstupu). Kým okno zasahuje, číta sa
-kurzor každých `poll_ms` (predvolene 30 ms).
+Neznámy názov udalosti Wayfire odmietne celý odber (`Event not found`), preto `watch_events` pri odmietnutí chybné
+názvy vyradí a odber zopakuje.
 
-Požiadavky na **konfiguráciu Wayfire**: zapnuté pluginy `ipc` a `ipc-rules` (v backportovanej verzii); `WAYFIRE_SOCKET`
-musí byť v prostredí ostrovčeka (pri systemd službe cez `import-environment`).
+Algoritmus autohide: IPC vlákno len zisťuje, či nejaké (nie ignorované) okno aktívneho workspace zasahuje do pásma
+`bar_height + margin` od hornej hrany (`Msg::Obstructed`). Kým zasahuje, ostrovček je skrytý a ukáže sa, keď kurzor
+vojde do **hotspotu**: obdĺžnika pri hornej hrane, vodorovne stredných `edge_width` % šírky výstupu, hrubého `edge` px
+(protokol Wayfire Shell, 5.2). Kurzor sa nikde nepolluje. Po odchode kurzora ostrovček ostane ešte `collapse_delay_ms`.
+Ak kompozitor hotspot neponúka, použije sa záloha: tenký pruh rovnakej šírky vo vstupnej oblasti povrchu.
+
+Požiadavky na **konfiguráciu Wayfire**: zapnuté pluginy `ipc` a `ipc-rules`; `WAYFIRE_SOCKET` musí byť v prostredí
+ostrovčeka (pri systemd službe cez `import-environment`).
 
 **Čo robiť pri zmene kompozitora / verzie:**
 
-- *Nová verzia Wayfire:* ak oficiálny `ipc-rules` už obsahuje `get_cursor_position` a metódy pre klávesnicu, backport
-  netreba — over **presné názvy** metód (v novších verziách sa môžu volať inak, napr. `window-rules/...` vs.
-  `wayfire/...`) a upraviť reťazce v `wayfire.rs` (je ich ~10 na jednom mieste).
+- *Iná verzia Wayfire:* over názvy metód a udalostí (`wfctl -m` vypíše metódy; `wfctl events/watch` udalosti) a podľa
+  toho uprav reťazce v `wayfire.rs`. Hotspot vyžaduje `zwf_shell_manager_v2` **verzie 3** (Wayfire 0.11+).
 - *Iný kompozitor (sway, Hyprland, river, niri…):* `wayfire.rs` treba nahradiť ekvivalentom:
   - rozloženie klávesnice: sway `swaymsg -t get_inputs` / `input ... xkb_switch_layout next`, Hyprland
     `hyprctl devices -j` / `hyprctl switchxkblayout`; výstup treba mapovať na rovnaké pole (`layout`, `index`, `počet`);
-  - autohide: potrebuje (1) zoznam okien s geometriou a stavom, (2) udalosti o ich zmene, (3) polohu kurzora.
-    Pre (1)+(2) existuje štandardný protokol `wlr-foreign-toplevel-management` (bez IPC), polohu kurzora ale
-    protokol nedáva — riešenie je vlastná tenká vrstva na hornej hrane, ktorá zachytí hover, alebo IPC kompozitora.
+  - autohide: potrebuje (1) zoznam okien s geometriou a stavom, (2) udalosti o ich zmene, (3) hover na hornej hrane.
+    Pre (1)+(2) existuje štandardný protokol `wlr-foreign-toplevel-management` (bez IPC); (3) rieši záloha vo
+    vstupnej oblasti povrchu (pruh pri hornej hrane), takže poloha kurzora netreba.
   - najjednoduchší prechod: vypnúť autohide (`[autohide] enabled = false`) a skrývať signálmi `SIGUSR1`/`SIGUSR2`;
     modul `keyboard` vtedy z `modules` vynechať (alebo `wayfire.rs` nahradiť stubom, ktorý vráti `None`).
-- Bez `WAYFIRE_SOCKET` sa nič nerozbije: IPC vlákna sa len opakovane pokúšajú pripojiť (rozloženie: každých ~20 cyklov,
-  autohide: každé 3 s) a modul `keyboard` zostane prázdny.
+- Bez `WAYFIRE_SOCKET` sa nič nerozbije: IPC vlákna sa len opakovane pokúšajú pripojiť (rozloženie aj autohide: každé 3 s) a modul `keyboard` zostane prázdny.
 
 ### 5.2 Wayland protokoly
 
 | Protokol | Použitie | Poznámka |
 |---|---|---|
 | `wl_compositor` (3–6), `wl_seat` (1–7: pointer, keyboard), `wl_output` | povrch, vstup, mierka | štandard |
+| `zwf_shell_manager_v2` (**3**, Wayfire 0.11+), `zxdg_output_manager_v1` (1–3) | hotspot na hornej hrane pre autohide (`wl.rs`, väzby z `protocols/wayfire-shell-unstable-v2.xml`); logická šírka výstupu | voliteľné; bez nich pruh vo vstupnej oblasti |
 | **`zwlr_layer_shell_v1`** (1–4) | povrch lišty (`Overlay`, kotva `Top`, `exclusive_zone 0`) | **povinné**; majú ho wlroots kompozitory (Wayfire, sway, river…), Hyprland, niri, KWin; **nie GNOME/Mutter** |
 
 Ostrovček sa bez `zwlr_layer_shell_v1` ukončí s chybou „kompozitor nepodporuje zwlr_layer_shell_v1“.
@@ -489,7 +492,7 @@ V popisoch: **px** = logické pixely (pred násobením mierkou); hodnoty v zátv
 | `surface_width` / `surface_height` | `760` / `560` | veľkosť priehľadného povrchu = **horná hranica veľkosti rozbaleného panela** |
 | `tooltip_delay_ms` | `450` | oneskorenie tooltipu po nabehnutí myši na modul |
 | `collapse_delay_ms` | `700` | oneskorenie zbalenia po odchode myši |
-| `poll_ms` | `300` (min. 50) | interval kontroly caps LED / inhibítora / recordera / rozloženia / súborov `track_file` |
+| `poll_ms` | `300` (min. 50) | záloha: interval kontroly caps LED / inhibítora / recordera / `track_file`, keď nefunguje inotify (alebo Caps Lock bez udalostí Wayfire) |
 | `colors_file` | `~/.config/waybar/waybar-colors.css` | CSS s `@define-color` (pozri 6.3) |
 
 ### 6.3 `[colors]` — farby
@@ -1052,7 +1055,7 @@ command = "module:track-stop:radio"
 | `text` | — | statický text/ikona bez procesu (tlačidlo); povinné je `exec` **alebo** `text` |
 | `interval` | `0` | `0` = trvalý proces, každý riadok výstupu je nový stav (pri páde sa po 3 s spustí znova); `> 0` = spúšťa sa každých N s, berie sa posledný riadok |
 | `json` | `true` | riadok sa skúsi parsovať ako JSON `{"text","tooltip","class"}`; inak ide celý riadok ako text |
-| `track_file` | *(prázdne)* | cesta k súboru (`~/` sa rozbalí): modul je v lište ako **odznak** (rovnako ako CAPS), len kým súbor **existuje**; prázdne = modul sa správa ako doteraz. Kontroluje sa každých `poll_ms` |
+| `track_file` | *(prázdne)* | cesta k súboru (`~/` sa rozbalí): modul je v lište ako **odznak** (rovnako ako CAPS), len kým súbor **existuje**; prázdne = modul sa správa ako doteraz. Sleduje sa cez inotify (záloha: každých `poll_ms`) |
 | `tooltip` | — | prázdne = použije sa `tooltip` z JSON; inak šablóna so `{text} {tooltip} {class}` |
 | `on_click*` | — | pozri 6.4 |
 
@@ -1112,7 +1115,6 @@ Vyžaduje Wayfire IPC (pozri 5.1). Bez neho nastav `enabled = false`; `SIGUSR1`/
 | `margin` | `0.0` | pridaný okraj k pásmu |
 | `edge` | `2.0` | výška pásu pri hornej hrane na opätovné zobrazenie (px) |
 | `edge_width` | `30.0` (0–100) | šírka tohto pásu v % šírky výstupu (centrovaný) |
-| `poll_ms` | `30` (min. 10) | interval čítania kurzora, kým okno zasahuje |
 | `ignore` | `[]` | `app-id` okien, ktoré sa ignorujú |
 
 ---

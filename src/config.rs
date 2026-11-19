@@ -111,7 +111,6 @@ pub struct AutoCfg {
     pub edge: f64,
     pub edge_width: f64,
     pub margin: f64,
-    pub poll_ms: u64,
     pub ignore: Vec<String>,
 }
 
@@ -775,7 +774,6 @@ BUILTIN_MODULES.map(String::from).to_vec()
                 edge: auto.f64_or("edge", 2.0),
                 edge_width: auto.f64_or("edge_width", 30.0).clamp(0.0, 100.0),
                 margin: auto.f64_or("margin", 0.0),
-                poll_ms: auto.f64_or("poll_ms", 30.0).max(10.0) as u64,
                 ignore: auto.strs("ignore").unwrap_or_default(),
             },
         }

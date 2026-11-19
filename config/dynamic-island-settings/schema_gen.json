@@ -892,15 +892,6 @@
  },
  {
   "section": "autohide",
-  "key": "poll_ms",
-  "kind": "f64_or",
-  "default": 30.0,
-  "min": 10.0,
-  "max": null,
-  "comment": ""
- },
- {
-  "section": "autohide",
   "key": "ignore",
   "kind": "strs",
   "default": [],

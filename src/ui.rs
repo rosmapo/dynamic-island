@@ -324,6 +324,9 @@ pub struct Ui {
     pointer_in: bool,
     /// Po odchode kurzora ostane ostrovček ešte viditeľný do tohto času.
     peek_until: Option<Instant>,
+    /// Kurzor je v hotspote na hornom okraji (hlási kompozitor); `hotspot` = hotspot je aktívny.
+    hot_in: bool,
+    hotspot: bool,
 
     cal_year: i32,
     cal_month: i32, // 0..11
@@ -673,6 +676,8 @@ impl Ui {
             obstructed: false,
             pointer_in: false,
             peek_until: None,
+            hot_in: false,
+            hotspot: false,
             cal_year: tm.tm_year + 1900,
             cal_month: tm.tm_mon,
             cal_cells: Vec::new(),
@@ -1211,7 +1216,7 @@ impl Ui {
         // notifikácia / otvorený veľký panel (menu, kalendár, disky) ostrovček vždy vysunie
         // inak by autohide pri pohybe kurzorom k dolným položkám menu skryl celý ostrovček
         // autohide: ostrovček sa skryje, kým okno zasahuje do pásma a kurzor nie je nad ním (ani krátko po odchode)
-        self.auto_hidden = self.obstructed && !self.pointer_in && self.peek_until.is_none();
+        self.auto_hidden = self.obstructed && !self.pointer_in && !self.hot_in && self.peek_until.is_none();
         let hidden = (self.manual_hidden || self.auto_hidden || self.cap_hidden)
             && self.notifs.is_empty()
             && !self.big_open();
@@ -2864,6 +2869,21 @@ impl Ui {
         }
     }
 
+    /// Hotspot na hornom okraji je (ne)aktívny; bez neho sa ostrovček ukazuje pruhom vo vstupnej oblasti povrchu.
+    pub fn set_hotspot_mode(&mut self, on: bool) {
+        self.hotspot = on;
+    }
+
+    /// Kurzor vošiel do hotspotu (`true`) alebo ho opustil (`false`).
+    pub fn hotspot_event(&mut self, inside: bool, now: Instant) {
+        self.hot_in = inside;
+        if inside {
+            self.peek_until = None;
+        } else if self.obstructed {
+            self.peek_until = Some(now + Duration::from_millis(self.cfg.collapse_ms));
+        }
+    }
+
     pub fn pointer_leave(&mut self, now: Instant) {
         self.pointer_in = false;
         if self.obstructed {
@@ -3642,16 +3662,17 @@ impl Ui {
         let k = 1.0 / self.scale;
         let x0 = ((self.pill.x - 2.0) * k).floor().max(0.0) as i32;
         let x1 = ((self.pill.x + self.pill.w + 2.0) * k).ceil() as i32;
-        // Autohide: pri zasahujúcom okne má povrch pruh pri hornom okraji, šírky ostrovčeka. Kým je ostrovček skrytý,
-        // je to jediná vstupná oblasť (vstup kurzora ho ukáže); keď je viditeľný, pruh je spojitou súčasťou oblasti, takže
-        // kurzor na okraji ostane nad povrchom a ostrovček sa neskryje.
+        // Autohide: pri zasahujúcom okne má povrch pruh pri hornom okraji, šírky ostrovčeka. Kým je ostrovček skrytý a
+        // kompozitor nepodporuje hotspot, je to jediná vstupná oblasť (vstup kurzora ho ukáže). S hotspotom je skrytý
+        // ostrovček pre myš priehľadný. Keď je viditeľný, pruh je spojitou súčasťou oblasti, takže kurzor na okraji
+        // ostane nad povrchom a ostrovček sa neskryje.
         let edge = if self.obstructed && !self.centered && !self.manual_hidden && !self.cap_hidden {
             self.cfg.auto.edge.max(1.0).ceil() as i32
         } else {
             0
         };
         if self.hide.x > 0.92 && !self.centered {
-            return (edge > 0).then_some((x0, 0, x1 - x0, edge));
+            return (edge > 0 && !self.hotspot).then_some((x0, 0, x1 - x0, edge));
         }
         let y0 = if edge > 0 { 0 } else { ((self.pill.y - 2.0) * k).floor().max(0.0) as i32 };
         let y1 = ((self.pill.y + self.pill.h + 2.0) * k).ceil() as i32;

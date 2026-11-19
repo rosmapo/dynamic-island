@@ -87,7 +87,7 @@ LABELS = {
     ('brightness', 'get'): 'Príkaz na zistenie jasu', ('brightness', 'set'): 'Príkaz na nastavenie jasu ({value})', ('brightness', 'icons'): 'Ikony jasu',
     ('system', 'decimal'): 'Desatinný oddeľovač', ('system', 'net_interface'): 'Rozhranie pre net-down / net-up',
     ('autohide', 'bar_height'): 'Výška lišty', ('autohide', 'edge'): 'Šírka hrany pre odkrytie', ('autohide', 'edge_width'): 'Šírka zóny pri hrane',
-    ('autohide', 'margin'): 'Okraj', ('autohide', 'poll_ms'): 'Kontrola kurzora (ms)', ('autohide', 'ignore'): 'Ignorované okná',
+    ('autohide', 'margin'): 'Okraj', ('autohide', 'ignore'): 'Ignorované okná',
     ('notifications', 'history'): 'Ukladať históriu', ('notifications', 'history_max'): 'Najviac záznamov v histórii', ('notifications', 'history_file'): 'Súbor histórie',
     ('notifications', 'width'): 'Šírka', ('notifications', 'max_visible'): 'Najviac viditeľných', ('notifications', 'max_lines'): 'Najviac riadkov tela',
     ('notifications', 'icons'): 'Ikony notifikácií', ('notifications', 'panel_width'): 'Panel histórie – šírka', ('notifications', 'panel_height'): 'Panel histórie – výška',
