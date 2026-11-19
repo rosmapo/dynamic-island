@@ -337,6 +337,7 @@ ostrovčeka (pri systemd službe cez `import-environment`).
 |---|---|---|
 | `wl_compositor` (3–6), `wl_seat` (1–7: pointer, keyboard), `wl_output` | povrch, vstup, mierka | štandard |
 | `zwf_shell_manager_v2` (**3**, Wayfire 0.11+), `zxdg_output_manager_v1` (1–3) | hotspot na hornej hrane pre autohide (`wl.rs`, väzby z `protocols/wayfire-shell-unstable-v2.xml`); logická šírka výstupu | voliteľné; bez nich pruh vo vstupnej oblasti |
+| `zwlr_foreign_toplevel_manager_v1` (1–3) | každému oknu sa pošle `set_rectangle` = stred ostrovčeka (minimize hint: animácia minimalizácie, napr. squeezimize, smeruje tam) | voliteľné; bez neho animácia ide k hornému okraju |
 | **`zwlr_layer_shell_v1`** (1–4) | povrch lišty (`Overlay`, kotva `Top`, `exclusive_zone 0`) | **povinné**; majú ho wlroots kompozitory (Wayfire, sway, river…), Hyprland, niri, KWin; **nie GNOME/Mutter** |
 
 Ostrovček sa bez `zwlr_layer_shell_v1` ukončí s chybou „kompozitor nepodporuje zwlr_layer_shell_v1“.

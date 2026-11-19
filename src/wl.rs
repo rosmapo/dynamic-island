@@ -28,6 +28,10 @@ use wayland_protocols::xdg::xdg_output::zv1::client::{
     zxdg_output_manager_v1::{self, ZxdgOutputManagerV1},
     zxdg_output_v1::{self, ZxdgOutputV1},
 };
+use wayland_protocols_wlr::foreign_toplevel::v1::client::{
+    zwlr_foreign_toplevel_handle_v1::{self, ZwlrForeignToplevelHandleV1},
+    zwlr_foreign_toplevel_manager_v1::{self, ZwlrForeignToplevelManagerV1},
+};
 use wayland_protocols_wlr::layer_shell::v1::client::{
     zwlr_layer_shell_v1::{self, ZwlrLayerShellV1},
     zwlr_layer_surface_v1::{self, Anchor, KeyboardInteractivity, ZwlrLayerSurfaceV1},
@@ -71,6 +75,8 @@ pub struct WlState {
     /// vstup (`true`) a odchod (`false`) kurzora z hotspotu na hornom okraji
     pub hot_events: Vec<bool>,
     hot_gen: u32,
+    /// obdĺžnik (logické súradnice povrchu), kam majú smerovať minimalizačné animácie okien
+    hint: (i32, i32, i32, i32),
 }
 
 impl WlState {
@@ -100,6 +106,7 @@ pub struct Wl {
     _seat: Option<WlSeat>,
     _shell: ZwlrLayerShellV1,
     wf_mgr: Option<ZwfShellManagerV2>,
+    _toplevels: Option<ZwlrForeignToplevelManagerV1>,
     _xdg_outs: Vec<ZxdgOutputV1>,
     hot: Option<Hot>,
 }
@@ -140,6 +147,10 @@ impl Wl {
         };
         let wf_mgr = if xdg_mgr.is_some() { wf_mgr } else { None };
 
+        // minimize hint: každému oknu sa povie, že jeho „tlačidlo“ je stred ostrovčeka (animácia minimalizácie smeruje tam)
+        let toplevels: Option<ZwlrForeignToplevelManagerV1> = if centered { None } else { globals.bind(&qh, 1..=3, ()).ok() };
+        let hint = ((width as i32 / 2 - 40).max(0), 0, 80, 20);
+
         let surface = compositor.create_surface(&qh, ());
         let layer = shell.get_layer_surface(&surface, None, zwlr_layer_shell_v1::Layer::Overlay, namespace.to_string(), &qh, ());
         layer.set_size(width, height);
@@ -167,6 +178,7 @@ impl Wl {
             logical: HashMap::new(),
             hot_events: Vec::new(),
             hot_gen: 0,
+            hint,
         };
         queue.roundtrip(&mut st).map_err(|e| format!("roundtrip: {e}"))?;
         while !st.configured && !st.closed {
@@ -180,7 +192,7 @@ impl Wl {
         if let Some(m) = st.outputs.values().max() {
             st.scale = (*m).max(1);
         }
-        Ok(Wl { conn, queue, qh, st, egl_win: None, _outputs: outputs, _seat: seat, _shell: shell, wf_mgr, _xdg_outs: xdg_outs, hot: None })
+        Ok(Wl { conn, queue, qh, st, egl_win: None, _outputs: outputs, _seat: seat, _shell: shell, wf_mgr, _toplevels: toplevels, _xdg_outs: xdg_outs, hot: None })
     }
 
     pub fn create_egl(&mut self, pw: i32, ph: i32) -> Result<Egl, String> {
@@ -303,6 +315,24 @@ impl Wl {
 
 impl Dispatch<WlRegistry, GlobalListContents> for WlState {
     fn event(_: &mut Self, _: &WlRegistry, _: wl_registry::Event, _: &GlobalListContents, _: &Connection, _: &QueueHandle<Self>) {}
+}
+impl Dispatch<ZwlrForeignToplevelManagerV1, ()> for WlState {
+    fn event(st: &mut Self, _: &ZwlrForeignToplevelManagerV1, ev: zwlr_foreign_toplevel_manager_v1::Event, _: &(), _: &Connection, _: &QueueHandle<Self>) {
+        if let zwlr_foreign_toplevel_manager_v1::Event::Toplevel { toplevel } = ev {
+            let (x, y, w, h) = st.hint;
+            toplevel.set_rectangle(&st.surface, x, y, w, h);
+        }
+    }
+    wayland_client::event_created_child!(WlState, ZwlrForeignToplevelManagerV1, [
+        zwlr_foreign_toplevel_manager_v1::EVT_TOPLEVEL_OPCODE => (ZwlrForeignToplevelHandleV1, ()),
+    ]);
+}
+impl Dispatch<ZwlrForeignToplevelHandleV1, ()> for WlState {
+    fn event(_: &mut Self, h: &ZwlrForeignToplevelHandleV1, ev: zwlr_foreign_toplevel_handle_v1::Event, _: &(), _: &Connection, _: &QueueHandle<Self>) {
+        if let zwlr_foreign_toplevel_handle_v1::Event::Closed = ev {
+            h.destroy();
+        }
+    }
 }
 impl Dispatch<ZwfShellManagerV2, ()> for WlState {
     fn event(_: &mut Self, _: &ZwfShellManagerV2, _: zwf_shell_manager_v2::Event, _: &(), _: &Connection, _: &QueueHandle<Self>) {}
