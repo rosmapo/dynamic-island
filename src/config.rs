@@ -27,6 +27,34 @@ pub struct CustomCfg {
     pub btn: Btn,
 }
 
+/// Aktívna oblasť (hot area) pri okraji alebo rohu výstupu: po vstupe kurzora sa spustí príkaz.
+#[derive(Clone, Debug, Default)]
+pub struct HotArea {
+    /// maska hrán protokolu Wayfire Shell: 1 hore, 2 dole, 4 vľavo, 8 vpravo (rohy = dve hrany)
+    pub edges: u32,
+    /// hrúbka zóny od okraja (px); pri rohu strana štvorca
+    pub size: f64,
+    /// dĺžka zóny v % dĺžky okraja (vycentrovaná); 100 = celý okraj; pri rohoch sa nepoužije
+    pub length: f64,
+    /// ako dlho (ms) musí kurzor zostať v zóne, kým sa príkaz spustí
+    pub delay_ms: u32,
+    /// najkratší odstup (ms) medzi dvoma spusteniami príkazu
+    pub cooldown_ms: u64,
+    pub command: String,
+}
+
+fn parse_edges(s: &str) -> u32 {
+    s.split('-').fold(0, |m, p| {
+        m | match p.trim() {
+            "top" => 1,
+            "bottom" => 2,
+            "left" => 4,
+            "right" => 8,
+            _ => 0,
+        }
+    })
+}
+
 /// Pravidlo notifikácie: podreťazce sa hľadajú v súhrne / aplikácii / tele.
 #[derive(Clone, Debug, Default)]
 pub struct NotifRule {
@@ -320,6 +348,7 @@ pub struct Config {
     pub notif_click: String,
     pub notif_right: String,
     pub notif_rules: Vec<NotifRule>,
+    pub hot_areas: Vec<HotArea>,
     pub history_file: PathBuf,
     pub history_max: usize,
 }
@@ -730,6 +759,25 @@ BUILTIN_MODULES.map(String::from).to_vec()
             notif_center: nt.str_or("align", "center") == "center",
             notif_click: nt.str_or("on_click", "default-action"),
             notif_right: nt.str_or("on_click_right", "dismiss"),
+            hot_areas: t
+                .get("hot_area")
+                .and_then(|v| v.as_arr())
+                .map(|a| {
+                    a.iter()
+                        .filter_map(|v| v.as_table())
+                        .filter(|r| r.bool_or("enabled", true))
+                        .map(|r| HotArea {
+                            edges: parse_edges(&r.str_or("edge", "")),
+                            size: r.f64_or("size", 2.0).clamp(1.0, 200.0),
+                            length: r.f64_or("length", 100.0).clamp(1.0, 100.0),
+                            delay_ms: r.f64_or("delay_ms", 0.0).max(0.0) as u32,
+                            cooldown_ms: r.f64_or("cooldown_ms", 1000.0).max(0.0) as u64,
+                            command: r.str_or("command", ""),
+                        })
+                        .filter(|a| a.edges != 0 && a.edges.count_ones() <= 2 && !a.command.is_empty())
+                        .collect()
+                })
+                .unwrap_or_default(),
             notif_rules: nt
                 .get("rule")
                 .and_then(|v| v.as_arr())

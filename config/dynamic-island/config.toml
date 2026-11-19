@@ -342,13 +342,11 @@ slurp_args = "-b #00000030 -w 0"   # vzhľad výberu slurp (nahrádza nepodporov
 # cursor = false             # kurzor myši na snímke
 # audio = false              # zvuk pri nahrávaní
 # format = "png"             # png | jpeg
-format = "png"
 # video_ext = "mp4"          # mp4 | mkv | webm
 # recorder_args = ""         # ďalšie argumenty pre wf-recorder, napr. "-c h264_vaapi -d /dev/dri/renderD128"
 copy = false                # snímku skopírovať do schránky (wl-copy)
 # notify = true              # po uložení poslať notifikáciu (notify-send)
 # hide_bar = true            # pri snímke dočasne skryť ostrovček
-hide_bar = true
 
 
 # ============================================================================
@@ -370,9 +368,18 @@ set  = "lumix set \"{value}\""   # {value} = "10+", "10-" alebo číslo; v výst
 enabled = true
 bar_height = 40
 edge = 2
-edge_width = 25
+edge_width = 30
 margin = 0
 ignore = []
+
+# --- Aktívne oblasti (hot areas) --- po vstupe kurzora na okraj alebo do rohu sa spustí príkaz (Wayfire 0.11+)
+# edge: top | bottom | left | right | top-left | top-right | bottom-left | bottom-right
+# size = hrúbka zóny v px, length = vycentrovaná časť okraja v % (100 = celý), delay_ms = zotrvanie, cooldown_ms = odstup
+# [[hot_area]]
+# edge = "bottom"
+# length = 40
+# command = "wofi --show drun"
+# enabled = true         # false = oblasť sa nepoužije
 
 
 # ============================================================================
@@ -624,7 +631,7 @@ name = "tv"
 title = "TV"
 icon_columns = 4
 #rows = 5
-icon_size = 72
+icon_size = 64
 text_size = 17
 cell_width = 130
 gap = 10
@@ -632,7 +639,6 @@ padding = 10
 columns = 4
 type = "icons"
 text_columns = 1
-wait_exec = false
 [[menu.item]]
 icon = "01-rtvs1.png"
 command = "rviewer http://88.212.15.50/live/test_jednotka_25p/playlist.m3u8"

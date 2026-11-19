@@ -1,5 +1,6 @@
 //! Wayland vrstva: wlr-layer-shell povrch, ukazovateľ, frame callbacky, EGL okno.
 use crate::gl::Egl;
+use crate::config::HotArea;
 use crate::sys::{self, PollFd, POLLIN};
 use crate::wfshell::proto::{
     zwf_hotspot_v2::{self, ZwfHotspotV2},
@@ -75,6 +76,9 @@ pub struct WlState {
     /// vstup (`true`) a odchod (`false`) kurzora z hotspotu na hornom okraji
     pub hot_events: Vec<bool>,
     hot_gen: u32,
+    area_gen: u32,
+    /// indexy aktívnych oblastí (`[[hot_area]]`), do ktorých kurzor vošiel
+    pub area_events: Vec<usize>,
     /// obdĺžnik (logické súradnice povrchu), kam majú smerovať minimalizačné animácie okien
     hint: (i32, i32, i32, i32),
 }
@@ -96,6 +100,12 @@ struct Hot {
     _hs: ZwfHotspotV2,
 }
 
+/// Používateľské dáta hotspotu oblasti: generácia (zastarané sa ignorujú) a index v konfigurácii.
+pub struct AreaId {
+    generation: u32,
+    idx: usize,
+}
+
 pub struct Wl {
     conn: Connection,
     queue: EventQueue<WlState>,
@@ -109,6 +119,11 @@ pub struct Wl {
     _toplevels: Option<ZwlrForeignToplevelManagerV1>,
     _xdg_outs: Vec<ZxdgOutputV1>,
     hot: Option<Hot>,
+    areas: Vec<HotArea>,
+    area_warned: bool,
+    area_key: Option<(ObjectId, i32, i32)>,
+    _area_out: Option<ZwfOutputV2>,
+    _area_hs: Vec<ZwfHotspotV2>,
 }
 
 impl Wl {
@@ -178,6 +193,8 @@ impl Wl {
             logical: HashMap::new(),
             hot_events: Vec::new(),
             hot_gen: 0,
+            area_gen: 0,
+            area_events: Vec::new(),
             hint,
         };
         queue.roundtrip(&mut st).map_err(|e| format!("roundtrip: {e}"))?;
@@ -192,7 +209,7 @@ impl Wl {
         if let Some(m) = st.outputs.values().max() {
             st.scale = (*m).max(1);
         }
-        Ok(Wl { conn, queue, qh, st, egl_win: None, _outputs: outputs, _seat: seat, _shell: shell, wf_mgr, _toplevels: toplevels, _xdg_outs: xdg_outs, hot: None })
+        Ok(Wl { conn, queue, qh, st, egl_win: None, _outputs: outputs, _seat: seat, _shell: shell, wf_mgr, _toplevels: toplevels, _xdg_outs: xdg_outs, hot: None, areas: Vec::new(), area_warned: false, area_key: None, _area_out: None, _area_hs: Vec::new() })
     }
 
     pub fn create_egl(&mut self, pw: i32, ph: i32) -> Result<Egl, String> {
@@ -264,6 +281,58 @@ impl Wl {
         let wo = mgr.get_wf_output(out, &self.qh, ());
         let hs = wo.create_custom_hotspot(x as u32, 0, hw as u32, 1, thr as u32, 0, &self.qh, self.st.hot_gen);
         self.hot = Some(Hot { key, _out: wo, _hs: hs });
+    }
+
+    /// Nastaví aktívne oblasti (`[[hot_area]]`); vytvoria sa pri najbližšom `update_areas`.
+    pub fn set_areas(&mut self, areas: Vec<HotArea>) {
+        self.areas = areas;
+    }
+
+    /// Vytvorí hotspoty pre oblasti pri okrajoch a rohoch výstupu (a obnoví ich pri zmene výstupu alebo jeho veľkosti).
+    /// Volá sa opakovane; bez zmeny nerobí nič.
+    pub fn update_areas(&mut self) {
+        if self.areas.is_empty() {
+            return;
+        }
+        let Some(mgr) = &self.wf_mgr else {
+            if !self.area_warned {
+                self.area_warned = true;
+                eprintln!("hot_area: kompozitor neponúka zwf_shell_manager_v2 verzie 3 (zapni plugin wayfire-shell vo wayfire.ini) alebo zxdg_output_manager_v1; hot_area sa nepoužije a autohide použije pruh");
+            }
+            return;
+        };
+        let Some(oid) = self.st.entered.first().cloned() else { return };
+        let Some(&(w, h)) = self.st.logical.get(&oid) else { return };
+        let Some(out) = self._outputs.iter().find(|o| o.id() == oid) else { return };
+        let key = (oid, w, h);
+        if self.area_key.as_ref() == Some(&key) {
+            return;
+        }
+        self.st.area_gen += 1;
+        let wo = mgr.get_wf_output(out, &self.qh, ());
+        let mut made = Vec::new();
+        for (idx, a) in self.areas.iter().enumerate() {
+            let id = AreaId { generation: self.st.area_gen, idx };
+            let thr = a.size.max(1.0).ceil() as u32;
+            let hs = if a.edges.count_ones() == 2 || a.length >= 100.0 {
+                wo.create_hotspot(a.edges, thr, a.delay_ms, &self.qh, id)
+            } else {
+                // časť okraja: tenký obdĺžnik vycentrovaný na okraji; zóna siaha `thr` px od neho
+                let (x, y, rw, rh) = if a.edges & 3 != 0 {
+                    let len = (((w as f64) * a.length / 100.0).round() as i32).clamp(1, w);
+                    ((w - len) / 2, if a.edges & 1 != 0 { 0 } else { (h - 1).max(0) }, len, 1)
+                } else {
+                    let len = (((h as f64) * a.length / 100.0).round() as i32).clamp(1, h);
+                    (if a.edges & 4 != 0 { 0 } else { (w - 1).max(0) }, (h - len) / 2, 1, len)
+                };
+                wo.create_custom_hotspot(x as u32, y as u32, rw as u32, rh as u32, thr, a.delay_ms, &self.qh, id)
+            };
+            made.push(hs);
+        }
+        eprintln!("hot_area: vytvorených {} oblastí na výstupe {}x{}", made.len(), w, h);
+        self._area_out = Some(wo);
+        self._area_hs = made; // staré objekty sa nedajú zrušiť (protokol nemá žiadosť); ich udalosti sa ignorujú
+        self.area_key = Some(key);
     }
 
     /// Vstupná oblasť (logické súradnice); `None` = povrch je pre myš priehľadný.
@@ -349,6 +418,16 @@ impl Dispatch<ZwfHotspotV2, u32> for WlState {
             zwf_hotspot_v2::Event::Enter => st.hot_events.push(true),
             zwf_hotspot_v2::Event::Leave => st.hot_events.push(false),
             _ => {}
+        }
+    }
+}
+impl Dispatch<ZwfHotspotV2, AreaId> for WlState {
+    fn event(st: &mut Self, _: &ZwfHotspotV2, ev: zwf_hotspot_v2::Event, id: &AreaId, _: &Connection, _: &QueueHandle<Self>) {
+        if id.generation == st.area_gen {
+            if let zwf_hotspot_v2::Event::Enter = ev {
+                eprintln!("hot_area: vstup do oblasti {}", id.idx);
+                st.area_events.push(id.idx);
+            }
         }
     }
 }

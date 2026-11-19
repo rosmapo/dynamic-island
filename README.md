@@ -314,7 +314,8 @@ vojde do **hotspotu**: obdĺžnika pri hornej hrane, vodorovne stredných `edge_
 (protokol Wayfire Shell, 5.2). Kurzor sa nikde nepolluje. Po odchode kurzora ostrovček ostane ešte `collapse_delay_ms`.
 Ak kompozitor hotspot neponúka, použije sa záloha: tenký pruh rovnakej šírky vo vstupnej oblasti povrchu.
 
-Požiadavky na **konfiguráciu Wayfire**: zapnuté pluginy `ipc` a `ipc-rules`; `WAYFIRE_SOCKET` musí byť v prostredí
+Požiadavky na **konfiguráciu Wayfire**: zapnuté pluginy `ipc` a `ipc-rules`; pre hotspoty (autohide a `[[hot_area]]`) aj plugin
+`wayfire-shell` (ponúka `zwf_shell_manager_v2`; bez neho autohide použije pruh vo vstupnej oblasti a `[[hot_area]]` nefungujú); `WAYFIRE_SOCKET` musí byť v prostredí
 ostrovčeka (pri systemd službe cez `import-environment`).
 
 **Čo robiť pri zmene kompozitora / verzie:**
@@ -1117,6 +1118,37 @@ Vyžaduje Wayfire IPC (pozri 5.1). Bez neho nastav `enabled = false`; `SIGUSR1`/
 | `edge` | `2.0` | výška pásu pri hornej hrane na opätovné zobrazenie (px) |
 | `edge_width` | `30.0` (0–100) | šírka tohto pásu v % šírky výstupu (centrovaný) |
 | `ignore` | `[]` | `app-id` okien, ktoré sa ignorujú |
+
+### 6.23 `[[hot_area]]` — aktívne oblasti pri okrajoch a rohoch
+
+Po vstupe kurzora na okraj alebo do rohu výstupu sa spustí príkaz (podobne ako hot corners). Oblasť stráži kompozitor
+(hotspot protokolu Wayfire Shell, verzia 3, Wayfire 0.11+; pozri 5.2), ostrovček nič nepolluje a udalosť dostane len pri
+vstupe. Bez protokolu sa oblasti ignorujú. Oblasti platia pre výstup, na ktorom je ostrovček; po zmene veľkosti alebo
+výstupu sa vytvoria nanovo (staré hotspoty sa nedajú zrušiť, ich udalosti sa ignorujú). Zmena v konfigurácii vyžaduje
+reštart ostrovčeka.
+
+| Kľúč | Predvolené | Popis |
+|---|---|---|
+| `edge` | — | `top`, `bottom`, `left`, `right` alebo roh `top-left`, `top-right`, `bottom-left`, `bottom-right` |
+| `command` | — | príkaz po vstupe kurzora (povinný) |
+| `enabled` | `true` | `false` = oblasť ostane v konfigurácii, ale nevytvorí sa |
+| `size` | `2` (1–200) | hrúbka zóny od okraja (px); pri rohu strana štvorca |
+| `length` | `100` (1–100) | vycentrovaná časť okraja v %; pri rohoch sa nepoužije |
+| `delay_ms` | `0` | ako dlho musí kurzor zostať v zóne |
+| `cooldown_ms` | `1000` | najkratší odstup medzi dvoma spusteniami |
+
+```toml
+[[hot_area]]
+edge = "bottom"
+length = 40
+command = "wofi --show drun"
+
+[[hot_area]]
+edge = "right"
+size = 3
+delay_ms = 150
+command = "dynamic-island --night toggle"
+```
 
 ---
 

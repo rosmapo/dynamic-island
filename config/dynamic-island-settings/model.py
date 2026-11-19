@@ -8,7 +8,7 @@ import schema
 from tomledit import TomlDoc
 
 RESET = object()          # značka „vrátiť na predvolené“ (kľúč sa zo súboru odstráni)
-ARRAY_TABLES = {'custom', 'menu', 'notifications.rule'}
+ARRAY_TABLES = {'custom', 'menu', 'notifications.rule', 'hot_area'}
 
 
 def default_path():

@@ -42,7 +42,8 @@ TABS = [
      [('menu', 'Vlastné menu'), ('custom', 'Vlastné moduly')]),
     ('system', 'Systém', 'applications-system-symbolic',
      [('brightness', 'Jas'), ('notifications.urgent', 'Urgentné'),
-      ('notifications.rule', 'Pravidlá notifikácií'), ('system', 'Systém'), ('autohide', 'Automatické skrývanie')]),
+      ('notifications.rule', 'Pravidlá notifikácií'), ('hot_area', 'Aktívne oblasti'), ('system', 'Systém'),
+      ('autohide', 'Automatické skrývanie')]),
 ]
 
 

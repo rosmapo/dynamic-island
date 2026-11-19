@@ -448,6 +448,8 @@ pub fn run(cfg: Config) -> Result<(), String> {
     let mut dirty = true;
     let mut animating = false;
     let mut last_frame = Instant::now();
+    wl.set_areas(cfg.hot_areas.clone());
+    let mut area_last: Vec<Option<Instant>> = vec![None; cfg.hot_areas.len()];
     let mut last_input: Option<Option<(i32, i32, i32, i32)>> = None;
     let mut clock_next = Instant::now();
     let mut last_clock = String::new();
@@ -728,6 +730,17 @@ pub fn run(cfg: Config) -> Result<(), String> {
             for inside in std::mem::take(&mut wl.st.hot_events) {
                 ui.hotspot_event(inside, Instant::now());
                 dirty = true;
+            }
+        }
+        // oblasti pri okrajoch a rohoch (`[[hot_area]]`): po vstupe kurzora sa spustí príkaz (s odstupom `cooldown_ms`)
+        wl.update_areas();
+        for idx in std::mem::take(&mut wl.st.area_events) {
+            if let Some(a) = cfg.hot_areas.get(idx) {
+                let now = Instant::now();
+                if area_last[idx].map_or(true, |t| now.duration_since(t) >= Duration::from_millis(a.cooldown_ms)) {
+                    area_last[idx] = Some(now);
+                    spawn_detached(&a.command);
+                }
             }
         }
 

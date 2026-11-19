@@ -18,6 +18,7 @@ GROUPS = [
     ('Panely a nástroje', [('clipboard', 'Schránka'), ('trash', 'Kôš'), ('wallpaper', 'Tapety'), ('wifi', 'Wi-Fi'),
                            ('bluetooth', 'Bluetooth'), ('monitor', 'Monitor'), ('night', 'Nočný režim'), ('capture', 'Snímanie obrazovky')]),
     ('HUD a systém', [('brightness', 'Jas'), ('system', 'Systém'), ('autohide', 'Automatické skrývanie')]),
+    ('Aktívne oblasti', [('hot_area', 'Aktívne oblasti (hot areas)')]),
     ('Notifikácie', [('notifications', 'Notifikácie'), ('notifications.urgent', 'Urgentné notifikácie'), ('notifications.rule', 'Pravidlá notifikácií')]),
 ]
 
@@ -210,12 +211,27 @@ RULE_SPECS = _specs(
     _f('on_click', 'command', 'Príkaz po kliknutí', '', 'Notifikácia sa potom zavrie.'),
     _f('timeout_ms', 'int', 'Čas zobrazenia (ms)', None, '0 = nevyprší; nenastavené = predvolené.', min=0, nullable=True),
 )
+HOT_SPECS = _specs(
+    _f('edge', 'enum', 'Okraj alebo roh', 'bottom', 'Kde sa má kurzor dotknúť obrazovky.',
+       choices=['top', 'bottom', 'left', 'right', 'top-left', 'top-right', 'bottom-left', 'bottom-right'],
+       choice_labels={'top': 'hore', 'bottom': 'dole', 'left': 'vľavo', 'right': 'vpravo', 'top-left': 'roh vľavo hore',
+                      'top-right': 'roh vpravo hore', 'bottom-left': 'roh vľavo dole', 'bottom-right': 'roh vpravo dole'},
+       write_default=True),
+    _f('command', 'command', 'Príkaz po vstupe kurzora', '', 'Spustí sa raz po vstupe do oblasti.', write_default=True),
+    _f('enabled', 'bool', 'Zapnuté', True, 'Vypnutá oblasť zostane v konfigurácii, ale nespustí sa.'),
+    _f('size', 'int', 'Hrúbka zóny (px)', 2, 'Vzdialenosť od okraja; pri rohu strana štvorca.', min=1, max=200),
+    _f('length', 'int', 'Dĺžka okraja (%)', 100, 'Vycentrovaná časť okraja; 100 = celý okraj. Pri rohoch sa nepoužije.', min=1, max=100),
+    _f('delay_ms', 'int', 'Zotrvanie (ms)', 0, 'Ako dlho musí kurzor zostať v zóne.', min=0),
+    _f('cooldown_ms', 'int', 'Odstup spustení (ms)', 1000, 'Najkratší čas medzi dvoma spusteniami.', min=0),
+)
 # pole tabuliek: id stránky -> popis
 ARRAYS = {
     'menu': dict(title='Vlastné menu', family='menu', specs=MENU_SPECS, child=('menu.item', ITEM_SPECS), key='name', add='Pridať menu',
                  child_add='Pridať položku', desc='Panely otvárané on_click = "názov" na ľubovoľnom module alebo ako záložka menu:názov.'),
     'custom': dict(title='Vlastné moduly', family='custom', specs=CUSTOM_SPECS, child=None, key='name', add='Pridať modul',
                    desc='Externé moduly ako waybar „custom“. Názov pridaj aj do poradia modulov.'),
+    'hot_area': dict(title='Aktívne oblasti (hot areas)', family='hot_area', specs=HOT_SPECS, child=None, key='edge', add='Pridať oblasť',
+                     desc='Po vstupe kurzora na okraj alebo do rohu sa spustí príkaz (vyžaduje Wayfire 0.11+).'),
     'notifications.rule': dict(title='Pravidlá notifikácií', family='notifications.rule', specs=RULE_SPECS, child=None, key='summary',
                                add='Pridať pravidlo', desc='Prvé zhodné pravidlo vyhrá: klik spustí príkaz a notifikáciu zavrie.'),
 }
