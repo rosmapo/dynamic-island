@@ -450,7 +450,7 @@ command = "foot bash -c '/home/mm/.config/dynamic-island/scripts/dotfilesbkp.sh;
 icon = "timeshift.png"
 command = "timeshift-launcher"
 [[menu.item]]
-line = "Uptime: {}"
+line = "󰓅   {}"
 # command = ""
 exec = "uptime -p | awk '{for(i=2;i<=NF;i+=2){n=$i;u=$(i+1);if(u~/day/)printf \"%s %s \",n,n==1?\"deň\":n<5?\"dni\":\"dní\";else if(u~/hour/)printf \"%s %s \",n,n==1?\"hodina\":n<5?\"hodiny\":\"hodín\";else if(u~/minute/)printf \"%s %s \",n,n==1?\"minúta\":n<5?\"minúty\":\"minút\"};print \"\"}'"
 [[menu.item]]
@@ -459,36 +459,36 @@ separator = "center"
 # Natívne zdroje (bez skriptov): exec = "builtin:ZDROJ[:ARGUMENT]" – cpu, ram, ram-pct, swap, temp[:názov],
 # disk[:cesta], disk-pct[:cesta], disk-free[:cesta], disk-total[:cesta], net-down, net-up. Pozri README (6.18b).
 [[menu.item]]
-label = "CPU: {} %"
+label = "   {} %"
 exec = "builtin:cpu"
 interval = 2
 [[menu.item]]
-label = "RAM: {}"
+label = "   {}"
 exec = "builtin:ram"                       # využitá pamäť v GB; builtin:ram-pct = v %
 interval = 2
 
 [[menu.item]]
-label = "↓ {}"
+label = "↓  {}"
 exec = "builtin:net-down"
 interval = 2
 [[menu.item]]
-label = "↑ {}"
+label = "↑  {}"
 exec = "builtin:net-up"
 interval = 2
 [[menu.item]]
 separator = "center"
 
 [[menu.item]]
-line = "Root: {}"
+line = "󰆼   Root: {}"
 exec = "builtin:disk:/"   # uprav na svoj pripojný bod
 [[menu.item]]
-line = "Data: {}"
+line = "󰆼   Data: {}"
 exec = "builtin:disk:/media/mm/Data"   # uprav na svoj pripojný bod
 # [[menu.item]]
 # line = "Efi: {}"
 # exec = "builtin:disk:/boot/efi"
 [[menu.item]]
-line = "Backup: {}"
+line = "󰆼   Backup: {}"
 exec = "builtin:disk:/media/mm/backup"   # uprav na svoj pripojný bod
 # [[menu.item]]
 # separator = "center"
@@ -502,7 +502,7 @@ separator = "center"
 # [[menu.item]]
 # separator = "center"
 [[menu.item]]
-label = "Kôš {}"
+label = "{}"
 exec = "~/.config/dynamic-island/scripts/trash.sh"
 command = "module:trash"                               # voliteľné: klik otvorí kôš
 [[menu.item]]
